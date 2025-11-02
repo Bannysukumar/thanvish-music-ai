@@ -216,7 +216,7 @@ export default function Contact() {
                       className="text-sm text-muted-foreground hover:text-foreground transition-colors"
                       data-testid="contact-email"
                     >
-                      support@thanvishai.com
+                      support@thanvish.com
                     </a>
                   </div>
                 </div>
@@ -226,7 +226,7 @@ export default function Contact() {
                   <div>
                     <p className="font-medium">Phone</p>
                     <p className="text-sm text-muted-foreground" data-testid="contact-phone">
-                      +1 (555) 123-4567
+                      +91 8099996622
                     </p>
                   </div>
                 </div>
@@ -235,10 +235,13 @@ export default function Contact() {
                   <MapPin className="w-5 h-5 text-primary mt-0.5 flex-shrink-0" />
                   <div>
                     <p className="font-medium">Office Hours</p>
+                    BC Road, Gajuwaka, Vizag, Andhra Pradesh, India
+                    <br />
+                    PIN: 530044
                     <p className="text-sm text-muted-foreground" data-testid="contact-hours">
                       Monday - Friday
                       <br />
-                      9:00 AM - 6:00 PM EST
+                      9:00 AM - 6:00 PM IST
                     </p>
                   </div>
                 </div>

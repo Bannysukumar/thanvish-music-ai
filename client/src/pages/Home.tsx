@@ -79,7 +79,7 @@ export default function Home() {
         </div>
       </section>
 
-      <section className="py-20 md:py-32 bg-card">
+      {/* <section className="py-20 md:py-32 bg-card">
         <div className="max-w-7xl mx-auto px-6">
           <div className="text-center mb-16">
             <h2 className="font-serif text-3xl md:text-4xl font-bold mb-4" data-testid="features-title">
@@ -111,9 +111,9 @@ export default function Home() {
             })}
           </div>
         </div>
-      </section>
+      </section> */}
 
-      <section className="py-20 md:py-32">
+      {/* <section className="py-20 md:py-32">
         <div className="max-w-7xl mx-auto px-6">
           <div className="text-center mb-16">
             <h2 className="font-serif text-3xl md:text-4xl font-bold mb-4">
@@ -173,7 +173,7 @@ export default function Home() {
             </Button>
           </Link>
         </div>
-      </section>
+      </section> */}
     </div>
   );
 }
