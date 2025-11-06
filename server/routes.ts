@@ -170,22 +170,46 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       console.log("[API.box] Callback received:", JSON.stringify(req.body, null, 2));
       const callbackData = req.body;
-      const { taskId, status, audioUrl, audioUrls, title } = callbackData;
+      
+      // API.box uses different field names - handle both formats
+      const taskId = callbackData.taskId || callbackData.task_id || callbackData.data?.task_id;
+      const status = callbackData.status || (callbackData.code === 200 ? "complete" : "failed");
+      
+      // Extract audio URLs from the callback structure
+      // API.box callback format: { code, msg, data: { task_id, audio_list: [{ audio_url, stream_audio_url, title, ... }] } }
+      let audioUrl: string | undefined;
+      let audioUrls: string[] | undefined;
+      let title: string | undefined;
+
+      if (callbackData.data?.audio_list && Array.isArray(callbackData.data.audio_list) && callbackData.data.audio_list.length > 0) {
+        // New format: audio_list array
+        const firstAudio = callbackData.data.audio_list[0];
+        audioUrl = firstAudio.audio_url || firstAudio.stream_audio_url || firstAudio.source_audio_url;
+        audioUrls = callbackData.data.audio_list.map((audio: any) => 
+          audio.audio_url || audio.stream_audio_url || audio.source_audio_url
+        ).filter(Boolean);
+        title = firstAudio.title;
+      } else {
+        // Fallback to old format
+        audioUrl = callbackData.audioUrl || callbackData.audio_url;
+        audioUrls = callbackData.audioUrls || callbackData.audio_urls;
+        title = callbackData.title;
+      }
 
       if (!taskId) {
-        console.warn("[API.box] Callback missing taskId");
+        console.warn("[API.box] Callback missing taskId/task_id");
         return res.status(400).json({ error: "taskId is required" });
       }
 
       // Find the composition by taskId
       const compositionId = taskIdToCompositionId.get(taskId);
       if (!compositionId) {
-        console.warn(`No composition found for taskId: ${taskId}`);
+        console.warn(`[API.box] No composition found for taskId: ${taskId}`);
         return res.status(404).json({ error: "Composition not found for this taskId" });
       }
 
       // If generation is complete, update the composition
-      if (status === "complete" && (audioUrl || audioUrls)) {
+      if (status === "complete" && (audioUrl || (audioUrls && audioUrls.length > 0))) {
         const composition = await storage.getComposition(compositionId);
         if (composition) {
           const finalAudioUrl = audioUrl || (audioUrls && audioUrls[0]);
@@ -193,14 +217,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
             audioUrl: finalAudioUrl || null,
             title: title || composition.title,
           });
-          console.log(`Updated composition ${compositionId} with audio URL`);
+          console.log(`[API.box] Updated composition ${compositionId} with audio URL: ${finalAudioUrl}`);
         }
+      } else {
+        console.log(`[API.box] Callback received for taskId ${taskId} but no audio URL yet (status: ${status})`);
       }
 
       // Always return 200 to acknowledge callback
       res.status(200).json({ success: true, message: "Callback received" });
     } catch (error: any) {
-      console.error("Callback error:", error);
+      console.error("[API.box] Callback error:", error);
       // Still return 200 to prevent API.box from retrying
       res.status(200).json({ success: false, error: error.message });
     }
