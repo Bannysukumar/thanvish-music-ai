@@ -205,11 +205,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           audioUrl = firstItem.audio_url || firstItem.stream_audio_url || firstItem.source_audio_url;
           audioUrls = callbackData.data.data.map((item: any) => 
             item.audio_url || item.stream_audio_url || item.source_audio_url
-<<<<<<< Current (Your changes)
-          ).filter((url: string) => url && url.trim() !== "");
-=======
           ).filter((url: string) => url && url.trim() !== ""); // Filter out empty strings
->>>>>>> Incoming (Background Agent changes)
         }
         title = firstItem.title;
       }
