@@ -6,24 +6,42 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Layout } from "@/components/Layout";
 import { SplashScreen } from "@/components/SplashScreen";
+import { AuthProvider } from "@/contexts/AuthContext";
+import { DashboardRouter } from "@/components/dashboard/DashboardRouter";
 import Home from "@/pages/Home";
 import About from "@/pages/About";
-import Generator from "@/pages/Generator";
 import Learn from "@/pages/Learn";
 import Blog from "@/pages/Blog";
 import Contact from "@/pages/Contact";
 import NotFound from "@/pages/not-found";
 
-function Router() {
+function PublicRouter() {
   return (
+    <Layout>
     <Switch>
       <Route path="/" component={Home} />
       <Route path="/about" component={About} />
-      <Route path="/generator" component={Generator} />
       <Route path="/learn" component={Learn} />
       <Route path="/blog" component={Blog} />
       <Route path="/contact" component={Contact} />
       <Route component={NotFound} />
+      </Switch>
+    </Layout>
+  );
+}
+
+function Router() {
+  return (
+    <Switch>
+      {/* Protected dashboard routes - all dashboard paths */}
+      <Route path="/dashboard" component={DashboardRouter} />
+      <Route path="/dashboard/generate" component={DashboardRouter} />
+      <Route path="/dashboard/library" component={DashboardRouter} />
+      <Route path="/dashboard/profile" component={DashboardRouter} />
+      <Route path="/dashboard/upgrade" component={DashboardRouter} />
+
+      {/* Public routes with Layout */}
+      <Route component={PublicRouter} />
     </Switch>
   );
 }
@@ -33,16 +51,16 @@ function App() {
 
   return (
     <QueryClientProvider client={queryClient}>
+      <AuthProvider>
       <TooltipProvider>
         {showSplash ? (
           <SplashScreen onComplete={() => setShowSplash(false)} />
         ) : (
-          <Layout>
             <Router />
-          </Layout>
         )}
         <Toaster />
       </TooltipProvider>
+      </AuthProvider>
     </QueryClientProvider>
   );
 }

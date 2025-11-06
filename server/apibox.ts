@@ -20,6 +20,7 @@ export interface GenerateMusicParams {
   tempo: number;
   mood: string;
   gender?: string; // Optional voice gender preference
+  language?: string; // Optional language for lyrics/vocals
 }
 
 export interface GenerateMusicResponse {
@@ -46,10 +47,15 @@ export interface MusicGenerationStatus {
 export async function generateMusicComposition(
   params: GenerateMusicParams
 ): Promise<GenerateMusicResponse> {
-  const { raga, tala, instruments, tempo, mood, gender } = params;
+  const { raga, tala, instruments, tempo, mood, gender, language } = params;
 
   // Build prompt from Indian classical music parameters
-  const prompt = `Indian classical music composition: Raga ${raga}, Tala ${tala}, Instruments: ${instruments.join(", ")}, Tempo: ${tempo} BPM, Mood: ${mood}. Create an authentic classical piece that honors traditional principles.`;
+  let prompt = `Indian classical music composition: Raga ${raga}, Tala ${tala}, Instruments: ${instruments.join(", ")}, Tempo: ${tempo} BPM, Mood: ${mood}. Create an authentic classical piece that honors traditional principles.`;
+  
+  // Add language preference to prompt if specified
+  if (language) {
+    prompt += ` Language for lyrics/vocals: ${language}.`;
+  }
 
   // Build style description
   const style = `Indian Classical Music - ${raga} in ${tala} - ${instruments.join(", ")}`;

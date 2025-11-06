@@ -1,10 +1,13 @@
+import { useState } from "react";
 import { Link } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Sparkles, BookOpen, Music2, Zap, Users, Globe } from "lucide-react";
 import heroImage from "@assets/generated_images/Hero_image_classical_musicians_b2fe8088.png";
+import { AuthModal } from "@/components/auth/AuthModal";
 
 export default function Home() {
+  const [authModalOpen, setAuthModalOpen] = useState(false);
   const features = [
     {
       icon: Sparkles,
@@ -62,12 +65,15 @@ export default function Home() {
               through the rich traditions of Hindustani and Carnatic music.
             </p>
             <div className="flex flex-wrap gap-4">
-              <Link href="/generator">
-                <Button size="lg" className="px-8 py-6 text-lg" data-testid="button-start-creating">
+              <Button 
+                size="lg" 
+                className="px-8 py-6 text-lg" 
+                data-testid="button-start-creating"
+                onClick={() => setAuthModalOpen(true)}
+              >
                   <Sparkles className="w-5 h-5 mr-2" />
                   Start Creating
                 </Button>
-              </Link>
               <Link href="/learn">
                 <Button size="lg" variant="outline" className="px-8 py-6 text-lg backdrop-blur-md bg-background/90" data-testid="button-explore-lessons">
                   <BookOpen className="w-5 h-5 mr-2" />
@@ -174,6 +180,9 @@ export default function Home() {
           </Link>
         </div>
       </section> */}
+
+      {/* Authentication Modal */}
+      <AuthModal open={authModalOpen} onOpenChange={setAuthModalOpen} />
     </div>
   );
 }

@@ -89,6 +89,7 @@ export const musicGenerationRequestSchema = z.object({
   tempo: z.number().min(40).max(200),
   mood: z.string().min(1, "Mood is required"),
   gender: z.string().optional(), // Optional voice gender preference
+  language: z.string().optional(), // Optional language for lyrics/vocals
 });
 
 export type MusicGenerationRequest = z.infer<typeof musicGenerationRequestSchema>;

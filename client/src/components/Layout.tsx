@@ -1,5 +1,5 @@
 import { Link, useLocation } from "wouter";
-import { Music, BookOpen, Sparkles, FileText, Mail, Menu, X, Sun, Moon } from "lucide-react";
+import { Music, BookOpen, FileText, Mail, Menu, X, Sun, Moon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useState, useEffect } from "react";
 
@@ -26,7 +26,6 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const navItems = [
     { path: "/", label: "Home", icon: Music },
     { path: "/about", label: "About", icon: BookOpen },
-    { path: "/generator", label: "Generator", icon: Sparkles },
     { path: "/learn", label: "Learn", icon: BookOpen },
     { path: "/blog", label: "Blog", icon: FileText },
     { path: "/contact", label: "Contact", icon: Mail },

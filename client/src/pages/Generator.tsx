@@ -6,10 +6,11 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
 import { Badge } from "@/components/ui/badge";
-import { Sparkles, Play, Download, Loader2, Music } from "lucide-react";
+import { Sparkles, Play, Download, Loader2, Music, Save } from "lucide-react";
 import { useMutation } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { saveComposition } from "@/lib/compositionStorage";
 import type { MusicGenerationRequest } from "@shared/schema";
 
 const RAGAS = [
@@ -50,6 +51,21 @@ const MOODS = [
   "Melancholic",
 ];
 
+const LANGUAGES = [
+  { value: "hindi", label: "Hindi", description: "Most common language for Indian classical music" },
+  { value: "sanskrit", label: "Sanskrit", description: "Traditional language for classical compositions" },
+  { value: "english", label: "English", description: "English lyrics" },
+  { value: "tamil", label: "Tamil", description: "South Indian classical tradition" },
+  { value: "telugu", label: "Telugu", description: "Carnatic music tradition" },
+  { value: "bengali", label: "Bengali", description: "Eastern Indian classical tradition" },
+  { value: "marathi", label: "Marathi", description: "Western Indian classical tradition" },
+  { value: "gujarati", label: "Gujarati", description: "Western Indian classical tradition" },
+  { value: "punjabi", label: "Punjabi", description: "North Indian classical tradition" },
+  { value: "kannada", label: "Kannada", description: "South Indian classical tradition" },
+  { value: "malayalam", label: "Malayalam", description: "South Indian classical tradition" },
+  { value: "instrumental", label: "Instrumental Only", description: "No vocals, pure instrumental" },
+];
+
 export default function Generator() {
   const { toast } = useToast();
   const [raga, setRaga] = useState("");
@@ -58,6 +74,7 @@ export default function Generator() {
   const [tempo, setTempo] = useState([100]);
   const [mood, setMood] = useState("");
   const [gender, setGender] = useState<string>("");
+  const [language, setLanguage] = useState<string>("");
   const [generatedComposition, setGeneratedComposition] = useState<any>(null);
   const [audioSrc, setAudioSrc] = useState<string>("");
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
@@ -88,14 +105,34 @@ export default function Generator() {
                 const updatedComposition = {
                   ...data,
                   audioUrl: status.audioUrl,
-                  title: status.title || data.title,
+                  title: status.title || `${data.raga} in ${data.tala}`,
                 };
                 setGeneratedComposition(updatedComposition);
                 setAudioSrc(status.audioUrl);
                 setIsGenerating(false);
+                
+                // Automatically save to library
+                try {
+                  const languageLabel = data.language 
+                    ? LANGUAGES.find((l) => l.value === data.language)?.label || data.language 
+                    : null;
+                  saveComposition({
+                    title: updatedComposition.title,
+                    raga: data.raga,
+                    tala: data.tala,
+                    instruments: data.instruments,
+                    tempo: data.tempo,
+                    mood: data.mood,
+                    audioUrl: status.audioUrl,
+                    description: `Generated ${data.raga} composition in ${data.tala} with ${data.instruments.join(", ")}${languageLabel ? ` in ${languageLabel}` : ""}`,
+                  });
+                } catch (error) {
+                  console.error("Error saving composition:", error);
+                }
+                
                 toast({
                   title: "Composition Generated!",
-                  description: "Your classical music piece is ready to play.",
+                  description: "Your classical music piece is ready to play and has been saved to your library.",
                 });
               } else if (status.status === "failed") {
                 setIsGenerating(false);
@@ -361,6 +398,7 @@ export default function Generator() {
       tempo: tempo[0],
       mood,
       gender: gender || undefined, // Include gender if selected
+      language: language || undefined, // Include language if selected
     });
   };
 
@@ -526,6 +564,32 @@ export default function Generator() {
                 </RadioGroup>
               </CardContent>
             </Card>
+
+            <Card data-testid="card-language-selection">
+              <CardHeader>
+                <CardTitle>Language</CardTitle>
+                <CardDescription>Select the language for lyrics/vocals (optional)</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <Select value={language} onValueChange={setLanguage}>
+                  <SelectTrigger data-testid="select-language">
+                    <SelectValue placeholder="Choose a language (optional)" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {LANGUAGES.map((lang) => (
+                      <SelectItem key={lang.value} value={lang.value}>
+                        {lang.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {language && (
+                  <p className="text-sm text-muted-foreground mt-3" data-testid="language-description">
+                    {LANGUAGES.find((l) => l.value === language)?.description}
+                  </p>
+                )}
+              </CardContent>
+            </Card>
           </div>
 
           <div className="space-y-6">
@@ -572,6 +636,12 @@ export default function Generator() {
                     <span className="text-muted-foreground">Voice Gender:</span>
                     <span className="font-medium" data-testid="summary-gender">
                       {gender ? gender.charAt(0).toUpperCase() + gender.slice(1) : "Not selected"}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Language:</span>
+                    <span className="font-medium" data-testid="summary-language">
+                      {language ? LANGUAGES.find((l) => l.value === language)?.label || language : "Not selected"}
                     </span>
                   </div>
                 </div>
@@ -659,6 +729,11 @@ export default function Generator() {
                           Download
                         </a>
                       </Button>
+                    </div>
+                    <div className="pt-2">
+                      <p className="text-xs text-muted-foreground text-center">
+                        ✓ Saved to your library
+                      </p>
                     </div>
                   </div>
                 )}
