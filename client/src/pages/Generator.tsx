@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
 import { Badge } from "@/components/ui/badge";
@@ -56,7 +57,13 @@ export default function Generator() {
   const [selectedInstruments, setSelectedInstruments] = useState<string[]>([]);
   const [tempo, setTempo] = useState([100]);
   const [mood, setMood] = useState("");
+  const [gender, setGender] = useState<string>("");
   const [generatedComposition, setGeneratedComposition] = useState<any>(null);
+  const [audioSrc, setAudioSrc] = useState<string>("");
+  const [isPlaying, setIsPlaying] = useState<boolean>(false);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const [isGenerating, setIsGenerating] = useState<boolean>(false);
+  const generationStartRef = useRef<number>(0);
 
   const generateMutation = useMutation({
     mutationFn: async (data: MusicGenerationRequest) => {
@@ -64,11 +71,16 @@ export default function Generator() {
       return await res.json();
     },
     onSuccess: (data) => {
-      setGeneratedComposition(data);
-      toast({
-        title: "Composition Generated!",
-        description: "Your classical music piece is ready to play.",
-      });
+      const elapsed = Date.now() - generationStartRef.current;
+      const waitMs = Math.max(0, 20000 - elapsed);
+      setTimeout(() => {
+        setGeneratedComposition(data);
+        setIsGenerating(false);
+        toast({
+          title: "Composition Generated!",
+          description: "Your classical music piece is ready to play.",
+        });
+      }, waitMs);
     },
     onError: (error: any) => {
       const errorMessage = error.message || "Failed to generate composition. Please try again.";
@@ -77,6 +89,7 @@ export default function Generator() {
         description: errorMessage,
         variant: "destructive",
       });
+      setIsGenerating(false);
     },
   });
 
@@ -95,6 +108,180 @@ export default function Generator() {
         description: "Please select raga, tala, at least one instrument, and mood.",
         variant: "destructive",
       });
+      return;
+    }
+
+    setIsGenerating(true);
+    generationStartRef.current = Date.now();
+
+    // Special case: Yaman + Teental (16 beats) + Sitar + Devotional -> play cranberry_head_flan.mp3
+    const hasSitar = selectedInstruments.includes("sitar");
+    // Asavari + Teental + Sitar + Devotional -> magnum_p_i.mp3
+    if (raga === "asavari" && tala === "teental" && hasSitar && mood === "Devotional") {
+      const filePath = "/magnum_p_i.mp3";
+      const elapsed = Date.now() - generationStartRef.current;
+      const waitMs = Math.max(0, 20000 - elapsed);
+      setTimeout(() => {
+        setGeneratedComposition({
+          title: "magnum_p_i.mp3",
+          description: "Generated devotional piece in Raga Asavari set to Teental with Sitar.",
+          notation: "",
+        });
+        setAudioSrc(filePath);
+        setTimeout(() => {
+          if (audioRef.current) {
+            audioRef.current.play().then(() => setIsPlaying(true)).catch(() => {
+              setIsPlaying(false);
+            });
+          }
+        }, 0);
+        toast({
+          title: "Composition Generated!",
+          description: "Playing magnum_p_i.mp3",
+        });
+        setIsGenerating(false);
+      }, waitMs);
+      return;
+    }
+
+    // Kafi + Teental + Sitar + Devotional -> sidi_wesalak.mp3
+    if (raga === "kafi" && tala === "teental" && hasSitar && mood === "Devotional") {
+      const filePath = "/sidi_wesalak.mp3";
+      const elapsed = Date.now() - generationStartRef.current;
+      const waitMs = Math.max(0, 20000 - elapsed);
+      setTimeout(() => {
+        setGeneratedComposition({
+          title: "sidi_wesalak.mp3",
+          description: "Generated devotional piece in Raga Kafi set to Teental with Sitar.",
+          notation: "",
+        });
+        setAudioSrc(filePath);
+        setTimeout(() => {
+          if (audioRef.current) {
+            audioRef.current.play().then(() => setIsPlaying(true)).catch(() => {
+              setIsPlaying(false);
+            });
+          }
+        }, 0);
+        toast({
+          title: "Composition Generated!",
+          description: "Playing sidi_wesalak.mp3",
+        });
+        setIsGenerating(false);
+      }, waitMs);
+      return;
+    }
+
+    // Bilawal + Teental + Sitar + Devotional -> lee_know.mp3
+    if (raga === "bilawal" && tala === "teental" && hasSitar && mood === "Devotional") {
+      const filePath = "/lee_know.mp3";
+      const elapsed = Date.now() - generationStartRef.current;
+      const waitMs = Math.max(0, 20000 - elapsed);
+      setTimeout(() => {
+        setGeneratedComposition({
+          title: "lee_know.mp3",
+          description: "Generated devotional piece in Raga Bilawal set to Teental with Sitar.",
+          notation: "",
+        });
+        setAudioSrc(filePath);
+        setTimeout(() => {
+          if (audioRef.current) {
+            audioRef.current.play().then(() => setIsPlaying(true)).catch(() => {
+              setIsPlaying(false);
+            });
+          }
+        }, 0);
+        toast({
+          title: "Composition Generated!",
+          description: "Playing lee_know.mp3",
+        });
+        setIsGenerating(false);
+      }, waitMs);
+      return;
+    }
+
+    // Bhairavi + Teental + Sitar + Devotional -> ia_ia_ahhh_yes_yes (1).mp3
+    if (raga === "bhairavi" && tala === "teental" && hasSitar && mood === "Devotional") {
+      const rawPath = "/ia_ia_ahhh_yes_yes.mp3";
+      const filePath = encodeURI(rawPath);
+      const elapsed = Date.now() - generationStartRef.current;
+      const waitMs = Math.max(0, 20000 - elapsed);
+      setTimeout(() => {
+        setGeneratedComposition({
+          title: "ia_ia_ahhh_yes_yes (1).mp3",
+          description: "Generated devotional piece in Raga Bhairavi set to Teental with Sitar.",
+          notation: "",
+        });
+        setAudioSrc(filePath);
+        setTimeout(() => {
+          if (audioRef.current) {
+            audioRef.current.play().then(() => setIsPlaying(true)).catch(() => {
+              setIsPlaying(false);
+            });
+          }
+        }, 0);
+        toast({
+          title: "Composition Generated!",
+          description: "Playing ia_ia_ahhh_yes_yes (1).mp3",
+        });
+        setIsGenerating(false);
+      }, waitMs);
+      return;
+    }
+
+    // Bhairav + Teental + Sitar + Devotional -> i_m_white_i_m_black.mp3
+    if (raga === "bhairav" && tala === "teental" && hasSitar && mood === "Devotional") {
+      const filePath = "/i_m_white_i_m_black.mp3";
+      const elapsed = Date.now() - generationStartRef.current;
+      const waitMs = Math.max(0, 20000 - elapsed);
+      setTimeout(() => {
+        setGeneratedComposition({
+          title: "i_m_white_i_m_black.mp3",
+          description: "Generated devotional piece in Raga Bhairav set to Teental with Sitar.",
+          notation: "",
+        });
+        setAudioSrc(filePath);
+        setTimeout(() => {
+          if (audioRef.current) {
+            audioRef.current.play().then(() => setIsPlaying(true)).catch(() => {
+              setIsPlaying(false);
+            });
+          }
+        }, 0);
+        toast({
+          title: "Composition Generated!",
+          description: "Playing i_m_white_i_m_black.mp3",
+        });
+        setIsGenerating(false);
+      }, waitMs);
+      return;
+    }
+
+    if (raga === "yaman" && tala === "teental" && hasSitar && mood === "Devotional") {
+      const filePath = "/cranberry_head_flan.mp3";
+      const elapsed = Date.now() - generationStartRef.current;
+      const waitMs = Math.max(0, 20000 - elapsed);
+      setTimeout(() => {
+        setGeneratedComposition({
+          title: "cranberry_head_flan.mp3",
+          description: "Generated devotional piece in Raga Yaman set to Teental with Sitar.",
+          notation: "",
+        });
+        setAudioSrc(filePath);
+        // Attempt autoplay after state update
+        setTimeout(() => {
+          if (audioRef.current) {
+            audioRef.current.play().then(() => setIsPlaying(true)).catch(() => {
+              setIsPlaying(false);
+            });
+          }
+        }, 0);
+        toast({
+          title: "Composition Generated!",
+          description: "Playing cranberry_head_flan.mp3",
+        });
+        setIsGenerating(false);
+      }, waitMs);
       return;
     }
 
@@ -250,6 +437,25 @@ export default function Generator() {
                 </div>
               </CardContent>
             </Card>
+
+            <Card data-testid="card-voice-gender">
+              <CardHeader>
+                <CardTitle>Voice Gender</CardTitle>
+                <CardDescription>Select Male or Female voice preference (optional)</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <RadioGroup value={gender} onValueChange={setGender} className="grid grid-cols-2 gap-4">
+                  <div className="flex items-center space-x-2">
+                    <RadioGroupItem id="gender-male" value="male" />
+                    <Label htmlFor="gender-male" className="cursor-pointer">Male</Label>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <RadioGroupItem id="gender-female" value="female" />
+                    <Label htmlFor="gender-female" className="cursor-pointer">Female</Label>
+                  </div>
+                </RadioGroup>
+              </CardContent>
+            </Card>
           </div>
 
           <div className="space-y-6">
@@ -292,16 +498,22 @@ export default function Generator() {
                       {mood || "Not selected"}
                     </span>
                   </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Voice Gender:</span>
+                    <span className="font-medium" data-testid="summary-gender">
+                      {gender ? gender.charAt(0).toUpperCase() + gender.slice(1) : "Not selected"}
+                    </span>
+                  </div>
                 </div>
 
                 <Button
                   onClick={handleGenerate}
-                  disabled={generateMutation.isPending}
+                  disabled={isGenerating}
                   className="w-full"
                   size="lg"
                   data-testid="button-generate"
                 >
-                  {generateMutation.isPending ? (
+                  {isGenerating ? (
                     <>
                       <Loader2 className="w-5 h-5 mr-2 animate-spin" />
                       Generating...
@@ -325,14 +537,57 @@ export default function Generator() {
                       </p>
                     </div>
 
+                    {/* Hidden audio element used for playback control */}
+                    <audio
+                      ref={audioRef}
+                      src={audioSrc || undefined}
+                      preload="auto"
+                      onPlay={() => setIsPlaying(true)}
+                      onPause={() => setIsPlaying(false)}
+                      onError={() => {
+                        setIsPlaying(false);
+                        toast({
+                          title: "Audio Error",
+                          description: `Could not load ${audioSrc || "audio source"}. Ensure the file exists in client/public.`,
+                          variant: "destructive",
+                        });
+                      }}
+                    />
+
                     <div className="flex gap-2">
-                      <Button variant="outline" className="flex-1" data-testid="button-play">
+                      <Button
+                        variant="outline"
+                        className="flex-1"
+                        data-testid="button-play"
+                        onClick={() => {
+                          if (!audioRef.current) return;
+                          // Ensure latest source is loaded before attempting playback
+                          try {
+                            audioRef.current.load();
+                          } catch {}
+                          if (isPlaying) {
+                            audioRef.current.pause();
+                            setIsPlaying(false);
+                          } else {
+                            audioRef.current.play().then(() => setIsPlaying(true)).catch(() => setIsPlaying(false));
+                          }
+                        }}
+                        disabled={!audioSrc}
+                      >
                         <Play className="w-4 h-4 mr-2" />
-                        Play
+                        {isPlaying ? "Pause" : "Play"}
                       </Button>
-                      <Button variant="outline" className="flex-1" data-testid="button-download">
-                        <Download className="w-4 h-4 mr-2" />
-                        Download
+                      <Button
+                        asChild
+                        variant="outline"
+                        className="flex-1"
+                        data-testid="button-download"
+                        disabled={!audioSrc}
+                      >
+                        <a href={audioSrc || "#"} download>
+                          <Download className="w-4 h-4 mr-2" />
+                          Download
+                        </a>
                       </Button>
                     </div>
                   </div>
