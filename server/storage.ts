@@ -14,6 +14,7 @@ export interface IStorage {
   getComposition(id: string): Promise<Composition | undefined>;
   getAllCompositions(): Promise<Composition[]>;
   createComposition(composition: InsertComposition): Promise<Composition>;
+  updateComposition(id: string, updates: Partial<InsertComposition>): Promise<Composition | undefined>;
 
   getLearningModule(id: string): Promise<LearningModule | undefined>;
   getAllLearningModules(): Promise<LearningModule[]>;
@@ -199,6 +200,22 @@ export class MemStorage implements IStorage {
     };
     this.compositions.set(id, composition);
     return composition;
+  }
+
+  async updateComposition(id: string, updates: Partial<InsertComposition>): Promise<Composition | undefined> {
+    const existing = this.compositions.get(id);
+    if (!existing) {
+      return undefined;
+    }
+    const updated: Composition = {
+      ...existing,
+      ...updates,
+      id, // Ensure ID doesn't change
+      description: updates.description !== undefined ? updates.description : existing.description,
+      audioUrl: updates.audioUrl !== undefined ? updates.audioUrl : existing.audioUrl,
+    };
+    this.compositions.set(id, updated);
+    return updated;
   }
 
   async getLearningModule(id: string): Promise<LearningModule | undefined> {

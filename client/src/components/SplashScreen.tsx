@@ -19,32 +19,15 @@ export function SplashScreen({ onComplete }: SplashScreenProps) {
     audio.volume = 0.7; // Background music volume
     audio.preload = "auto";
     
-    // Start audio on first user interaction (click, touch, or keypress)
+    // Only start audio on first user interaction (click, touch, or keypress)
     const startAudio = () => {
       if (audioRef.current) {
         audioRef.current.play().catch(() => {});
       }
     };
-    
-    // Try to play audio immediately
-    const playPromise = audio.play();
-    
-    if (playPromise !== undefined) {
-      playPromise
-        .then(() => {
-          // Audio started playing successfully
-          console.log("Background music started");
-        })
-        .catch((error) => {
-          // Autoplay was prevented - will start on first user interaction
-          console.warn("Audio autoplay prevented, will start on user interaction:", error);
-          
-          // Add listeners to start audio on first interaction
-          document.addEventListener("click", startAudio, { once: true });
-          document.addEventListener("touchstart", startAudio, { once: true });
-          document.addEventListener("keydown", startAudio, { once: true });
-        });
-    }
+    document.addEventListener("click", startAudio, { once: true });
+    document.addEventListener("touchstart", startAudio, { once: true });
+    document.addEventListener("keydown", startAudio, { once: true });
 
     // Cleanup on unmount
     return () => {

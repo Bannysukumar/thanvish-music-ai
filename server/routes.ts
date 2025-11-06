@@ -1,51 +1,208 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
-import { generateMusicComposition } from "./openai";
+import { generateMusicComposition, getMusicGenerationStatus } from "./apibox";
 import {
   musicGenerationRequestSchema,
   insertContactSubmissionSchema,
 } from "@shared/schema";
 
 export async function registerRoutes(app: Express): Promise<Server> {
+  // Store taskId to compositionId mapping temporarily
+  const taskIdToCompositionId = new Map<string, string>();
+  
+  // Cache to remember that API status endpoint doesn't exist (to avoid trying every time)
+  let statusEndpointAvailable: boolean | null = null;
+
   app.post("/api/generate-music", async (req, res) => {
     try {
       const validatedData = musicGenerationRequestSchema.parse(req.body);
 
-      const aiResult = await generateMusicComposition(validatedData);
+      // Start music generation (async - returns taskId)
+      const { taskId } = await generateMusicComposition(validatedData);
 
+      // Create composition with pending status
       const composition = await storage.createComposition({
-        title: aiResult.title,
+        title: `${validatedData.raga} in ${validatedData.tala}`,
         raga: validatedData.raga,
         tala: validatedData.tala,
         instruments: validatedData.instruments,
         tempo: validatedData.tempo,
         mood: validatedData.mood,
-        description: aiResult.description,
+        description: `Generating ${validatedData.raga} composition in ${validatedData.tala} with ${validatedData.instruments.join(", ")}`,
         audioUrl: null,
       });
 
+      // Store mapping for callback/polling
+      taskIdToCompositionId.set(taskId, composition.id);
+
       res.json({
         ...composition,
-        notation: aiResult.notation,
+        taskId,
+        status: "pending",
+        message: "Music generation started. Use the taskId to poll for status or wait for callback.",
       });
     } catch (error: any) {
       console.error("Music generation error:", error);
       
       // Determine appropriate status code based on error type
       let statusCode = 400;
-      if (error.message?.includes("quota") || error.message?.includes("rate limit")) {
+      if (error.message?.includes("quota") || error.message?.includes("rate limit") || error.message?.includes("frequency")) {
         statusCode = 429; // Too Many Requests
       } else if (error.message?.includes("authentication") || error.message?.includes("API key")) {
         statusCode = 401; // Unauthorized
-      } else if (error.message?.includes("unavailable")) {
+      } else if (error.message?.includes("unavailable") || error.message?.includes("maintenance")) {
         statusCode = 503; // Service Unavailable
+      } else if (error.message?.includes("credits")) {
+        statusCode = 429; // Insufficient credits
       }
       
       res.status(statusCode).json({
         error: error.message || "Failed to generate music composition",
         code: error.code || "GENERATION_ERROR",
       });
+    }
+  });
+
+  // Polling endpoint to check generation status
+  app.get("/api/generate-music/:taskId/status", async (req, res) => {
+    try {
+      const { taskId } = req.params;
+      
+      // Try to get status from API, but if it fails (404), return pending status
+      // The API likely uses callbacks only, so we'll rely on the callback endpoint
+      // Skip API call if we know the endpoint doesn't exist
+      if (statusEndpointAvailable === false) {
+        // We know the status endpoint doesn't exist, check local storage for completed composition
+        const compositionId = taskIdToCompositionId.get(taskId);
+        if (compositionId) {
+          const composition = await storage.getComposition(compositionId);
+          if (composition && composition.audioUrl) {
+            // Composition already has audio URL (callback worked)
+            return res.json({
+              taskId,
+              status: "complete",
+              audioUrl: composition.audioUrl,
+              title: composition.title,
+            });
+          }
+        }
+        // Return pending - waiting for callback
+        return res.json({
+          taskId,
+          status: "pending",
+          message: "Waiting for callback...",
+        });
+      }
+
+      try {
+        const status = await getMusicGenerationStatus(taskId);
+        // If we got here, the status endpoint works
+        statusEndpointAvailable = true;
+
+        // If generation is complete, update the composition
+        if (status.data.status === "complete" && status.data.audioUrl) {
+          const compositionId = taskIdToCompositionId.get(taskId);
+          if (compositionId) {
+            const composition = await storage.getComposition(compositionId);
+            if (composition) {
+              // Update with audio URL (using first audioUrl if multiple)
+              const audioUrl = status.data.audioUrl || (status.data.audioUrls && status.data.audioUrls[0]);
+              await storage.updateComposition(compositionId, {
+                audioUrl: audioUrl || null,
+                title: status.data.title || composition.title,
+              });
+            }
+          }
+        }
+
+        res.json({
+          taskId: status.data.taskId,
+          status: status.data.status,
+          audioUrl: status.data.audioUrl || (status.data.audioUrls && status.data.audioUrls[0]),
+          audioUrls: status.data.audioUrls,
+          title: status.data.title,
+          lyrics: status.data.lyrics,
+        });
+      } catch (statusError: any) {
+        // Mark that status endpoint doesn't exist (cache this to avoid trying again)
+        if (statusError.message?.includes("Status endpoint not found") || 
+            statusError.message?.includes("404") ||
+            statusError.message?.includes("not found")) {
+          statusEndpointAvailable = false;
+        }
+
+        // If status endpoint doesn't exist (404), check if we already have the composition with audio
+        // This means the callback already updated it
+        const compositionId = taskIdToCompositionId.get(taskId);
+        if (compositionId) {
+          const composition = await storage.getComposition(compositionId);
+          if (composition && composition.audioUrl) {
+            // Composition already has audio URL (callback worked)
+            return res.json({
+              taskId,
+              status: "complete",
+              audioUrl: composition.audioUrl,
+              title: composition.title,
+            });
+          }
+        }
+        
+        // Status endpoint not available - return pending status
+        // The callback will update the composition when ready
+        res.json({
+          taskId,
+          status: "pending",
+          message: "Waiting for callback...",
+        });
+      }
+    } catch (error: any) {
+      console.error("Status check error:", error);
+      res.status(500).json({
+        error: error.message || "Failed to check generation status",
+        code: "STATUS_CHECK_ERROR",
+      });
+    }
+  });
+
+  // Callback endpoint for API.box webhooks
+  app.post("/api/music-callback", async (req, res) => {
+    try {
+      console.log("[API.box] Callback received:", JSON.stringify(req.body, null, 2));
+      const callbackData = req.body;
+      const { taskId, status, audioUrl, audioUrls, title } = callbackData;
+
+      if (!taskId) {
+        console.warn("[API.box] Callback missing taskId");
+        return res.status(400).json({ error: "taskId is required" });
+      }
+
+      // Find the composition by taskId
+      const compositionId = taskIdToCompositionId.get(taskId);
+      if (!compositionId) {
+        console.warn(`No composition found for taskId: ${taskId}`);
+        return res.status(404).json({ error: "Composition not found for this taskId" });
+      }
+
+      // If generation is complete, update the composition
+      if (status === "complete" && (audioUrl || audioUrls)) {
+        const composition = await storage.getComposition(compositionId);
+        if (composition) {
+          const finalAudioUrl = audioUrl || (audioUrls && audioUrls[0]);
+          await storage.updateComposition(compositionId, {
+            audioUrl: finalAudioUrl || null,
+            title: title || composition.title,
+          });
+          console.log(`Updated composition ${compositionId} with audio URL`);
+        }
+      }
+
+      // Always return 200 to acknowledge callback
+      res.status(200).json({ success: true, message: "Callback received" });
+    } catch (error: any) {
+      console.error("Callback error:", error);
+      // Still return 200 to prevent API.box from retrying
+      res.status(200).json({ success: false, error: error.message });
     }
   });
 

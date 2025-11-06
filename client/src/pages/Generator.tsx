@@ -70,17 +70,79 @@ export default function Generator() {
       const res = await apiRequest("POST", "/api/generate-music", data);
       return await res.json();
     },
-    onSuccess: (data) => {
-      const elapsed = Date.now() - generationStartRef.current;
-      const waitMs = Math.max(0, 20000 - elapsed);
-      setTimeout(() => {
+    onSuccess: async (data) => {
+      // API.box returns taskId - we need to poll for status
+      if (data.taskId) {
+        // Start polling for status
+        const pollStatus = async (taskId: string) => {
+          const maxAttempts = 60; // Poll for up to 5 minutes (60 * 5 seconds)
+          let attempts = 0;
+
+          const checkStatus = async (): Promise<void> => {
+            try {
+              const res = await apiRequest("GET", `/api/generate-music/${taskId}/status`);
+              const status = await res.json();
+
+              if (status.status === "complete" && status.audioUrl) {
+                // Generation complete - update composition
+                const updatedComposition = {
+                  ...data,
+                  audioUrl: status.audioUrl,
+                  title: status.title || data.title,
+                };
+                setGeneratedComposition(updatedComposition);
+                setAudioSrc(status.audioUrl);
+                setIsGenerating(false);
+                toast({
+                  title: "Composition Generated!",
+                  description: "Your classical music piece is ready to play.",
+                });
+              } else if (status.status === "failed") {
+                setIsGenerating(false);
+                toast({
+                  title: "Generation Failed",
+                  description: "Music generation failed. Please try again.",
+                  variant: "destructive",
+                });
+              } else if (attempts < maxAttempts) {
+                // Still processing - poll again after 5 seconds
+                attempts++;
+                setTimeout(checkStatus, 5000);
+              } else {
+                // Timeout
+                setIsGenerating(false);
+                toast({
+                  title: "Generation Timeout",
+                  description: "Generation is taking longer than expected. Please check back later.",
+                  variant: "destructive",
+                });
+              }
+            } catch (error: any) {
+              console.error("Status check error:", error);
+              if (attempts < maxAttempts) {
+                attempts++;
+                setTimeout(checkStatus, 5000);
+              } else {
+                setIsGenerating(false);
+                toast({
+                  title: "Status Check Failed",
+                  description: "Unable to check generation status. Please try again later.",
+                  variant: "destructive",
+                });
+              }
+            }
+          };
+
+          // Start polling after 2 seconds
+          setTimeout(checkStatus, 2000);
+        };
+
+        pollStatus(data.taskId);
+      } else {
+        // Fallback for immediate response (shouldn't happen with API.box)
         setGeneratedComposition(data);
         setIsGenerating(false);
-        toast({
-          title: "Composition Generated!",
-          description: "Your classical music piece is ready to play.",
-        });
-      }, waitMs);
+      }
     },
     onError: (error: any) => {
       const errorMessage = error.message || "Failed to generate composition. Please try again.";
@@ -114,6 +176,11 @@ export default function Generator() {
     setIsGenerating(true);
     generationStartRef.current = Date.now();
 
+    // OLD MUSIC GENERATION CODE - COMMENTED OUT
+    // These special cases played local MP3 files instead of using the API
+    // Now all music generation goes through the API.box API
+    
+    /*
     // Special case: Yaman + Teental (16 beats) + Sitar + Devotional -> play cranberry_head_flan.mp3
     const hasSitar = selectedInstruments.includes("sitar");
     // Asavari + Teental + Sitar + Devotional -> magnum_p_i.mp3
@@ -284,13 +351,16 @@ export default function Generator() {
       }, waitMs);
       return;
     }
+    */
 
+    // Always use API.box for music generation
     generateMutation.mutate({
       raga,
       tala,
       instruments: selectedInstruments,
       tempo: tempo[0],
       mood,
+      gender: gender || undefined, // Include gender if selected
     });
   };
 
