@@ -176,9 +176,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       // Determine callback stage: text, first, or complete
       const callbackType = callbackData.data?.callbackType || callbackData.callbackType;
-      const isComplete = callbackType === "complete" || 
-                        (callbackData.msg?.toLowerCase().includes("all generated") || 
-                         callbackData.msg?.toLowerCase().includes("generated successfully"));
+      // Only consider complete if explicitly marked as "complete" stage
+      // Don't rely on message text as "Text generated successfully" is not the same as "complete"
+      const isComplete = callbackType === "complete";
       
       // Extract audio URLs from the callback structure
       // API.box callback format varies by stage:
@@ -198,16 +198,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
         title = firstAudio.title;
       }
       // Check for data array format (text/first stage - may have stream_audio_url but not final audio_url)
+      // NOTE: In text/first stages, audio_url is empty. Only use this format if we're in complete stage
+      // and have actual audio_url values (not just stream_audio_url)
       else if (callbackData.data?.data && Array.isArray(callbackData.data.data) && callbackData.data.data.length > 0) {
         const firstItem = callbackData.data.data[0];
-        // Only use stream_audio_url if we're in complete stage, otherwise wait
+        // Only extract URLs if we're in complete stage AND have actual audio_url (not empty)
+        // For text/first stages, audio_url is empty string, so we should wait for complete callback
         if (isComplete) {
-          audioUrl = firstItem.audio_url || firstItem.stream_audio_url || firstItem.source_audio_url;
-          audioUrls = callbackData.data.data.map((item: any) => 
-            item.audio_url || item.stream_audio_url || item.source_audio_url
-          ).filter((url: string) => url && url.trim() !== ""); // Filter out empty strings
+          // Only use audio_url if it's not empty - don't fall back to stream_audio_url for text stage
+          if (firstItem.audio_url && firstItem.audio_url.trim() !== "") {
+            audioUrl = firstItem.audio_url;
+            audioUrls = callbackData.data.data
+              .map((item: any) => item.audio_url)
+              .filter((url: string) => url && url.trim() !== "");
+          }
+          title = firstItem.title;
         }
-        title = firstItem.title;
+        // For text/first stages, don't extract anything - just wait
       }
       // Fallback to old format
       else {
