@@ -26,6 +26,7 @@ const teamMembers: TeamMember[] = [
     name: "K. Mounika",
     role: "Office Administration Head",
     bio: "Seasoned office administrator with 2 years of hands-on experience streamlining operations, vendor management, and artist logistics for multi-city productions.",
+    image: "/Mounika.jpg",
     expertise: ["Operations", "Vendor Coordination", "Event Logistics"],
   },
   {
@@ -46,6 +47,7 @@ const teamMembers: TeamMember[] = [
     name: "B. Jeevan",
     role: "Backend Developer",
     bio: "Backend engineer with 1+ year building resilient APIs and authentication flows. Passionate about bringing classical music to modern platforms through reliable infrastructure.",
+    image: "/jeevan.jpg",
     expertise: ["Node.js", "API Design", "Cloud Services"],
     email: "jeevanpaul766@gmail.com",
     linkedin: "bandandhamjeevan",
