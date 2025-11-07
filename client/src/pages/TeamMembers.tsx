@@ -26,6 +26,7 @@ const teamMembers: TeamMember[] = [
     name: "K. Mounika",
     role: "Office Administration Head",
     bio: "Seasoned office administrator with 2 years of hands-on experience streamlining operations, vendor management, and artist logistics for multi-city productions.",
+    image: "/Swetha.jpg",
     expertise: ["Operations", "Vendor Coordination", "Event Logistics"],
   },
   {
@@ -53,12 +54,14 @@ const teamMembers: TeamMember[] = [
     name: "G. Hari Krishna",
     role: "Digital Marketing Specialist",
     bio: "Performance marketer experienced in SEO, paid media, and content funnels tailored for music and wellness brands. Designs outreach journeys that convert curiosity into lifelong learners.",
+    image: "/G.Hari Krishna .jpg",
     expertise: ["SEO", "Performance Marketing", "Content Strategy"],
   },
   {
     name: "S. Muni Kumar",
     role: "R&D – Research & Development",
     bio: "Research engineer exploring new modalities in sound therapy, AI personalization, and learner analytics. Works closely with therapists to translate insights into product features.",
+    image: "/muni kumar.jpg",
     expertise: ["R&D", "Sound Therapy", "Product Innovation"],
   },
   {
@@ -71,6 +74,7 @@ const teamMembers: TeamMember[] = [
     name: "A. Sukumar",
     role: "Blockchain & Full Stack Developer",
     bio: "Professional blockchain developer and full-stack engineer with 2 years of freelance experience tokenizing digital assets and delivering end-to-end web platforms.",
+    image: "/sukumar.jpg",
     expertise: ["Blockchain", "Full Stack Development", "Smart Contracts"],
     email: "bannysukumar@gmail.com",
   },
