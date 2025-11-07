@@ -13,6 +13,9 @@ import { useToast } from "@/hooks/use-toast";
 import { saveComposition } from "@/lib/compositionStorage";
 import { Textarea } from "@/components/ui/textarea";
 import type { MusicGenerationRequest } from "@shared/schema";
+import { useAuth } from "@/contexts/AuthContext";
+import { db } from "@/lib/firebase";
+import { addDoc, collection, serverTimestamp } from "firebase/firestore";
 
 const RAGAS = [
   // Hindustani Ragas
@@ -185,6 +188,7 @@ const LANGUAGES = [
 
 export default function Generator() {
   const { toast } = useToast();
+  const { user } = useAuth();
   const [tradition, setTradition] = useState<string>(""); // Hindustani or Carnatic
   const [raga, setRaga] = useState("");
   const [tala, setTala] = useState("");
@@ -413,7 +417,7 @@ export default function Generator() {
                 setAudioSrc(status.audioUrl);
                 setIsGenerating(false);
                 
-                // Automatically save to library
+                // Automatically save to local library
                 try {
                   const languageLabel = data.language 
                     ? LANGUAGES.find((l) => l.value === data.language)?.label || data.language 
@@ -430,6 +434,31 @@ export default function Generator() {
                   });
                 } catch (error) {
                   console.error("Error saving composition:", error);
+                }
+
+                // Save to Firestore for authenticated users
+                try {
+                  if (user && !user.isGuest) {
+                    const languageLabel = data.language 
+                      ? LANGUAGES.find((l) => l.value === data.language)?.label || data.language 
+                      : null;
+                    await addDoc(collection(db, "users", user.id, "compositions"), {
+                      title: updatedComposition.title,
+                      raga: data.raga,
+                      tala: data.tala,
+                      instruments: data.instruments,
+                      tempo: data.tempo,
+                      mood: data.mood,
+                      audioUrl: status.audioUrl,
+                      language: languageLabel,
+                      prompt: (data as any).prompt || null,
+                      createdAt: serverTimestamp(),
+                      generatedAt: serverTimestamp(),
+                      source: "generator",
+                    });
+                  }
+                } catch (error) {
+                  console.error("Error saving composition to Firestore:", error);
                 }
                 
                 toast({
