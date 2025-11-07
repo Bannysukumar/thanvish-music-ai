@@ -18,6 +18,7 @@ const teamMembers: TeamMember[] = [
     name: "S. Rajyalakshmi",
     role: "Founder & CEO",
     bio: "Serial entrepreneur and classical music patron with 10+ years of experience incubating arts-tech ventures. Leads Thanvish AI's vision, partnerships, and artist network while championing inclusive music education.",
+    image: "/Founder S Rajyalakshmi.jpg",
     expertise: ["Leadership", "Strategic Partnerships", "Arts Management"],
     email: "rajyalakshmi@thanvish.ai",
   },
@@ -31,6 +32,7 @@ const teamMembers: TeamMember[] = [
     name: "K. Vijith Kumar Reddy",
     role: "Finance & Compliance Lead",
     bio: "Finance professional skilled in budgeting, grants management, and compliance for creative enterprises. Crafts sustainable models that keep our therapy and education programs viable.",
+    image: "/K Vijith Kumar Reddy.jpg",
     expertise: ["Financial Planning", "Compliance", "Grant Management"],
   },
   {
@@ -108,10 +110,19 @@ export default function TeamMembers() {
                 data-testid={`team-member-${index}`}
               >
                 <CardContent className="p-6">
-                  {/* Avatar Placeholder */}
+                {/* Avatar */}
+                {member.image ? (
+                  <img
+                    src={member.image}
+                    alt={member.name}
+                    className="w-20 h-20 rounded-full object-cover mb-4 mx-auto border border-border"
+                    loading="lazy"
+                  />
+                ) : (
                   <div className="w-20 h-20 rounded-full bg-primary/10 flex items-center justify-center mb-4 mx-auto">
                     <Users className="w-10 h-10 text-primary" />
                   </div>
+                )}
                   
                   {/* Name and Role */}
                   <div className="text-center mb-4">
