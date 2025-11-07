@@ -26,7 +26,6 @@ const teamMembers: TeamMember[] = [
     name: "K. Mounika",
     role: "Office Administration Head",
     bio: "Seasoned office administrator with 2 years of hands-on experience streamlining operations, vendor management, and artist logistics for multi-city productions.",
-    image: "/Swetha.jpg",
     expertise: ["Operations", "Vendor Coordination", "Event Logistics"],
   },
   {
@@ -40,6 +39,7 @@ const teamMembers: TeamMember[] = [
     name: "N. Venkateshwari",
     role: "Marketing Strategist",
     bio: "Brand architect who develops go-to-market campaigns blending storytelling with data-driven insights. Experienced in building digital communities for wellness and music startups.",
+    image: "/Swetha.jpg",
     expertise: ["Brand Strategy", "Campaign Management", "Community Growth"],
   },
   {
@@ -68,6 +68,7 @@ const teamMembers: TeamMember[] = [
     name: "M. Shusmanth Reddy",
     role: "Backend Developer",
     bio: "Developer with experience across Oracle, SQL optimization, and microservices. Builds secure data pipelines that power our recommendation engine and therapy scheduling tools.",
+    image: "/shushmanth.jpg",
     expertise: ["Oracle", "SQL", "Microservices"],
   },
   {
