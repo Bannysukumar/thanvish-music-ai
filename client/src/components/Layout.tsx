@@ -1,12 +1,14 @@
 import { Link, useLocation } from "wouter";
-import { Music, BookOpen, FileText, Mail, Menu, X, Sun, Moon } from "lucide-react";
+import { Music, BookOpen, FileText, Mail, Menu, X, Sun, Moon, Users, Sparkles, Target } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useState, useEffect } from "react";
+import { AuthModal } from "@/components/auth/AuthModal";
 
 export function Layout({ children }: { children: React.ReactNode }) {
   const [location] = useLocation();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [theme, setTheme] = useState<"light" | "dark">("light");
+  const [authModalOpen, setAuthModalOpen] = useState(false);
 
   useEffect(() => {
     const savedTheme = localStorage.getItem("theme") as "light" | "dark" | null;
@@ -26,8 +28,10 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const navItems = [
     { path: "/", label: "Home", icon: Music },
     { path: "/about", label: "About", icon: BookOpen },
+    { path: "/vision", label: "Our Vision", icon: Target },
     { path: "/learn", label: "Learn", icon: BookOpen },
     { path: "/blog", label: "Blog", icon: FileText },
+    { path: "/team", label: "Team Members", icon: Users },
     { path: "/contact", label: "Contact", icon: Mail },
   ];
 
@@ -55,6 +59,15 @@ export function Layout({ children }: { children: React.ReactNode }) {
                   </Button>
                 </Link>
               ))}
+              <Button
+                size="sm"
+                onClick={() => setAuthModalOpen(true)}
+                className="ml-2"
+                data-testid="nav-get-started"
+              >
+                <Sparkles className="w-4 h-4 mr-2" />
+                Get Started
+              </Button>
             </nav>
 
             <div className="flex items-center gap-2">
@@ -100,6 +113,17 @@ export function Layout({ children }: { children: React.ReactNode }) {
                     </Link>
                   );
                 })}
+                <Button
+                  className="w-full justify-start gap-3 mt-2"
+                  onClick={() => {
+                    setAuthModalOpen(true);
+                    setMobileMenuOpen(false);
+                  }}
+                  data-testid="mobile-nav-get-started"
+                >
+                  <Sparkles className="w-4 h-4" />
+                  Get Started
+                </Button>
               </div>
             </nav>
           )}
@@ -107,6 +131,8 @@ export function Layout({ children }: { children: React.ReactNode }) {
       </header>
 
       <main className="flex-1">{children}</main>
+
+      <AuthModal open={authModalOpen} onOpenChange={setAuthModalOpen} />
 
       <footer className="border-t bg-card">
         <div className="max-w-7xl mx-auto px-6 py-12">

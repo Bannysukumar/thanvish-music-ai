@@ -6,11 +6,12 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
 import { Badge } from "@/components/ui/badge";
-import { Sparkles, Play, Download, Loader2, Music, Save } from "lucide-react";
+import { Sparkles, Play, Download, Loader2, Music, Save, Mic, Square } from "lucide-react";
 import { useMutation } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { saveComposition } from "@/lib/compositionStorage";
+import { Textarea } from "@/components/ui/textarea";
 import type { MusicGenerationRequest } from "@shared/schema";
 
 const RAGAS = [
@@ -75,12 +76,196 @@ export default function Generator() {
   const [mood, setMood] = useState("");
   const [gender, setGender] = useState<string>("");
   const [language, setLanguage] = useState<string>("");
+  const [customPrompt, setCustomPrompt] = useState<string>("");
+  const [isRecording, setIsRecording] = useState<boolean>(false);
+  const [recognition, setRecognition] = useState<any>(null);
+  const recognitionRef = useRef<any>(null);
+  const finalTranscriptRef = useRef<string>(""); // Store all final transcripts
+  const silenceTimeoutRef = useRef<NodeJS.Timeout | null>(null); // Track silence timeout
+  const SILENCE_TIMEOUT = 2000; // Stop recording after 2 seconds of silence (2000ms)
   const [generatedComposition, setGeneratedComposition] = useState<any>(null);
   const [audioSrc, setAudioSrc] = useState<string>("");
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const [isGenerating, setIsGenerating] = useState<boolean>(false);
   const generationStartRef = useRef<number>(0);
+
+  // Initialize Speech Recognition
+  useEffect(() => {
+    // Check if browser supports Speech Recognition
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    
+    if (SpeechRecognition) {
+      const recognitionInstance = new SpeechRecognition();
+      recognitionInstance.continuous = true;
+      recognitionInstance.interimResults = true;
+      recognitionInstance.lang = "en-US"; // Can be made configurable
+
+      recognitionInstance.onresult = (event: any) => {
+        let interimTranscript = "";
+        let newFinalTranscript = "";
+
+        // Only process new results (from resultIndex onwards)
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          const transcript = event.results[i][0].transcript;
+          if (event.results[i].isFinal) {
+            // Add new final transcripts
+            newFinalTranscript += transcript + " ";
+          } else {
+            // Get the latest interim result
+            interimTranscript = transcript;
+          }
+        }
+
+        // Update the final transcript ref with new final results only
+        if (newFinalTranscript) {
+          finalTranscriptRef.current += newFinalTranscript;
+        }
+
+        // Combine all final transcripts with current interim result
+        const completeText = finalTranscriptRef.current + interimTranscript;
+        setCustomPrompt(completeText.substring(0, 1000)); // Respect max length
+
+        // Reset silence timeout - user is still speaking
+        if (silenceTimeoutRef.current) {
+          clearTimeout(silenceTimeoutRef.current);
+        }
+
+        // Set new timeout to auto-stop after silence
+        silenceTimeoutRef.current = setTimeout(() => {
+          if (recognitionRef.current) {
+            try {
+              recognitionRef.current.stop();
+              setIsRecording(false);
+              toast({
+                title: "Recording Stopped",
+                description: "Recording stopped automatically after detecting silence.",
+              });
+            } catch (error) {
+              console.error("Error auto-stopping recognition:", error);
+              setIsRecording(false);
+            }
+          }
+        }, SILENCE_TIMEOUT);
+      };
+
+      recognitionInstance.onerror = (event: any) => {
+        console.error("Speech recognition error:", event.error);
+        setIsRecording(false);
+        
+        // Clear silence timeout on error
+        if (silenceTimeoutRef.current) {
+          clearTimeout(silenceTimeoutRef.current);
+          silenceTimeoutRef.current = null;
+        }
+        
+        let errorMessage = "Speech recognition error occurred.";
+        if (event.error === "no-speech") {
+          errorMessage = "No speech detected. Please try again.";
+        } else if (event.error === "audio-capture") {
+          errorMessage = "No microphone found. Please check your microphone.";
+        } else if (event.error === "not-allowed") {
+          errorMessage = "Microphone permission denied. Please allow microphone access.";
+        }
+        
+        toast({
+          title: "Recording Error",
+          description: errorMessage,
+          variant: "destructive",
+        });
+      };
+
+      recognitionInstance.onend = () => {
+        setIsRecording(false);
+        // Clear silence timeout when recording ends
+        if (silenceTimeoutRef.current) {
+          clearTimeout(silenceTimeoutRef.current);
+          silenceTimeoutRef.current = null;
+        }
+        // Don't clear finalTranscriptRef here - keep the text even after recording stops
+      };
+
+      recognitionRef.current = recognitionInstance;
+      setRecognition(recognitionInstance);
+    } else {
+      console.warn("Speech Recognition API not supported in this browser");
+    }
+
+    // Cleanup on unmount
+    return () => {
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.stop();
+        } catch (e) {
+          // Ignore errors during cleanup
+        }
+      }
+      // Clear silence timeout on unmount
+      if (silenceTimeoutRef.current) {
+        clearTimeout(silenceTimeoutRef.current);
+        silenceTimeoutRef.current = null;
+      }
+      // Reset final transcript ref on unmount
+      finalTranscriptRef.current = "";
+    };
+  }, [toast]);
+
+  /**
+   * Toggle speech recognition
+   */
+  const toggleRecording = () => {
+    if (!recognitionRef.current) {
+      toast({
+        title: "Not Supported",
+        description: "Speech recognition is not supported in your browser. Please use Chrome, Edge, or Safari.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (isRecording) {
+      // Stop recording manually
+      // Clear silence timeout
+      if (silenceTimeoutRef.current) {
+        clearTimeout(silenceTimeoutRef.current);
+        silenceTimeoutRef.current = null;
+      }
+      try {
+        recognitionRef.current.stop();
+        setIsRecording(false);
+      } catch (error) {
+        console.error("Error stopping recognition:", error);
+        setIsRecording(false);
+      }
+    } else {
+      // Start recording - initialize final transcript with existing text
+      finalTranscriptRef.current = customPrompt;
+      try {
+        recognitionRef.current.start();
+        setIsRecording(true);
+        toast({
+          title: "Recording Started",
+          description: "Speak your prompt. Click the microphone again to stop.",
+        });
+      } catch (error: any) {
+        console.error("Error starting recognition:", error);
+        setIsRecording(false);
+        
+        let errorMessage = "Failed to start recording.";
+        if (error.message?.includes("already started")) {
+          errorMessage = "Recording is already in progress.";
+        } else if (error.message?.includes("permission")) {
+          errorMessage = "Microphone permission denied. Please allow microphone access in your browser settings.";
+        }
+        
+        toast({
+          title: "Recording Failed",
+          description: errorMessage,
+          variant: "destructive",
+        });
+      }
+    }
+  };
 
   const generateMutation = useMutation({
     mutationFn: async (data: MusicGenerationRequest) => {
@@ -399,6 +584,7 @@ export default function Generator() {
       mood,
       gender: gender || undefined, // Include gender if selected
       language: language || undefined, // Include language if selected
+      prompt: customPrompt.trim() || undefined, // Include custom prompt if provided
     });
   };
 
@@ -419,6 +605,64 @@ export default function Generator() {
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
           <div className="lg:col-span-2 space-y-6">
+            <Card data-testid="card-custom-prompt">
+              <CardHeader>
+                <CardTitle>Custom Prompt (Optional)</CardTitle>
+                <CardDescription>
+                  Provide your own detailed description or instructions for the music generation. 
+                  If left empty, a prompt will be generated from your selections below.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <Label htmlFor="custom-prompt">Your Custom Prompt</Label>
+                    <Button
+                      type="button"
+                      variant={isRecording ? "destructive" : "outline"}
+                      size="sm"
+                      onClick={toggleRecording}
+                      className="gap-2"
+                      data-testid="button-microphone"
+                    >
+                      {isRecording ? (
+                        <>
+                          <Square className="h-4 w-4" />
+                          Stop Recording
+                        </>
+                      ) : (
+                        <>
+                          <Mic className="h-4 w-4" />
+                          Voice Input
+                        </>
+                      )}
+                    </Button>
+                  </div>
+                  <div className="relative">
+                    <Textarea
+                      id="custom-prompt"
+                      placeholder="e.g., Create a slow, meditative piece that starts with a gentle alaap, gradually building to a vibrant gat section. Include intricate taans and emphasize the emotional depth of the raga..."
+                      value={customPrompt}
+                      onChange={(e) => setCustomPrompt(e.target.value)}
+                      className="min-h-[120px] resize-y pr-12"
+                      maxLength={1000}
+                      data-testid="textarea-custom-prompt"
+                    />
+                    {isRecording && (
+                      <div className="absolute top-3 right-3 flex items-center gap-2">
+                        <div className="h-3 w-3 bg-red-500 rounded-full animate-pulse"></div>
+                        <span className="text-xs text-red-500 font-medium">Recording...</span>
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex justify-between text-xs text-muted-foreground">
+                    <span>Describe your vision for the composition in detail {isRecording && "(speaking...)"}</span>
+                    <span>{customPrompt.length}/1000</span>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
             <Card data-testid="card-raga-selection">
               <CardHeader>
                 <CardTitle>Select Raga</CardTitle>
@@ -644,6 +888,16 @@ export default function Generator() {
                       {language ? LANGUAGES.find((l) => l.value === language)?.label || language : "Not selected"}
                     </span>
                   </div>
+                  {customPrompt.trim() && (
+                    <div className="pt-2 border-t">
+                      <div className="space-y-1">
+                        <span className="text-muted-foreground text-xs">Custom Prompt:</span>
+                        <p className="text-xs font-medium text-foreground line-clamp-2" data-testid="summary-prompt">
+                          {customPrompt}
+                        </p>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 <Button

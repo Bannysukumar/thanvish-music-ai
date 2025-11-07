@@ -21,6 +21,7 @@ export interface GenerateMusicParams {
   mood: string;
   gender?: string; // Optional voice gender preference
   language?: string; // Optional language for lyrics/vocals
+  prompt?: string; // Optional custom prompt from user
 }
 
 export interface GenerateMusicResponse {
@@ -47,14 +48,31 @@ export interface MusicGenerationStatus {
 export async function generateMusicComposition(
   params: GenerateMusicParams
 ): Promise<GenerateMusicResponse> {
-  const { raga, tala, instruments, tempo, mood, gender, language } = params;
+  const { raga, tala, instruments, tempo, mood, gender, language, prompt: customPrompt } = params;
 
-  // Build prompt from Indian classical music parameters
-  let prompt = `Indian classical music composition: Raga ${raga}, Tala ${tala}, Instruments: ${instruments.join(", ")}, Tempo: ${tempo} BPM, Mood: ${mood}. Create an authentic classical piece that honors traditional principles.`;
+  // Use custom prompt if provided, otherwise build prompt from Indian classical music parameters
+  let prompt: string;
   
-  // Add language preference to prompt if specified
-  if (language) {
-    prompt += ` Language for lyrics/vocals: ${language}.`;
+  if (customPrompt && customPrompt.trim()) {
+    // User provided custom prompt - use it as the primary prompt
+    // Append essential parameters to ensure they're considered by the API
+    prompt = customPrompt.trim();
+    
+    // Append key parameters in a concise format to ensure they're considered
+    const paramInfo = `Raga: ${raga}, Tala: ${tala}, Tempo: ${tempo} BPM, Mood: ${mood}`;
+    if (language && language !== "instrumental") {
+      prompt += ` | ${paramInfo}, Language: ${language}`;
+    } else {
+      prompt += ` | ${paramInfo}`;
+    }
+  } else {
+    // Build prompt from Indian classical music parameters
+    prompt = `Indian classical music composition: Raga ${raga}, Tala ${tala}, Instruments: ${instruments.join(", ")}, Tempo: ${tempo} BPM, Mood: ${mood}. Create an authentic classical piece that honors traditional principles.`;
+    
+    // Add language preference to prompt if specified
+    if (language) {
+      prompt += ` Language for lyrics/vocals: ${language}.`;
+    }
   }
 
   // Build style description
@@ -71,6 +89,9 @@ export async function generateMusicComposition(
   console.log(`[API.box] Calling API endpoint: ${apiUrl}`);
   console.log(`[API.box] Using base URL: ${API_BOX_BASE_URL}`);
 
+  // Truncate prompt to API limit (500 chars for non-custom mode)
+  const finalPrompt = prompt.substring(0, 500);
+
   try {
     const response = await fetch(apiUrl, {
       method: "POST",
@@ -81,7 +102,7 @@ export async function generateMusicComposition(
       body: JSON.stringify({
         customMode: false, // Use non-custom mode for simpler usage
         instrumental: false, // Include vocals/lyrics
-        prompt: prompt.substring(0, 500), // Limit to 500 chars for non-custom mode
+        prompt: finalPrompt, // Limit to 500 chars for non-custom mode
         model: process.env.API_BOX_MODEL || "V5", // Use V5 by default, can be overridden
         callBackUrl: callbackUrl,
         vocalGender: gender === "female" ? "f" : "m", // Use provided gender or default to male
