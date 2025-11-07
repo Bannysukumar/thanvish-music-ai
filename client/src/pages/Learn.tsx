@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { Link } from "wouter";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -145,10 +146,12 @@ export default function Learn() {
                       <span data-testid={`duration-${module.id}`}>{module.duration} min</span>
                     </div>
                   </div>
-                  <Button className="w-full" data-testid={`button-start-${module.id}`}>
-                    <Award className="w-4 h-4 mr-2" />
-                    Start Learning
-                  </Button>
+                  <Link href={`/learn/${module.id}`}>
+                    <Button className="w-full" data-testid={`button-start-${module.id}`}>
+                      <Award className="w-4 h-4 mr-2" />
+                      Start Learning
+                    </Button>
+                  </Link>
                 </CardContent>
               </Card>
             ))}

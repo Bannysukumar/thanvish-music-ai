@@ -15,34 +15,121 @@ import { Textarea } from "@/components/ui/textarea";
 import type { MusicGenerationRequest } from "@shared/schema";
 
 const RAGAS = [
-  { value: "yaman", label: "Yaman", description: "Evening raga, peaceful and devotional" },
-  { value: "bhairav", label: "Bhairav", description: "Morning raga, serious and contemplative" },
-  { value: "bhairavi", label: "Bhairavi", description: "All-time raga, expressive and emotional" },
-  { value: "bilawal", label: "Bilawal", description: "Morning raga, bright and optimistic" },
-  { value: "kafi", label: "Kafi", description: "Evening raga, romantic and lyrical" },
-  { value: "asavari", label: "Asavari", description: "Morning raga, devotional and serene" },
+  // Hindustani Ragas
+  { value: "yaman", label: "Yaman", description: "Evening raga, peaceful and devotional", tradition: "Hindustani" },
+  { value: "bhairav", label: "Bhairav", description: "Morning raga, serious and contemplative", tradition: "Hindustani" },
+  { value: "bhairavi", label: "Bhairavi", description: "All-time raga, expressive and emotional", tradition: "Hindustani" },
+  { value: "bilawal", label: "Bilawal", description: "Morning raga, bright and optimistic", tradition: "Hindustani" },
+  { value: "kafi", label: "Kafi", description: "Evening raga, romantic and lyrical", tradition: "Hindustani" },
+  { value: "asavari", label: "Asavari", description: "Morning raga, devotional and serene", tradition: "Hindustani" },
+  { value: "kalyani_hindustani", label: "Kalyani", description: "Evening raga, majestic and uplifting", tradition: "Hindustani" },
+  { value: "darbari", label: "Darbari", description: "Night raga, deep and meditative", tradition: "Hindustani" },
+  { value: "malkauns", label: "Malkauns", description: "Night raga, serious and profound", tradition: "Hindustani" },
+  { value: "todi_hindustani", label: "Todi", description: "Morning raga, devotional and contemplative", tradition: "Hindustani" },
+  { value: "purvi", label: "Purvi", description: "Evening raga, complex and introspective", tradition: "Hindustani" },
+  { value: "marwa", label: "Marwa", description: "Evening raga, serene and spiritual", tradition: "Hindustani" },
+  { value: "bageshri", label: "Bageshri", description: "Night raga, romantic and melancholic", tradition: "Hindustani" },
+  { value: "shuddh_sarang", label: "Shuddh Sarang", description: "Afternoon raga, bright and cheerful", tradition: "Hindustani" },
+  { value: "bihag", label: "Bihag", description: "Night raga, romantic and graceful", tradition: "Hindustani" },
+  // Carnatic Ragas
+  { value: "shankarabharanam", label: "Shankarabharanam", description: "Evening raga, majestic and uplifting", tradition: "Carnatic" },
+  { value: "kalyani_carnatic", label: "Kalyani", description: "Evening raga, bright and joyful", tradition: "Carnatic" },
+  { value: "thodi", label: "Thodi", description: "Morning raga, devotional and contemplative", tradition: "Carnatic" },
+  { value: "bhairavi_carnatic", label: "Bhairavi", description: "Morning raga, devotional and serene", tradition: "Carnatic" },
+  { value: "kharaharapriya", label: "Kharaharapriya", description: "Evening raga, expressive and emotional", tradition: "Carnatic" },
+  { value: "harikambhoji", label: "Harikambhoji", description: "Evening raga, joyful and uplifting", tradition: "Carnatic" },
+  { value: "natabhairavi", label: "Natabhairavi", description: "Morning raga, devotional and peaceful", tradition: "Carnatic" },
+  { value: "mayamalavagowla", label: "Mayamalavagowla", description: "Morning raga, foundational and serene", tradition: "Carnatic" },
+  { value: "mohanam", label: "Mohanam", description: "Evening raga, romantic and melodious", tradition: "Carnatic" },
+  { value: "hindolam", label: "Hindolam", description: "Evening raga, bright and cheerful", tradition: "Carnatic" },
+  { value: "shubhapantuvarali", label: "Shubhapantuvarali", description: "Evening raga, melancholic and expressive", tradition: "Carnatic" },
+  { value: "madhyamavati", label: "Madhyamavati", description: "Evening raga, devotional and peaceful", tradition: "Carnatic" },
+  { value: "abheri", label: "Abheri", description: "Evening raga, romantic and lyrical", tradition: "Carnatic" },
+  { value: "sahana", label: "Sahana", description: "Evening raga, romantic and expressive", tradition: "Carnatic" },
 ];
 
 const TALAS = [
-  { value: "teental", label: "Teental", beats: "16 beats", description: "Most common tala in Hindustani music" },
-  { value: "jhaptal", label: "Jhaptal", beats: "10 beats", description: "Popular medium-tempo tala" },
-  { value: "rupak", label: "Rupak", beats: "7 beats", description: "Asymmetric tala with unique feel" },
-  { value: "ektaal", label: "Ektaal", beats: "12 beats", description: "Slow, majestic compositions" },
-  { value: "adi", label: "Adi (Carnatic)", beats: "8 beats", description: "Most common Carnatic tala" },
+  // Hindustani Talas
+  { value: "teental", label: "Teental", beats: "16 beats", description: "Most common tala in Hindustani music", tradition: "Hindustani" },
+  { value: "jhaptal", label: "Jhaptal", beats: "10 beats", description: "Popular medium-tempo tala", tradition: "Hindustani" },
+  { value: "rupak", label: "Rupak", beats: "7 beats", description: "Asymmetric tala with unique feel", tradition: "Hindustani" },
+  { value: "ektaal", label: "Ektaal", beats: "12 beats", description: "Slow, majestic compositions", tradition: "Hindustani" },
+  { value: "dadra", label: "Dadra", beats: "6 beats", description: "Light classical and semi-classical compositions", tradition: "Hindustani" },
+  { value: "keherwa", label: "Keherwa", beats: "8 beats", description: "Common in light music and folk", tradition: "Hindustani" },
+  { value: "jhumra", label: "Jhumra", beats: "14 beats", description: "Slow, meditative compositions", tradition: "Hindustani" },
+  { value: "tilwada", label: "Tilwada", beats: "16 beats", description: "Slow tempo, devotional compositions", tradition: "Hindustani" },
+  { value: "chautal", label: "Chautal", beats: "12 beats", description: "Traditional dhrupad tala", tradition: "Hindustani" },
+  { value: "sultal", label: "Sultal", beats: "10 beats", description: "Used in dhrupad style", tradition: "Hindustani" },
+  // Carnatic Talas
+  { value: "adi", label: "Adi Tala", beats: "8 beats", description: "Most common Carnatic tala", tradition: "Carnatic" },
+  { value: "rupaka", label: "Rupaka Tala", beats: "3 beats", description: "Short, rhythmic tala", tradition: "Carnatic" },
+  { value: "misra_chapu", label: "Misra Chapu", beats: "7 beats", description: "Asymmetric, expressive tala", tradition: "Carnatic" },
+  { value: "khanda_chapu", label: "Khanda Chapu", beats: "5 beats", description: "Fast-paced, energetic tala", tradition: "Carnatic" },
+  { value: "tishra", label: "Tishra Tala", beats: "3 beats", description: "Simple three-beat cycle", tradition: "Carnatic" },
+  { value: "jhampe", label: "Jhampe Tala", beats: "10 beats", description: "Medium tempo compositions", tradition: "Carnatic" },
+  { value: "ata", label: "Ata Tala", beats: "14 beats", description: "Complex, slow compositions", tradition: "Carnatic" },
+  { value: "eka", label: "Eka Tala", beats: "4 beats", description: "Simple four-beat cycle", tradition: "Carnatic" },
 ];
 
 const INSTRUMENTS = [
+  // Hindustani Instruments
   { value: "sitar", label: "Sitar", tradition: "Hindustani" },
   { value: "tabla", label: "Tabla", tradition: "Hindustani" },
   { value: "bansuri", label: "Bansuri (Flute)", tradition: "Hindustani" },
   { value: "sarod", label: "Sarod", tradition: "Hindustani" },
+  { value: "santoor", label: "Santoor", tradition: "Hindustani" },
+  { value: "shehnai", label: "Shehnai", tradition: "Hindustani" },
+  { value: "harmonium", label: "Harmonium", tradition: "Hindustani" },
+  { value: "pakhavaj", label: "Pakhavaj", tradition: "Hindustani" },
+  { value: "dholak", label: "Dholak", tradition: "Hindustani" },
+  { value: "sarangi", label: "Sarangi", tradition: "Hindustani" },
+  { value: "esraj", label: "Esraj", tradition: "Hindustani" },
+  { value: "dilruba", label: "Dilruba", tradition: "Hindustani" },
+  { value: "surmandal", label: "Surmandal", tradition: "Hindustani" },
+  { value: "swarmandal", label: "Swarmandal", tradition: "Hindustani" },
+  { value: "rudra_veena", label: "Rudra Veena", tradition: "Hindustani" },
+  { value: "vichitra_veena", label: "Vichitra Veena", tradition: "Hindustani" },
+  { value: "surbahar", label: "Surbahar", tradition: "Hindustani" },
+  { value: "surbahar_sitar", label: "Surbahar Sitar", tradition: "Hindustani" },
+  // Carnatic Instruments
   { value: "veena", label: "Veena", tradition: "Carnatic" },
   { value: "mridangam", label: "Mridangam", tradition: "Carnatic" },
+  { value: "ghatam", label: "Ghatam", tradition: "Carnatic" },
+  { value: "kanjira", label: "Kanjira", tradition: "Carnatic" },
+  { value: "morsing", label: "Morsing (Jaw Harp)", tradition: "Carnatic" },
+  { value: "nadaswaram", label: "Nadaswaram", tradition: "Carnatic" },
+  { value: "thavil", label: "Thavil", tradition: "Carnatic" },
+  { value: "gottuvadhyam", label: "Gottuvadhyam (Chitravina)", tradition: "Carnatic" },
+  { value: "venu", label: "Venu (Carnatic Flute)", tradition: "Carnatic" },
+  { value: "nagaswaram", label: "Nagaswaram", tradition: "Carnatic" },
+  { value: "tavil", label: "Tavil", tradition: "Carnatic" },
+  { value: "udukkai", label: "Udukkai", tradition: "Carnatic" },
+  { value: "pambai", label: "Pambai", tradition: "Carnatic" },
+  // Instruments Used in Both Traditions
   { value: "violin", label: "Violin", tradition: "Both" },
   { value: "tanpura", label: "Tanpura", tradition: "Both" },
+  { value: "flute", label: "Flute (Generic)", tradition: "Both" },
+  { value: "harmonium_both", label: "Harmonium (Both)", tradition: "Both" },
+  { value: "santoor_both", label: "Santoor (Both)", tradition: "Both" },
+  { value: "guitar", label: "Guitar (Fusion)", tradition: "Both" },
+  { value: "piano", label: "Piano (Fusion)", tradition: "Both" },
+  { value: "keyboard", label: "Keyboard (Fusion)", tradition: "Both" },
+  { value: "cello", label: "Cello (Fusion)", tradition: "Both" },
+  { value: "double_bass", label: "Double Bass (Fusion)", tradition: "Both" },
 ];
 
 const MOODS = [
+  // Nine Rasas (Classical Emotions)
+  "Shringara", // Love/Romance
+  "Hasya", // Joy/Laughter
+  "Karuna", // Compassion/Sorrow
+  "Raudra", // Anger
+  "Veera", // Courage/Heroism
+  "Bhayanaka", // Fear
+  "Bibhatsa", // Disgust
+  "Adbhuta", // Wonder
+  "Shanta", // Peace/Tranquility
+  // Common Moods
   "Devotional",
   "Romantic",
   "Serene",
@@ -50,6 +137,35 @@ const MOODS = [
   "Contemplative",
   "Joyful",
   "Melancholic",
+  "Peaceful",
+  "Meditative",
+  "Mystical",
+  "Celebratory",
+  "Nostalgic",
+  "Passionate",
+  "Solemn",
+  "Triumphant",
+  "Melancholy",
+  "Uplifting",
+  "Introspective",
+  "Expressive",
+  "Dramatic",
+  "Gentle",
+  "Powerful",
+  "Soothing",
+  "Vibrant",
+  "Reflective",
+  "Spiritual",
+  "Festive",
+  "Yearning",
+  "Tranquil",
+  "Intense",
+  "Graceful",
+  "Majestic",
+  "Playful",
+  "Sorrowful",
+  "Hopeful",
+  "Reverent",
 ];
 
 const LANGUAGES = [
@@ -69,6 +185,7 @@ const LANGUAGES = [
 
 export default function Generator() {
   const { toast } = useToast();
+  const [tradition, setTradition] = useState<string>(""); // Hindustani or Carnatic
   const [raga, setRaga] = useState("");
   const [tala, setTala] = useState("");
   const [selectedInstruments, setSelectedInstruments] = useState<string[]>([]);
@@ -588,8 +705,30 @@ export default function Generator() {
     });
   };
 
+  // Filter ragas based on selected tradition
+  const filteredRagas = tradition 
+    ? RAGAS.filter((r) => r.tradition === tradition)
+    : [];
+
+  // Filter talas based on selected tradition
+  const filteredTalas = tradition 
+    ? TALAS.filter((t) => t.tradition === tradition)
+    : [];
+
+  // Filter instruments based on selected tradition (show Both and selected tradition)
+  const filteredInstruments = tradition 
+    ? INSTRUMENTS.filter((i) => i.tradition === tradition || i.tradition === "Both")
+    : INSTRUMENTS; // Show all if no tradition selected
+
   const selectedRaga = RAGAS.find((r) => r.value === raga);
   const selectedTala = TALAS.find((t) => t.value === tala);
+
+  // Handle tradition change - clear raga and tala selection
+  const handleTraditionChange = (value: string) => {
+    setTradition(value);
+    setRaga(""); // Clear raga when tradition changes
+    setTala(""); // Clear tala when tradition changes
+  };
 
   return (
     <div className="py-12 md:py-20">
@@ -668,19 +807,43 @@ export default function Generator() {
                 <CardTitle>Select Raga</CardTitle>
                 <CardDescription>Choose the melodic framework for your composition</CardDescription>
               </CardHeader>
-              <CardContent>
-                <Select value={raga} onValueChange={setRaga}>
-                  <SelectTrigger data-testid="select-raga">
-                    <SelectValue placeholder="Choose a raga" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {RAGAS.map((r) => (
-                      <SelectItem key={r.value} value={r.value}>
-                        {r.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+              <CardContent className="space-y-4">
+                <div className="space-y-2">
+                  <Label>Select Tradition</Label>
+                  <Select value={tradition} onValueChange={handleTraditionChange}>
+                    <SelectTrigger data-testid="select-tradition">
+                      <SelectValue placeholder="Select Hindustani or Carnatic" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="Hindustani">Hindustani</SelectItem>
+                      <SelectItem value="Carnatic">Carnatic</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label>Choose a Raga</Label>
+                  <Select 
+                    value={raga} 
+                    onValueChange={setRaga}
+                    disabled={!tradition}
+                  >
+                    <SelectTrigger data-testid="select-raga">
+                      <SelectValue placeholder={tradition ? "Choose a raga" : "First select a tradition"} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {filteredRagas.map((r) => (
+                        <SelectItem key={r.value} value={r.value}>
+                          {r.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {!tradition && (
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Please select a tradition first to see available ragas
+                    </p>
+                  )}
+                </div>
                 {selectedRaga && (
                   <p className="text-sm text-muted-foreground mt-3" data-testid="raga-description">
                     {selectedRaga.description}
@@ -695,18 +858,27 @@ export default function Generator() {
                 <CardDescription>Choose the rhythmic cycle for your composition</CardDescription>
               </CardHeader>
               <CardContent>
-                <Select value={tala} onValueChange={setTala}>
+                <Select 
+                  value={tala} 
+                  onValueChange={setTala}
+                  disabled={!tradition}
+                >
                   <SelectTrigger data-testid="select-tala">
-                    <SelectValue placeholder="Choose a tala" />
+                    <SelectValue placeholder={tradition ? "Choose a tala" : "First select a tradition"} />
                   </SelectTrigger>
                   <SelectContent>
-                    {TALAS.map((t) => (
+                    {filteredTalas.map((t) => (
                       <SelectItem key={t.value} value={t.value}>
                         {t.label} ({t.beats})
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
+                {!tradition && (
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Please select a tradition first to see available talas
+                  </p>
+                )}
                 {selectedTala && (
                   <p className="text-sm text-muted-foreground mt-3" data-testid="tala-description">
                     {selectedTala.description}
@@ -721,8 +893,13 @@ export default function Generator() {
                 <CardDescription>Choose one or more instruments for your composition</CardDescription>
               </CardHeader>
               <CardContent>
+                {!tradition && (
+                  <p className="text-xs text-muted-foreground mb-3">
+                    Select a tradition to see filtered instruments, or choose from all instruments below
+                  </p>
+                )}
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                  {INSTRUMENTS.map((instrument) => (
+                  {filteredInstruments.map((instrument) => (
                     <Button
                       key={instrument.value}
                       variant={selectedInstruments.includes(instrument.value) ? "default" : "outline"}

@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { Link } from "wouter";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -98,10 +99,12 @@ export default function Blog() {
                         </span>
                       </div>
                     </div>
-                    <Button data-testid="button-read-featured">
-                      Read Article
-                      <ArrowRight className="w-4 h-4 ml-2" />
-                    </Button>
+                    <Link href={`/blog/${featuredPost.id}`}>
+                      <Button data-testid="button-read-featured">
+                        Read Article
+                        <ArrowRight className="w-4 h-4 ml-2" />
+                      </Button>
+                    </Link>
                   </div>
                 </div>
               </Card>
@@ -150,10 +153,12 @@ export default function Blog() {
                           <span className="text-xs" data-testid={`post-readtime-${post.id}`}>{post.readTime} min</span>
                         </div>
                       </div>
-                      <Button variant="outline" className="w-full" data-testid={`button-read-${post.id}`}>
-                        Read More
-                        <ArrowRight className="w-4 h-4 ml-2" />
-                      </Button>
+                      <Link href={`/blog/${post.id}`}>
+                        <Button variant="outline" className="w-full" data-testid={`button-read-${post.id}`}>
+                          Read More
+                          <ArrowRight className="w-4 h-4 ml-2" />
+                        </Button>
+                      </Link>
                     </CardContent>
                   </Card>
                 ))}

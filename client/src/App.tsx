@@ -12,7 +12,10 @@ import Home from "@/pages/Home";
 import About from "@/pages/About";
 import Vision from "@/pages/Vision";
 import Learn from "@/pages/Learn";
+import LearnModuleDetail from "@/pages/LearnModuleDetail";
+import MusicTherapy from "@/pages/MusicTherapy";
 import Blog from "@/pages/Blog";
+import BlogPostDetail from "@/pages/BlogPostDetail";
 import TeamMembers from "@/pages/TeamMembers";
 import Contact from "@/pages/Contact";
 import NotFound from "@/pages/not-found";
@@ -24,7 +27,10 @@ function PublicRouter() {
       <Route path="/" component={Home} />
       <Route path="/about" component={About} />
       <Route path="/vision" component={Vision} />
+      <Route path="/learn/:id" component={LearnModuleDetail} />
       <Route path="/learn" component={Learn} />
+      <Route path="/music-therapy" component={MusicTherapy} />
+      <Route path="/blog/:id" component={BlogPostDetail} />
       <Route path="/blog" component={Blog} />
       <Route path="/team" component={TeamMembers} />
       <Route path="/contact" component={Contact} />

@@ -1,5 +1,5 @@
 import { Link, useLocation } from "wouter";
-import { Music, BookOpen, FileText, Mail, Menu, X, Sun, Moon, Users, Sparkles, Target } from "lucide-react";
+import { Music, BookOpen, FileText, Mail, Menu, X, Sun, Moon, Users, Sparkles, Target, HeartPulse } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useState, useEffect } from "react";
 import { AuthModal } from "@/components/auth/AuthModal";
@@ -30,6 +30,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
     { path: "/about", label: "About", icon: BookOpen },
     { path: "/vision", label: "Our Vision", icon: Target },
     { path: "/learn", label: "Learn", icon: BookOpen },
+    { path: "/music-therapy", label: "Music Therapy", icon: HeartPulse },
     { path: "/blog", label: "Blog", icon: FileText },
     { path: "/team", label: "Team Members", icon: Users },
     { path: "/contact", label: "Contact", icon: Mail },
@@ -150,7 +151,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
             <div>
               <h3 className="font-semibold mb-3">Quick Links</h3>
               <div className="flex flex-col gap-2">
-                {navItems.slice(0, 4).map((item) => (
+                {navItems.slice(0, 5).map((item) => (
                   <Link key={item.path} href={item.path}>
                     <span className="text-sm text-muted-foreground hover:text-foreground transition-colors cursor-pointer">
                       {item.label}
