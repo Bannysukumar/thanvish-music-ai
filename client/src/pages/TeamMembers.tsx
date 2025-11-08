@@ -74,7 +74,7 @@ const teamMembers: TeamMember[] = [
     expertise: ["R&D", "Sound Therapy", "Product Innovation"],
   },
   {
-    name: "M. Shusmanth Reddy",
+    name: "M. Sushmanth Reddy",
     role: "Backend Developer",
     bio: "Developer with experience across Oracle, SQL optimization, and microservices. Builds secure data pipelines that power our recommendation engine and therapy scheduling tools.",
     image: "/shushmanth.jpg",
