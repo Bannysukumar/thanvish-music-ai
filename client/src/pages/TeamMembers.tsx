@@ -15,6 +15,13 @@ interface TeamMember {
 
 const teamMembers: TeamMember[] = [
   {
+    name: "Vedantham A.K. Anjaneya Sarma",
+    role: "Master Musician",
+    bio: "Renowned classical musician with 30 years of dedicated practice and performance in both Carnatic and Hindustani music traditions. Brings deep expertise and authentic musical knowledge to guide our AI music generation and educational content.",
+    image: "/singer.jpg",
+    expertise: ["Carnatic Music", "Hindustani Music", "Classical Performance"],
+  },
+  {
     name: "S. Rajyalakshmi",
     role: "Founder & CEO",
     bio: "Serial entrepreneur and classical music patron with 10+ years of experience incubating arts-tech ventures. Leads Thanvish AI's vision, partnerships, and artist network while championing inclusive music education.",
@@ -23,7 +30,7 @@ const teamMembers: TeamMember[] = [
     email: "rajyalakshmi@thanvish.ai",
   },
   {
-    name: "K. Mounika",
+    name: "K. Moulika",
     role: "Office Administration Head",
     bio: "Seasoned office administrator with 2 years of hands-on experience streamlining operations, vendor management, and artist logistics for multi-city productions.",
     image: "/Mounika.jpg",
