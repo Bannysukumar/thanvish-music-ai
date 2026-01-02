@@ -2,13 +2,13 @@ import { useState } from "react";
 import { LoginModal } from "./LoginModal";
 import { SignupModal } from "./SignupModal";
 import { ForgotPasswordModal } from "./ForgotPasswordModal";
-import { useAuth } from "@/contexts/AuthContext";
+import { GuestInfoModal } from "./GuestInfoModal";
 import { useLocation } from "wouter";
 
 /**
  * Type for auth modal views
  */
-type AuthView = "login" | "signup" | "forgot-password";
+type AuthView = "login" | "signup" | "forgot-password" | "guest-info";
 
 /**
  * Props for AuthModal component
@@ -23,22 +23,27 @@ interface AuthModalProps {
  */
 export function AuthModal({ open, onOpenChange }: AuthModalProps) {
   const [view, setView] = useState<AuthView>("login");
-  const { guestLogin } = useAuth();
   const [, setLocation] = useLocation();
 
   /**
-   * Handle guest login and navigate to dashboard
+   * Handle guest login button click - show guest info modal
    */
   const handleGuestLogin = () => {
-    guestLogin();
-    onOpenChange(false);
-    setLocation("/dashboard");
+    setView("guest-info");
   };
 
   /**
    * Handle successful login/signup and navigate to dashboard
    */
   const handleAuthSuccess = () => {
+    onOpenChange(false);
+    setLocation("/dashboard");
+  };
+
+  /**
+   * Handle successful guest login and navigate to dashboard
+   */
+  const handleGuestSuccess = () => {
     onOpenChange(false);
     setLocation("/dashboard");
   };
@@ -80,6 +85,18 @@ export function AuthModal({ open, onOpenChange }: AuthModalProps) {
             onOpenChange(false);
           }
         }}
+      />
+
+      {/* Guest Info Modal */}
+      <GuestInfoModal
+        open={open && view === "guest-info"}
+        onOpenChange={(isOpen) => {
+          if (!isOpen) {
+            setView("login");
+            onOpenChange(false);
+          }
+        }}
+        onSuccess={handleGuestSuccess}
       />
     </>
   );

@@ -7,7 +7,8 @@ import {
   User as FirebaseUser,
   updateProfile,
 } from "firebase/auth";
-import { auth } from "@/lib/firebase";
+import { doc, setDoc, getDoc, serverTimestamp } from "firebase/firestore";
+import { auth, db } from "@/lib/firebase";
 
 /**
  * User type definition
@@ -16,6 +17,7 @@ export interface User {
   id: string;
   email: string;
   name: string;
+  mobileNumber?: string;
   isGuest: boolean;
 }
 
@@ -25,8 +27,8 @@ export interface User {
 interface AuthContextType {
   user: User | null;
   login: (email: string, password: string) => Promise<void>;
-  signup: (name: string, email: string, password: string) => Promise<void>;
-  guestLogin: () => void;
+  signup: (name: string, email: string, password: string, mobileNumber: string) => Promise<void>;
+  guestLogin: (name: string, mobileNumber: string) => Promise<void>;
   logout: () => void;
   isLoading: boolean;
 }
@@ -38,16 +40,45 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 /**
  * Convert Firebase user to our User type
+ * Fetches user profile from Firestore to get mobile number
  */
-function mapFirebaseUser(firebaseUser: FirebaseUser | null): User | null {
+async function mapFirebaseUser(firebaseUser: FirebaseUser | null): Promise<User | null> {
   if (!firebaseUser) return null;
 
-  return {
-    id: firebaseUser.uid,
-    email: firebaseUser.email || "",
-    name: firebaseUser.displayName || firebaseUser.email?.split("@")[0] || "User",
-    isGuest: false,
-  };
+  try {
+    // Fetch user profile from Firestore
+    const userProfileRef = doc(db, "users", firebaseUser.uid);
+    const userProfileSnap = await getDoc(userProfileRef);
+    
+    let mobileNumber: string | undefined;
+    let name = firebaseUser.displayName || firebaseUser.email?.split("@")[0] || "User";
+    
+    if (userProfileSnap.exists()) {
+      const profileData = userProfileSnap.data();
+      mobileNumber = profileData.mobileNumber;
+      // Use name from Firestore if available, otherwise use displayName
+      if (profileData.name) {
+        name = profileData.name;
+      }
+    }
+
+    return {
+      id: firebaseUser.uid,
+      email: firebaseUser.email || "",
+      name,
+      mobileNumber,
+      isGuest: false,
+    };
+  } catch (error) {
+    console.error("Error fetching user profile from Firestore:", error);
+    // Return user without mobile number if Firestore fetch fails
+    return {
+      id: firebaseUser.uid,
+      email: firebaseUser.email || "",
+      name: firebaseUser.displayName || firebaseUser.email?.split("@")[0] || "User",
+      isGuest: false,
+    };
+  }
 }
 
 /**
@@ -59,16 +90,32 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   // Listen to Firebase auth state changes
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       if (firebaseUser) {
         // User is signed in with Firebase
-        setUser(mapFirebaseUser(firebaseUser));
+        const mappedUser = await mapFirebaseUser(firebaseUser);
+        setUser(mappedUser);
       } else {
         // Check for guest user in localStorage
         const storedGuest = localStorage.getItem("guestUser");
         if (storedGuest) {
           try {
-            setUser(JSON.parse(storedGuest));
+            const guestUser = JSON.parse(storedGuest);
+            // If guest user has an ID, try to fetch from Firestore
+            if (guestUser.id && guestUser.id.startsWith("guest_")) {
+              try {
+                const guestProfileRef = doc(db, "guestUsers", guestUser.id);
+                const guestProfileSnap = await getDoc(guestProfileRef);
+                if (guestProfileSnap.exists()) {
+                  const profileData = guestProfileSnap.data();
+                  guestUser.mobileNumber = profileData.mobileNumber;
+                  guestUser.name = profileData.name || guestUser.name;
+                }
+              } catch (error) {
+                console.error("Error fetching guest profile from Firestore:", error);
+              }
+            }
+            setUser(guestUser);
           } catch (error) {
             console.error("Error parsing stored guest user:", error);
             localStorage.removeItem("guestUser");
@@ -122,8 +169,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   /**
    * Signup function - creates new user account with Firebase
    */
-  const signup = async (name: string, email: string, password: string) => {
-    if (!name || !email || !password) {
+  const signup = async (name: string, email: string, password: string, mobileNumber: string) => {
+    if (!name || !email || !password || !mobileNumber) {
       throw new Error("All fields are required");
     }
 
@@ -135,6 +182,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (userCredential.user) {
         await updateProfile(userCredential.user, {
           displayName: name,
+        });
+        
+        // Store user profile with mobile number in Firestore
+        const userProfileRef = doc(db, "users", userCredential.user.uid);
+        await setDoc(userProfileRef, {
+          name: name.trim(),
+          email: email.trim(),
+          mobileNumber: mobileNumber.trim(),
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
         });
       }
       
@@ -158,17 +215,40 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   /**
-   * Guest login - creates temporary guest session (stored in localStorage)
+   * Guest login - creates temporary guest session (stored in localStorage and Firestore)
    * Note: Guest users are not authenticated with Firebase
+   * @param name - User's name (required)
+   * @param mobileNumber - User's mobile number (required)
    */
-  const guestLogin = () => {
+  const guestLogin = async (name: string, mobileNumber: string) => {
+    if (!name || !mobileNumber) {
+      throw new Error("Name and mobile number are required for guest users");
+    }
+
+    const guestId = `guest_${Date.now()}`;
     const guestUser: User = {
-      id: `guest_${Date.now()}`,
+      id: guestId,
       email: "",
-      name: "Guest",
+      name: name.trim(),
+      mobileNumber: mobileNumber.trim(),
       isGuest: true,
     };
 
+    // Store guest user profile in Firestore
+    try {
+      const guestProfileRef = doc(db, "guestUsers", guestId);
+      await setDoc(guestProfileRef, {
+        name: name.trim(),
+        mobileNumber: mobileNumber.trim(),
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+    } catch (error) {
+      console.error("Error storing guest user in Firestore:", error);
+      // Continue even if Firestore storage fails
+    }
+
+    // Also store in localStorage for quick access
     setUser(guestUser);
     localStorage.setItem("guestUser", JSON.stringify(guestUser));
   };

@@ -23,6 +23,10 @@ const signupSchema = z
   .object({
     name: z.string().min(2, "Name must be at least 2 characters"),
     email: z.string().email("Please enter a valid email address"),
+    mobileNumber: z
+      .string()
+      .min(10, "Mobile number must be at least 10 digits")
+      .regex(/^[0-9+\-\s()]+$/, "Please enter a valid mobile number"),
     password: z
       .string()
       .min(8, "Password must be at least 8 characters")
@@ -108,7 +112,7 @@ export function SignupModal({
   const onSubmit = async (data: SignupFormData) => {
     setIsLoading(true);
     try {
-      await signup(data.name, data.email, data.password);
+      await signup(data.name, data.email, data.password, data.mobileNumber);
       toast({
         title: "Account created",
         description: "Welcome! Your account has been created successfully.",
@@ -168,6 +172,23 @@ export function SignupModal({
             />
             {errors.email && (
               <p className="text-sm text-destructive">{errors.email.message}</p>
+            )}
+          </div>
+
+          {/* Mobile number field */}
+          <div className="space-y-2">
+            <Label htmlFor="mobileNumber">Mobile Number</Label>
+            <Input
+              id="mobileNumber"
+              type="tel"
+              placeholder="+1 234 567 8900"
+              {...register("mobileNumber")}
+              disabled={isLoading}
+            />
+            {errors.mobileNumber && (
+              <p className="text-sm text-destructive">
+                {errors.mobileNumber.message}
+              </p>
             )}
           </div>
 
