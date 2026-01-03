@@ -6,7 +6,7 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
 import { Badge } from "@/components/ui/badge";
-import { Sparkles, Play, Download, Loader2, Music, Save, Mic, Square } from "lucide-react";
+import { Sparkles, Play, Download, Loader2, Music, Save, Mic, Square, Clock } from "lucide-react";
 import { useMutation } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -189,6 +189,7 @@ const LANGUAGES = [
 export default function Generator() {
   const { toast } = useToast();
   const { user } = useAuth();
+  const [generationMode, setGenerationMode] = useState<"voice_only" | "instrumental_only" | "full_music" | "">("");
   const [tradition, setTradition] = useState<string>(""); // Hindustani or Carnatic
   const [raga, setRaga] = useState("");
   const [tala, setTala] = useState("");
@@ -210,6 +211,11 @@ export default function Generator() {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const [isGenerating, setIsGenerating] = useState<boolean>(false);
   const generationStartRef = useRef<number>(0);
+  const [generationStatus, setGenerationStatus] = useState<string>("");
+  const [generationProgress, setGenerationProgress] = useState<number>(0);
+  const [elapsedTime, setElapsedTime] = useState<number>(0);
+  const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const elapsedTimeIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   // Initialize Speech Recognition
   useEffect(() => {
@@ -331,6 +337,149 @@ export default function Generator() {
     };
   }, [toast]);
 
+  // Cleanup polling intervals on unmount
+  useEffect(() => {
+    return () => {
+      if (pollingIntervalRef.current) {
+        clearTimeout(pollingIntervalRef.current);
+      }
+      if (elapsedTimeIntervalRef.current) {
+        clearInterval(elapsedTimeIntervalRef.current);
+      }
+    };
+  }, []);
+
+  // Helper function to save completed composition
+  const saveCompletedComposition = async (composition: any, requestData: MusicGenerationRequest) => {
+    try {
+      const languageLabel = requestData.language 
+        ? LANGUAGES.find((l) => l.value === requestData.language)?.label || requestData.language 
+        : null;
+      
+      // Save to local storage
+      saveComposition({
+        title: composition.title,
+        raga: requestData.raga || "N/A",
+        tala: requestData.tala || "N/A",
+        instruments: requestData.instruments || [],
+        tempo: requestData.tempo || 100,
+        mood: requestData.mood || "N/A",
+        audioUrl: composition.audioUrl,
+        description: requestData.raga && requestData.tala && requestData.instruments
+          ? `Generated ${requestData.raga} composition in ${requestData.tala} with ${requestData.instruments.join(", ")}${languageLabel ? ` in ${languageLabel}` : ""}`
+          : `Generated music composition${languageLabel ? ` in ${languageLabel}` : ""}`,
+      });
+
+      // Save to Firestore for authenticated users
+      if (user && !user.isGuest) {
+        await addDoc(collection(db, "users", user.id, "compositions"), {
+          title: composition.title,
+          raga: requestData.raga || "N/A",
+          tala: requestData.tala || "N/A",
+          instruments: requestData.instruments || [],
+          tempo: requestData.tempo || 100,
+          mood: requestData.mood || "N/A",
+          audioUrl: composition.audioUrl,
+          language: languageLabel,
+          prompt: requestData.prompt || null,
+          createdAt: serverTimestamp(),
+          generatedAt: serverTimestamp(),
+          source: "generator",
+        });
+      }
+    } catch (error) {
+      console.error("Error saving completed composition:", error);
+    }
+  };
+
+  // Check for delayed completions on mount and periodically
+  useEffect(() => {
+    const PENDING_TASKS_KEY = "pending_generation_tasks";
+    
+    const checkPendingCompositions = async () => {
+      try {
+        const pendingTasksStr = localStorage.getItem(PENDING_TASKS_KEY);
+        if (!pendingTasksStr) return;
+        
+        const pendingTasks: Array<{ taskId: string; requestData: MusicGenerationRequest; timestamp: number }> = 
+          JSON.parse(pendingTasksStr);
+        
+        if (pendingTasks.length === 0) return;
+
+        // Check each pending task
+        const updatedTasks = [];
+        for (const task of pendingTasks) {
+          try {
+            // Only check tasks that are less than 24 hours old
+            const age = Date.now() - task.timestamp;
+            if (age > 24 * 60 * 60 * 1000) {
+              // Remove old tasks
+              continue;
+            }
+
+            const res = await apiRequest("GET", `/api/compositions/by-task/${task.taskId}`);
+            
+            // Check content type before parsing JSON (apiRequest already checks status, but content-type might be wrong)
+            const contentType = res.headers.get("content-type");
+            if (!contentType || !contentType.includes("application/json")) {
+              // Server returned non-JSON (likely HTML error page or 404 page)
+              // This usually means the taskId mapping was lost (server restart)
+              console.log(`Task ${task.taskId} returned non-JSON response (${contentType}), removing from pending list`);
+              continue; // Remove from pending list
+            }
+            
+            const composition = await res.json();
+
+            if (composition.isComplete && composition.audioUrl) {
+              // Composition completed! Save it
+              await saveCompletedComposition(composition, task.requestData);
+              
+              toast({
+                title: "Composition Ready!",
+                description: `Your music "${composition.title}" has been generated and saved to your library.`,
+              });
+              
+              // Don't add to updatedTasks - remove it from pending list
+            } else {
+              // Still pending, keep it
+              updatedTasks.push(task);
+            }
+          } catch (error: any) {
+            // Error checking this task
+            // If it's a JSON parse error (server returned HTML), the mapping was probably lost
+            if (error instanceof SyntaxError && error.message.includes("JSON")) {
+              console.log(`Task ${task.taskId} mapping lost (server returned HTML), removing from pending list`);
+              // Don't add to updatedTasks - remove it from pending list
+              continue;
+            }
+            // Other errors - keep it in the list and try again later
+            console.error(`Error checking task ${task.taskId}:`, error);
+            updatedTasks.push(task);
+          }
+        }
+
+        // Update pending tasks list
+        if (updatedTasks.length !== pendingTasks.length) {
+          if (updatedTasks.length === 0) {
+            localStorage.removeItem(PENDING_TASKS_KEY);
+          } else {
+            localStorage.setItem(PENDING_TASKS_KEY, JSON.stringify(updatedTasks));
+          }
+        }
+      } catch (error) {
+        console.error("Error checking pending compositions:", error);
+      }
+    };
+
+    // Check immediately
+    checkPendingCompositions();
+
+    // Check every 30 seconds while on this page
+    const interval = setInterval(checkPendingCompositions, 30000);
+
+    return () => clearInterval(interval);
+  }, [user, toast]);
+
   /**
    * Toggle speech recognition
    */
@@ -396,8 +545,42 @@ export default function Generator() {
     onSuccess: async (data) => {
       // API.box returns taskId - we need to poll for status
       if (data.taskId) {
+        const PENDING_TASKS_KEY = "pending_generation_tasks";
+        
+        // Store taskId and request data for delayed completion checking
+        try {
+          const pendingTasksStr = localStorage.getItem(PENDING_TASKS_KEY);
+          const pendingTasks = pendingTasksStr ? JSON.parse(pendingTasksStr) : [];
+          pendingTasks.push({
+            taskId: data.taskId,
+            requestData: data,
+            timestamp: Date.now(),
+          });
+          localStorage.setItem(PENDING_TASKS_KEY, JSON.stringify(pendingTasks));
+        } catch (error) {
+          console.error("Error storing pending task:", error);
+        }
+
+        // Helper to remove task from pending list
+        const removePendingTask = (taskId: string) => {
+          try {
+            const pendingTasksStr = localStorage.getItem(PENDING_TASKS_KEY);
+            if (pendingTasksStr) {
+              const pendingTasks = JSON.parse(pendingTasksStr);
+              const filtered = pendingTasks.filter((t: any) => t.taskId !== taskId);
+              if (filtered.length === 0) {
+                localStorage.removeItem(PENDING_TASKS_KEY);
+              } else {
+                localStorage.setItem(PENDING_TASKS_KEY, JSON.stringify(filtered));
+              }
+            }
+          } catch (error) {
+            console.error("Error removing pending task:", error);
+          }
+        };
+
         // Start polling for status
-        const pollStatus = async (taskId: string) => {
+        const pollStatus = async (taskId: string, requestData: MusicGenerationRequest) => {
           const maxAttempts = 60; // Poll for up to 5 minutes (60 * 5 seconds)
           let attempts = 0;
 
@@ -408,64 +591,37 @@ export default function Generator() {
 
               if (status.status === "complete" && status.audioUrl) {
                 // Generation complete - update composition
+                const languageLabel = requestData.language 
+                  ? LANGUAGES.find((l) => l.value === requestData.language)?.label || requestData.language 
+                  : null;
+                const title = status.title || (requestData.raga && requestData.tala ? `${requestData.raga} in ${requestData.tala}` : "Music Composition");
+                const description = requestData.raga && requestData.tala && requestData.instruments
+                  ? `Generated ${requestData.raga} composition in ${requestData.tala} with ${requestData.instruments.join(", ")}${languageLabel ? ` in ${languageLabel}` : ""}`
+                  : `Generated music composition${languageLabel ? ` in ${languageLabel}` : ""}`;
+                
                 const updatedComposition = {
-                  ...data,
+                  ...requestData,
                   audioUrl: status.audioUrl,
-                  title: status.title || `${data.raga} in ${data.tala}`,
+                  title,
+                  description,
                 };
                 setGeneratedComposition(updatedComposition);
                 setAudioSrc(status.audioUrl);
                 setIsGenerating(false);
                 
-                // Automatically save to local library
-                try {
-                  const languageLabel = data.language 
-                    ? LANGUAGES.find((l) => l.value === data.language)?.label || data.language 
-                    : null;
-                  saveComposition({
-                    title: updatedComposition.title,
-                    raga: data.raga,
-                    tala: data.tala,
-                    instruments: data.instruments,
-                    tempo: data.tempo,
-                    mood: data.mood,
-                    audioUrl: status.audioUrl,
-                    description: `Generated ${data.raga} composition in ${data.tala} with ${data.instruments.join(", ")}${languageLabel ? ` in ${languageLabel}` : ""}`,
-                  });
-                } catch (error) {
-                  console.error("Error saving composition:", error);
-                }
-
-                // Save to Firestore for authenticated users
-                try {
-                  if (user && !user.isGuest) {
-                    const languageLabel = data.language 
-                      ? LANGUAGES.find((l) => l.value === data.language)?.label || data.language 
-                      : null;
-                    await addDoc(collection(db, "users", user.id, "compositions"), {
-                      title: updatedComposition.title,
-                      raga: data.raga,
-                      tala: data.tala,
-                      instruments: data.instruments,
-                      tempo: data.tempo,
-                      mood: data.mood,
-                      audioUrl: status.audioUrl,
-                      language: languageLabel,
-                      prompt: (data as any).prompt || null,
-                      createdAt: serverTimestamp(),
-                      generatedAt: serverTimestamp(),
-                      source: "generator",
-                    });
-                  }
-                } catch (error) {
-                  console.error("Error saving composition to Firestore:", error);
-                }
+                // Save to library
+                await saveCompletedComposition(updatedComposition, requestData);
+                
+                // Remove from pending tasks
+                removePendingTask(taskId);
                 
                 toast({
                   title: "Composition Generated!",
-                  description: "Your classical music piece is ready to play and has been saved to your library.",
+                  description: "Your music piece is ready to play and has been saved to your library.",
                 });
               } else if (status.status === "failed") {
+                // Remove from pending tasks on failure
+                removePendingTask(taskId);
                 setIsGenerating(false);
                 toast({
                   title: "Generation Failed",
@@ -477,12 +633,13 @@ export default function Generator() {
                 attempts++;
                 setTimeout(checkStatus, 5000);
               } else {
-                // Timeout
+                // Timeout - keep task in pending list for later checking
                 setIsGenerating(false);
                 toast({
                   title: "Generation Timeout",
-                  description: "Generation is taking longer than expected. Please check back later.",
+                  description: "Generation is taking longer than expected. We'll check for completion in the background and notify you when ready.",
                   variant: "destructive",
+                  duration: 8000,
                 });
               }
             } catch (error: any) {
@@ -491,11 +648,13 @@ export default function Generator() {
                 attempts++;
                 setTimeout(checkStatus, 5000);
               } else {
+                // Status check failed - keep task in pending list for later checking
                 setIsGenerating(false);
                 toast({
                   title: "Status Check Failed",
-                  description: "Unable to check generation status. Please try again later.",
+                  description: "Unable to check generation status. We'll check in the background and notify you when ready.",
                   variant: "destructive",
+                  duration: 8000,
                 });
               }
             }
@@ -505,7 +664,7 @@ export default function Generator() {
           setTimeout(checkStatus, 2000);
         };
 
-        pollStatus(data.taskId);
+        pollStatus(data.taskId, data);
       } else {
         // Fallback for immediate response (shouldn't happen with API.box)
         setGeneratedComposition(data);
@@ -532,13 +691,44 @@ export default function Generator() {
   };
 
   const handleGenerate = () => {
-    if (!raga || !tala || selectedInstruments.length === 0 || !mood) {
+    // Validate generation mode is selected
+    if (!generationMode) {
       toast({
-        title: "Missing Information",
-        description: "Please select raga, tala, at least one instrument, and mood.",
+        title: "Generation Mode Required",
+        description: "Please select a generation mode: Voice Only, Instrumental Only, or Full Music.",
         variant: "destructive",
       });
       return;
+    }
+
+    // Validate based on selected mode
+    if (generationMode === "voice_only") {
+      if (!customPrompt.trim()) {
+        toast({
+          title: "Missing Information",
+          description: "Voice Only mode requires a custom prompt.",
+          variant: "destructive",
+        });
+        return;
+      }
+    } else if (generationMode === "instrumental_only") {
+      if (!raga || !tala || selectedInstruments.length === 0 || !mood) {
+        toast({
+          title: "Missing Information",
+          description: "Instrumental Only mode requires raga, tala, at least one instrument, and mood.",
+          variant: "destructive",
+        });
+        return;
+      }
+    } else if (generationMode === "full_music") {
+      if (!raga || !tala || selectedInstruments.length === 0 || !mood || !customPrompt.trim()) {
+        toast({
+          title: "Missing Information",
+          description: "Full Music mode requires all fields: raga, tala, instruments, tempo, mood, and custom prompt.",
+          variant: "destructive",
+        });
+        return;
+      }
     }
 
     setIsGenerating(true);
@@ -723,14 +913,15 @@ export default function Generator() {
 
     // Always use API.box for music generation
     generateMutation.mutate({
-      raga,
-      tala,
-      instruments: selectedInstruments,
-      tempo: tempo[0],
-      mood,
-      gender: gender || undefined, // Include gender if selected
-      language: language || undefined, // Include language if selected
-      prompt: customPrompt.trim() || undefined, // Include custom prompt if provided
+      generationMode,
+      raga: generationMode !== "voice_only" ? raga : undefined,
+      tala: generationMode !== "voice_only" ? tala : undefined,
+      instruments: generationMode !== "voice_only" ? selectedInstruments : undefined,
+      tempo: generationMode !== "voice_only" ? tempo[0] : undefined,
+      mood: generationMode !== "voice_only" ? mood : undefined,
+      gender: (generationMode === "voice_only" || generationMode === "full_music") ? (gender || undefined) : undefined,
+      language: (generationMode === "voice_only" || generationMode === "full_music") ? (language || undefined) : undefined,
+      prompt: (generationMode === "voice_only" || generationMode === "full_music") ? customPrompt.trim() : undefined,
     });
   };
 
@@ -773,12 +964,51 @@ export default function Generator() {
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
           <div className="lg:col-span-2 space-y-6">
-            <Card data-testid="card-custom-prompt">
+            <Card data-testid="card-generation-mode">
               <CardHeader>
-                <CardTitle>Custom Prompt (Optional)</CardTitle>
+                <CardTitle>Generation Mode (Required)</CardTitle>
                 <CardDescription>
-                  Provide your own detailed description or instructions for the music generation. 
-                  If left empty, a prompt will be generated from your selections below.
+                  Select the type of music you want to generate. This determines which options are available.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <RadioGroup value={generationMode} onValueChange={(value) => setGenerationMode(value as "voice_only" | "instrumental_only" | "full_music")} className="space-y-3">
+                  <div className="flex items-center space-x-2 p-4 border rounded-lg hover:bg-accent cursor-pointer">
+                    <RadioGroupItem value="voice_only" id="mode-voice-only" />
+                    <Label htmlFor="mode-voice-only" className="cursor-pointer flex-1">
+                      <div className="font-medium">Voice Only</div>
+                      <div className="text-sm text-muted-foreground">Generate pure vocal audio with no instruments</div>
+                    </Label>
+                  </div>
+                  <div className="flex items-center space-x-2 p-4 border rounded-lg hover:bg-accent cursor-pointer">
+                    <RadioGroupItem value="instrumental_only" id="mode-instrumental-only" />
+                    <Label htmlFor="mode-instrumental-only" className="cursor-pointer flex-1">
+                      <div className="font-medium">Instrumental Only</div>
+                      <div className="text-sm text-muted-foreground">Generate pure instrumental music with no vocals</div>
+                    </Label>
+                  </div>
+                  <div className="flex items-center space-x-2 p-4 border rounded-lg hover:bg-accent cursor-pointer">
+                    <RadioGroupItem value="full_music" id="mode-full-music" />
+                    <Label htmlFor="mode-full-music" className="cursor-pointer flex-1">
+                      <div className="font-medium">Full Music (Voice + Instruments)</div>
+                      <div className="text-sm text-muted-foreground">Generate complete music with both vocals and instruments</div>
+                    </Label>
+                  </div>
+                </RadioGroup>
+              </CardContent>
+            </Card>
+
+            <Card data-testid="card-custom-prompt" className={generationMode === "instrumental_only" ? "opacity-60" : ""}>
+              <CardHeader>
+                <CardTitle>
+                  Custom Prompt {generationMode === "voice_only" || generationMode === "full_music" ? "(Required)" : "(Disabled)"}
+                </CardTitle>
+                <CardDescription>
+                  {generationMode === "voice_only" 
+                    ? "Provide lyrics or vocal instructions for voice-only generation."
+                    : generationMode === "full_music"
+                    ? "Provide your own detailed description or instructions for the music generation."
+                    : "Custom prompt is not available for Instrumental Only mode."}
                 </CardDescription>
               </CardHeader>
               <CardContent>
@@ -792,6 +1022,7 @@ export default function Generator() {
                       onClick={toggleRecording}
                       className="gap-2"
                       data-testid="button-microphone"
+                      disabled={generationMode === "instrumental_only"}
                     >
                       {isRecording ? (
                         <>
@@ -809,12 +1040,15 @@ export default function Generator() {
                   <div className="relative">
                     <Textarea
                       id="custom-prompt"
-                      placeholder="e.g., Create a slow, meditative piece that starts with a gentle alaap, gradually building to a vibrant gat section. Include intricate taans and emphasize the emotional depth of the raga..."
+                      placeholder={generationMode === "voice_only" 
+                        ? "Enter lyrics or vocal instructions for voice-only generation..."
+                        : "e.g., Create a slow, meditative piece that starts with a gentle alaap, gradually building to a vibrant gat section. Include intricate taans and emphasize the emotional depth of the raga..."}
                       value={customPrompt}
                       onChange={(e) => setCustomPrompt(e.target.value)}
                       className="min-h-[120px] resize-y pr-12"
                       maxLength={1000}
                       data-testid="textarea-custom-prompt"
+                      disabled={generationMode === "instrumental_only"}
                     />
                     {isRecording && (
                       <div className="absolute top-3 right-3 flex items-center gap-2">
@@ -831,15 +1065,19 @@ export default function Generator() {
               </CardContent>
             </Card>
 
-            <Card data-testid="card-raga-selection">
+            <Card data-testid="card-raga-selection" className={generationMode === "voice_only" ? "opacity-60" : ""}>
               <CardHeader>
-                <CardTitle>Select Raga</CardTitle>
-                <CardDescription>Choose the melodic framework for your composition</CardDescription>
+                <CardTitle>Select Raga {generationMode === "voice_only" ? "(Disabled)" : "(Required)"}</CardTitle>
+                <CardDescription>
+                  {generationMode === "voice_only" 
+                    ? "Raga selection is not available for Voice Only mode."
+                    : "Choose the melodic framework for your composition"}
+                </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="space-y-2">
                   <Label>Select Tradition</Label>
-                  <Select value={tradition} onValueChange={handleTraditionChange}>
+                  <Select value={tradition} onValueChange={handleTraditionChange} disabled={generationMode === "voice_only"}>
                     <SelectTrigger data-testid="select-tradition">
                       <SelectValue placeholder="Select Hindustani or Carnatic" />
                     </SelectTrigger>
@@ -854,10 +1092,10 @@ export default function Generator() {
                   <Select 
                     value={raga} 
                     onValueChange={setRaga}
-                    disabled={!tradition}
+                    disabled={!tradition || generationMode === "voice_only"}
                   >
                     <SelectTrigger data-testid="select-raga">
-                      <SelectValue placeholder={tradition ? "Choose a raga" : "First select a tradition"} />
+                      <SelectValue placeholder={generationMode === "voice_only" ? "Not available in Voice Only mode" : tradition ? "Choose a raga" : "First select a tradition"} />
                     </SelectTrigger>
                     <SelectContent>
                       {filteredRagas.map((r) => (
@@ -867,7 +1105,11 @@ export default function Generator() {
                       ))}
                     </SelectContent>
                   </Select>
-                  {!tradition && (
+                  {generationMode === "voice_only" ? (
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Raga selection is disabled for Voice Only mode
+                    </p>
+                  ) : !tradition && (
                     <p className="text-xs text-muted-foreground mt-1">
                       Please select a tradition first to see available ragas
                     </p>
@@ -881,19 +1123,23 @@ export default function Generator() {
               </CardContent>
             </Card>
 
-            <Card data-testid="card-tala-selection">
+            <Card data-testid="card-tala-selection" className={generationMode === "voice_only" ? "opacity-60" : ""}>
               <CardHeader>
-                <CardTitle>Select Tala</CardTitle>
-                <CardDescription>Choose the rhythmic cycle for your composition</CardDescription>
+                <CardTitle>Select Tala {generationMode === "voice_only" ? "(Disabled)" : "(Required)"}</CardTitle>
+                <CardDescription>
+                  {generationMode === "voice_only" 
+                    ? "Tala selection is not available for Voice Only mode."
+                    : "Choose the rhythmic cycle for your composition"}
+                </CardDescription>
               </CardHeader>
               <CardContent>
                 <Select 
                   value={tala} 
                   onValueChange={setTala}
-                  disabled={!tradition}
+                  disabled={!tradition || generationMode === "voice_only"}
                 >
                   <SelectTrigger data-testid="select-tala">
-                    <SelectValue placeholder={tradition ? "Choose a tala" : "First select a tradition"} />
+                    <SelectValue placeholder={generationMode === "voice_only" ? "Not available in Voice Only mode" : tradition ? "Choose a tala" : "First select a tradition"} />
                   </SelectTrigger>
                   <SelectContent>
                     {filteredTalas.map((t) => (
@@ -903,7 +1149,11 @@ export default function Generator() {
                     ))}
                   </SelectContent>
                 </Select>
-                {!tradition && (
+                {generationMode === "voice_only" ? (
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Tala selection is disabled for Voice Only mode
+                  </p>
+                ) : !tradition && (
                   <p className="text-xs text-muted-foreground mt-1">
                     Please select a tradition first to see available talas
                   </p>
@@ -916,13 +1166,21 @@ export default function Generator() {
               </CardContent>
             </Card>
 
-            <Card data-testid="card-instrument-selection">
+            <Card data-testid="card-instrument-selection" className={generationMode === "voice_only" ? "opacity-60" : ""}>
               <CardHeader>
-                <CardTitle>Select Instruments</CardTitle>
-                <CardDescription>Choose one or more instruments for your composition</CardDescription>
+                <CardTitle>Select Instruments {generationMode === "voice_only" ? "(Disabled)" : "(Required)"}</CardTitle>
+                <CardDescription>
+                  {generationMode === "voice_only" 
+                    ? "Instrument selection is not available for Voice Only mode."
+                    : "Choose one or more instruments for your composition"}
+                </CardDescription>
               </CardHeader>
               <CardContent>
-                {!tradition && (
+                {generationMode === "voice_only" ? (
+                  <p className="text-xs text-muted-foreground mb-3">
+                    Instrument selection is disabled for Voice Only mode
+                  </p>
+                ) : !tradition && (
                   <p className="text-xs text-muted-foreground mb-3">
                     Select a tradition to see filtered instruments, or choose from all instruments below
                   </p>
@@ -936,6 +1194,7 @@ export default function Generator() {
                       onClick={() => toggleInstrument(instrument.value)}
                       className="justify-start h-auto py-3 px-4"
                       data-testid={`button-instrument-${instrument.value}`}
+                      disabled={generationMode === "voice_only"}
                     >
                       <div className="text-left">
                         <div className="font-medium text-sm">{instrument.label}</div>
@@ -947,11 +1206,13 @@ export default function Generator() {
               </CardContent>
             </Card>
 
-            <Card data-testid="card-tempo-selection">
+            <Card data-testid="card-tempo-selection" className={generationMode === "voice_only" ? "opacity-60" : ""}>
               <CardHeader>
-                <CardTitle>Tempo</CardTitle>
+                <CardTitle>Tempo {generationMode === "voice_only" ? "(Disabled)" : "(Required)"}</CardTitle>
                 <CardDescription>
-                  Adjust the speed of your composition (40-200 BPM)
+                  {generationMode === "voice_only" 
+                    ? "Tempo selection is not available for Voice Only mode."
+                    : "Adjust the speed of your composition (40-200 BPM)"}
                 </CardDescription>
               </CardHeader>
               <CardContent>
@@ -964,6 +1225,7 @@ export default function Generator() {
                     step={5}
                     className="w-full"
                     data-testid="slider-tempo"
+                    disabled={generationMode === "voice_only"}
                   />
                   <div className="flex justify-between text-sm">
                     <span className="text-muted-foreground">Slow (40 BPM)</span>
@@ -974,10 +1236,14 @@ export default function Generator() {
               </CardContent>
             </Card>
 
-            <Card data-testid="card-mood-selection">
+            <Card data-testid="card-mood-selection" className={generationMode === "voice_only" ? "opacity-60" : ""}>
               <CardHeader>
-                <CardTitle>Mood</CardTitle>
-                <CardDescription>Select the emotional character of your composition</CardDescription>
+                <CardTitle>Mood {generationMode === "voice_only" ? "(Disabled)" : "(Required)"}</CardTitle>
+                <CardDescription>
+                  {generationMode === "voice_only" 
+                    ? "Mood selection is not available for Voice Only mode."
+                    : "Select the emotional character of your composition"}
+                </CardDescription>
               </CardHeader>
               <CardContent>
                 <div className="flex flex-wrap gap-2">
@@ -985,8 +1251,8 @@ export default function Generator() {
                     <Badge
                       key={m}
                       variant={mood === m ? "default" : "outline"}
-                      className="cursor-pointer px-4 py-2 text-sm hover-elevate active-elevate-2"
-                      onClick={() => setMood(m)}
+                      className={`cursor-pointer px-4 py-2 text-sm hover-elevate active-elevate-2 ${generationMode === "voice_only" ? "cursor-not-allowed opacity-50" : ""}`}
+                      onClick={() => generationMode !== "voice_only" && setMood(m)}
                       data-testid={`badge-mood-${m.toLowerCase()}`}
                     >
                       {m}
@@ -996,37 +1262,45 @@ export default function Generator() {
               </CardContent>
             </Card>
 
-            <Card data-testid="card-voice-gender">
+            <Card data-testid="card-voice-gender" className={generationMode === "instrumental_only" ? "opacity-60" : ""}>
               <CardHeader>
-                <CardTitle>Voice Gender</CardTitle>
-                <CardDescription>Select Male or Female voice preference (optional)</CardDescription>
+                <CardTitle>Voice Gender {generationMode === "instrumental_only" ? "(Disabled)" : "(Optional)"}</CardTitle>
+                <CardDescription>
+                  {generationMode === "instrumental_only" 
+                    ? "Voice gender is not available for Instrumental Only mode."
+                    : "Select Male or Female voice preference"}
+                </CardDescription>
               </CardHeader>
               <CardContent>
-                <RadioGroup value={gender} onValueChange={setGender} className="grid grid-cols-2 gap-4">
+                <RadioGroup value={gender} onValueChange={setGender} className="grid grid-cols-2 gap-4" disabled={generationMode === "instrumental_only"}>
                   <div className="flex items-center space-x-2">
-                    <RadioGroupItem id="gender-male" value="male" />
-                    <Label htmlFor="gender-male" className="cursor-pointer">Male</Label>
+                    <RadioGroupItem id="gender-male" value="male" disabled={generationMode === "instrumental_only"} />
+                    <Label htmlFor="gender-male" className={`cursor-pointer ${generationMode === "instrumental_only" ? "cursor-not-allowed opacity-50" : ""}`}>Male</Label>
                   </div>
                   <div className="flex items-center space-x-2">
-                    <RadioGroupItem id="gender-female" value="female" />
-                    <Label htmlFor="gender-female" className="cursor-pointer">Female</Label>
+                    <RadioGroupItem id="gender-female" value="female" disabled={generationMode === "instrumental_only"} />
+                    <Label htmlFor="gender-female" className={`cursor-pointer ${generationMode === "instrumental_only" ? "cursor-not-allowed opacity-50" : ""}`}>Female</Label>
                   </div>
                 </RadioGroup>
               </CardContent>
             </Card>
 
-            <Card data-testid="card-language-selection">
+            <Card data-testid="card-language-selection" className={generationMode === "instrumental_only" ? "opacity-60" : ""}>
               <CardHeader>
-                <CardTitle>Language</CardTitle>
-                <CardDescription>Select the language for lyrics/vocals (optional)</CardDescription>
+                <CardTitle>Language {generationMode === "instrumental_only" ? "(Disabled)" : "(Optional)"}</CardTitle>
+                <CardDescription>
+                  {generationMode === "instrumental_only" 
+                    ? "Language selection is not available for Instrumental Only mode."
+                    : "Select the language for lyrics/vocals"}
+                </CardDescription>
               </CardHeader>
               <CardContent>
-                <Select value={language} onValueChange={setLanguage}>
+                <Select value={language} onValueChange={setLanguage} disabled={generationMode === "instrumental_only"}>
                   <SelectTrigger data-testid="select-language">
-                    <SelectValue placeholder="Choose a language (optional)" />
+                    <SelectValue placeholder={generationMode === "instrumental_only" ? "Not available in Instrumental Only mode" : "Choose a language (optional)"} />
                   </SelectTrigger>
                   <SelectContent>
-                    {LANGUAGES.map((lang) => (
+                    {LANGUAGES.filter(l => l.value !== "instrumental").map((lang) => (
                       <SelectItem key={lang.value} value={lang.value}>
                         {lang.label}
                       </SelectItem>
@@ -1052,6 +1326,18 @@ export default function Generator() {
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="space-y-2 text-sm">
+                  <div className="flex justify-between pb-2 border-b">
+                    <span className="text-muted-foreground font-semibold">Generation Mode:</span>
+                    <span className="font-medium" data-testid="summary-generation-mode">
+                      {generationMode === "voice_only" 
+                        ? "Voice Only" 
+                        : generationMode === "instrumental_only"
+                        ? "Instrumental Only"
+                        : generationMode === "full_music"
+                        ? "Full Music"
+                        : "Not selected"}
+                    </span>
+                  </div>
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">Raga:</span>
                     <span className="font-medium" data-testid="summary-raga">
@@ -1108,7 +1394,7 @@ export default function Generator() {
 
                 <Button
                   onClick={handleGenerate}
-                  disabled={isGenerating}
+                  disabled={isGenerating || !generationMode}
                   className="w-full"
                   size="lg"
                   data-testid="button-generate"
@@ -1125,6 +1411,33 @@ export default function Generator() {
                     </>
                   )}
                 </Button>
+
+                {isGenerating && (
+                  <div className="pt-4 border-t space-y-3">
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="text-muted-foreground font-medium">{generationStatus || "Generating..."}</span>
+                        <span className="text-muted-foreground flex items-center gap-1">
+                          <Clock className="w-3 h-3" />
+                          {Math.floor(elapsedTime / 60)}:{(elapsedTime % 60).toString().padStart(2, "0")}
+                        </span>
+                      </div>
+                      <div className="w-full bg-secondary rounded-full h-2 overflow-hidden">
+                        <div
+                          className="h-full bg-primary transition-all duration-500 ease-out rounded-full"
+                          style={{ width: `${generationProgress}%` }}
+                        />
+                      </div>
+                      <div className="flex justify-between text-xs text-muted-foreground">
+                        <span>This may take 2-5 minutes</span>
+                        <span>{Math.round(generationProgress)}%</span>
+                      </div>
+                    </div>
+                    <p className="text-xs text-muted-foreground text-center">
+                      Your music is being generated. You can continue using the app - we'll notify you when it's ready.
+                    </p>
+                  </div>
+                )}
 
                 {generatedComposition && (
                   <div className="pt-4 border-t space-y-4">

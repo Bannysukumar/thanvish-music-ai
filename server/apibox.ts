@@ -14,11 +14,12 @@ function getApiBoxKey(): string {
 }
 
 export interface GenerateMusicParams {
-  raga: string;
-  tala: string;
-  instruments: string[];
-  tempo: number;
-  mood: string;
+  generationMode: "voice_only" | "instrumental_only" | "full_music";
+  raga?: string;
+  tala?: string;
+  instruments?: string[];
+  tempo?: number;
+  mood?: string;
   gender?: string; // Optional voice gender preference
   language?: string; // Optional language for lyrics/vocals
   prompt?: string; // Optional custom prompt from user
@@ -48,38 +49,7 @@ export interface MusicGenerationStatus {
 export async function generateMusicComposition(
   params: GenerateMusicParams
 ): Promise<GenerateMusicResponse> {
-  const { raga, tala, instruments, tempo, mood, gender, language, prompt: customPrompt } = params;
-
-  // Use custom prompt if provided, otherwise build prompt from Indian classical music parameters
-  let prompt: string;
-  
-  if (customPrompt && customPrompt.trim()) {
-    // User provided custom prompt - use it as the primary prompt
-    // Append essential parameters to ensure they're considered by the API
-    prompt = customPrompt.trim();
-    
-    // Append key parameters in a concise format to ensure they're considered
-    const paramInfo = `Raga: ${raga}, Tala: ${tala}, Tempo: ${tempo} BPM, Mood: ${mood}`;
-    if (language && language !== "instrumental") {
-      prompt += ` | ${paramInfo}, Language: ${language}`;
-    } else {
-      prompt += ` | ${paramInfo}`;
-    }
-  } else {
-    // Build prompt from Indian classical music parameters
-    prompt = `Indian classical music composition: Raga ${raga}, Tala ${tala}, Instruments: ${instruments.join(", ")}, Tempo: ${tempo} BPM, Mood: ${mood}. Create an authentic classical piece that honors traditional principles.`;
-    
-    // Add language preference to prompt if specified
-    if (language) {
-      prompt += ` Language for lyrics/vocals: ${language}.`;
-    }
-  }
-
-  // Build style description
-  const style = `Indian Classical Music - ${raga} in ${tala} - ${instruments.join(", ")}`;
-
-  // Build title
-  const title = `${raga} in ${tala}`;
+  const { generationMode, raga, tala, instruments, tempo, mood, gender, language, prompt: customPrompt } = params;
 
   const apiKey = getApiBoxKey();
   const callbackUrl = process.env.API_BOX_CALLBACK_URL || 
@@ -88,9 +58,106 @@ export async function generateMusicComposition(
   const apiUrl = `${API_BOX_BASE_URL}/generate`;
   console.log(`[API.box] Calling API endpoint: ${apiUrl}`);
   console.log(`[API.box] Using base URL: ${API_BOX_BASE_URL}`);
+  console.log(`[API.box] Generation mode: ${generationMode}`);
+  console.log(`[API.box] Callback URL: ${callbackUrl}`);
+  console.log(`[API.box] ⚠️  Note: If running locally, API.box cannot reach localhost. Use ngrok or deploy to receive callbacks.`);
 
-  // Truncate prompt to API limit (500 chars for non-custom mode)
-  const finalPrompt = prompt.substring(0, 500);
+  let prompt: string;
+  let instrumental: boolean;
+  let apiBody: any;
+
+  if (generationMode === "voice_only") {
+    // Voice Only: Generate ONLY vocal audio (no instruments)
+    // instrumental = false, has_vocals = true
+    // Include: custom_prompt, voice_gender (if selected), language (if selected)
+    prompt = customPrompt?.trim() || "";
+    instrumental = false;
+    
+    apiBody = {
+      customMode: false,
+      instrumental: false, // Not instrumental, so has vocals
+      prompt: prompt.substring(0, 500),
+      model: process.env.API_BOX_MODEL || "V5",
+      callBackUrl: callbackUrl,
+      styleWeight: 0.65,
+      weirdnessConstraint: 0.65,
+      audioWeight: 0.65,
+    };
+
+    // Only include vocalGender if gender is provided
+    if (gender) {
+      apiBody.vocalGender = gender === "female" ? "f" : "m";
+    }
+
+    // Note: language is embedded in the prompt, not sent as a separate parameter
+    if (language && language.trim()) {
+      // Language preference can be added to prompt if needed
+      prompt = `${prompt} Language: ${language}`.substring(0, 500);
+      apiBody.prompt = prompt;
+    }
+
+  } else if (generationMode === "instrumental_only") {
+    // Instrumental Only: Generate ONLY instrumental music (NO vocals)
+    // instrumental = true, has_vocals = false
+    // Do NOT send lyrics, voice_gender, language
+    // Build prompt from: raga, tala, instruments, tempo, mood
+    if (!raga || !tala || !instruments || instruments.length === 0 || !tempo || !mood) {
+      throw new Error("Instrumental Only mode requires raga, tala, instruments, tempo, and mood");
+    }
+
+    const tradition = "classical"; // Default tradition - could be determined from raga if needed
+    prompt = `Create an instrumental ${tradition} classical composition in Raga ${raga} using Tala ${tala}, featuring ${instruments.join(", ")}. Tempo is ${tempo} BPM with a ${mood} mood.`;
+    instrumental = true;
+
+    apiBody = {
+      customMode: false,
+      instrumental: true, // Instrumental only, no vocals
+      prompt: prompt.substring(0, 500),
+      model: process.env.API_BOX_MODEL || "V5",
+      callBackUrl: callbackUrl,
+      styleWeight: 0.65,
+      weirdnessConstraint: 0.65,
+      audioWeight: 0.65,
+    };
+    // Do NOT include vocalGender or language for instrumental mode
+
+  } else if (generationMode === "full_music") {
+    // Full Music: Generate complete music with vocals and instruments
+    // instrumental = false, has_vocals = true
+    // Include ALL fields
+    if (!raga || !tala || !instruments || instruments.length === 0 || !tempo || !mood || !customPrompt?.trim()) {
+      throw new Error("Full Music mode requires raga, tala, instruments, tempo, mood, and custom prompt");
+    }
+
+    const tradition = "classical"; // Default tradition
+    prompt = `Create a ${tradition} classical composition in Raga ${raga} using Tala ${tala}, featuring ${instruments.join(", ")}. Tempo is ${tempo} BPM with a ${mood} mood. Lyrics and vocal expression should follow: ${customPrompt.trim()}`;
+    instrumental = false;
+
+    apiBody = {
+      customMode: false,
+      instrumental: false, // Not instrumental, so has vocals
+      prompt: prompt.substring(0, 500),
+      model: process.env.API_BOX_MODEL || "V5",
+      callBackUrl: callbackUrl,
+      styleWeight: 0.65,
+      weirdnessConstraint: 0.65,
+      audioWeight: 0.65,
+    };
+
+    // Include vocalGender if gender is provided
+    if (gender) {
+      apiBody.vocalGender = gender === "female" ? "f" : "m";
+    }
+
+    // Language preference can be added to prompt if needed
+    if (language && language.trim()) {
+      prompt = `${prompt} Language: ${language}`.substring(0, 500);
+      apiBody.prompt = prompt;
+    }
+
+  } else {
+    throw new Error(`Invalid generation mode: ${generationMode}`);
+  }
 
   try {
     const response = await fetch(apiUrl, {
@@ -99,17 +166,7 @@ export async function generateMusicComposition(
         "Authorization": `Bearer ${apiKey}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        customMode: false, // Use non-custom mode for simpler usage
-        instrumental: false, // Include vocals/lyrics
-        prompt: finalPrompt, // Limit to 500 chars for non-custom mode
-        model: process.env.API_BOX_MODEL || "V5", // Use V5 by default, can be overridden
-        callBackUrl: callbackUrl,
-        vocalGender: gender === "female" ? "f" : "m", // Use provided gender or default to male
-        styleWeight: 0.65,
-        weirdnessConstraint: 0.65,
-        audioWeight: 0.65,
-      }),
+      body: JSON.stringify(apiBody),
     });
 
     // Check response status

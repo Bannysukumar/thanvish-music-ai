@@ -83,14 +83,33 @@ export type ContactSubmission = typeof contactSubmissions.$inferSelect;
 
 // Music Generation Request Schema (for API)
 export const musicGenerationRequestSchema = z.object({
-  raga: z.string().min(1, "Raga is required"),
-  tala: z.string().min(1, "Tala is required"),
-  instruments: z.array(z.string()).min(1, "At least one instrument is required"),
-  tempo: z.number().min(40).max(200),
-  mood: z.string().min(1, "Mood is required"),
+  generationMode: z.enum(["voice_only", "instrumental_only", "full_music"], {
+    errorMap: () => ({ message: "Generation mode is required. Please select Voice Only, Instrumental Only, or Full Music." })
+  }),
+  raga: z.string().optional(),
+  tala: z.string().optional(),
+  instruments: z.array(z.string()).optional(),
+  tempo: z.number().min(40).max(200).optional(),
+  mood: z.string().optional(),
   gender: z.string().optional(), // Optional voice gender preference
   language: z.string().optional(), // Optional language for lyrics/vocals
   prompt: z.string().optional(), // Optional custom prompt from user
+}).refine((data) => {
+  // Voice Only mode: requires customPrompt, optional gender and language
+  if (data.generationMode === "voice_only") {
+    return !!(data.prompt && data.prompt.trim().length > 0);
+  }
+  // Instrumental Only mode: requires raga, tala, instruments, tempo, mood
+  if (data.generationMode === "instrumental_only") {
+    return !!(data.raga && data.tala && data.instruments && data.instruments.length > 0 && data.tempo && data.mood);
+  }
+  // Full Music mode: requires all fields
+  if (data.generationMode === "full_music") {
+    return !!(data.raga && data.tala && data.instruments && data.instruments.length > 0 && data.tempo && data.mood && data.prompt && data.prompt.trim().length > 0);
+  }
+  return true;
+}, {
+  message: "Required fields are missing for the selected generation mode."
 });
 
 export type MusicGenerationRequest = z.infer<typeof musicGenerationRequestSchema>;

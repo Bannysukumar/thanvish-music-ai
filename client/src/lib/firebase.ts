@@ -4,17 +4,18 @@ import { getFirestore } from "firebase/firestore";
 
 /**
  * Firebase configuration
- * For Firebase JS SDK v7.20.0 and later, measurementId is optional
+ * Uses environment variables in production, falls back to default config for development
+ * Note: Firebase client config is safe to expose, but using env vars is good practice
  */
 const firebaseConfig = {
-  apiKey: "AIzaSyDqVNSOnxuksvNtVNfcmIQKsHdZEAuTDds",
-  authDomain: "thanvishmusic.firebaseapp.com",
-  databaseURL: "https://thanvishmusic-default-rtdb.firebaseio.com",
-  projectId: "thanvishmusic",
-  storageBucket: "thanvishmusic.firebasestorage.app",
-  messagingSenderId: "482164287637",
-  appId: "1:482164287637:web:c3cda54ecebae67ae5d39c",
-  measurementId: "G-BQKP5QK368"
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || "AIzaSyDqVNSOnxuksvNtVNfcmIQKsHdZEAuTDds",
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || "thanvishmusic.firebaseapp.com",
+  databaseURL: import.meta.env.VITE_FIREBASE_DATABASE_URL || "https://thanvishmusic-default-rtdb.firebaseio.com",
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || "thanvishmusic",
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || "thanvishmusic.firebasestorage.app",
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || "482164287637",
+  appId: import.meta.env.VITE_FIREBASE_APP_ID || "1:482164287637:web:c3cda54ecebae67ae5d39c",
+  measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID || "G-BQKP5QK368"
 };
 
 /**

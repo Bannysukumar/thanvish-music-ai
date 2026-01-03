@@ -18,18 +18,35 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const validatedData = musicGenerationRequestSchema.parse(req.body);
 
+      // Backend validation for generation mode
+      if (!validatedData.generationMode) {
+        return res.status(400).json({
+          error: "Generation mode is required. Please select Voice Only, Instrumental Only, or Full Music.",
+          code: "MISSING_GENERATION_MODE",
+        });
+      }
+
       // Start music generation (async - returns taskId)
       const { taskId } = await generateMusicComposition(validatedData);
 
       // Create composition with pending status
+      // For voice_only mode, use placeholder values for required fields
       const composition = await storage.createComposition({
-        title: `${validatedData.raga} in ${validatedData.tala}`,
-        raga: validatedData.raga,
-        tala: validatedData.tala,
-        instruments: validatedData.instruments,
-        tempo: validatedData.tempo,
-        mood: validatedData.mood,
-        description: `Generating ${validatedData.raga} composition in ${validatedData.tala} with ${validatedData.instruments.join(", ")}`,
+        title: validatedData.generationMode === "voice_only" 
+          ? "Voice Only Composition"
+          : validatedData.raga && validatedData.tala
+          ? `${validatedData.raga} in ${validatedData.tala}`
+          : "Music Composition",
+        raga: validatedData.raga || "N/A",
+        tala: validatedData.tala || "N/A",
+        instruments: validatedData.instruments || [],
+        tempo: validatedData.tempo || 100,
+        mood: validatedData.mood || "N/A",
+        description: validatedData.generationMode === "voice_only"
+          ? `Generating voice-only composition with custom prompt`
+          : validatedData.raga && validatedData.tala && validatedData.instruments
+          ? `Generating ${validatedData.raga} composition in ${validatedData.tala} with ${validatedData.instruments.join(", ")}`
+          : "Generating music composition",
         audioUrl: null,
       });
 
@@ -172,13 +189,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const callbackData = req.body;
       
       // API.box uses different field names - handle both formats
-      const taskId = callbackData.taskId || callbackData.task_id || callbackData.data?.task_id;
+      const taskId = callbackData.taskId || callbackData.task_id || callbackData.data?.task_id || callbackData.data?.taskId;
       
       // Determine callback stage: text, first, or complete
       const callbackType = callbackData.data?.callbackType || callbackData.callbackType;
-      // Only consider complete if explicitly marked as "complete" stage
-      // Don't rely on message text as "Text generated successfully" is not the same as "complete"
-      const isComplete = callbackType === "complete";
+      const msg = callbackData.msg || callbackData.message || "";
+      
+      // More flexible completion detection:
+      // - Explicitly marked as "complete"
+      // - OR has audio_list with valid URLs
+      // - OR message indicates success/completion
+      let isComplete = callbackType === "complete";
       
       // Extract audio URLs from the callback structure
       // API.box callback format varies by stage:
@@ -190,37 +211,43 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Check for audio_list format (complete stage)
       if (callbackData.data?.audio_list && Array.isArray(callbackData.data.audio_list) && callbackData.data.audio_list.length > 0) {
+        isComplete = true; // If we have audio_list, it's complete
         const firstAudio = callbackData.data.audio_list[0];
         audioUrl = firstAudio.audio_url || firstAudio.stream_audio_url || firstAudio.source_audio_url;
         audioUrls = callbackData.data.audio_list.map((audio: any) => 
           audio.audio_url || audio.stream_audio_url || audio.source_audio_url
         ).filter((url: string) => url && url.trim() !== ""); // Filter out empty strings
-        title = firstAudio.title;
+        title = firstAudio.title || firstAudio.name;
       }
-      // Check for data array format (text/first stage - may have stream_audio_url but not final audio_url)
-      // NOTE: In text/first stages, audio_url is empty. Only use this format if we're in complete stage
-      // and have actual audio_url values (not just stream_audio_url)
+      // Check for data array format
       else if (callbackData.data?.data && Array.isArray(callbackData.data.data) && callbackData.data.data.length > 0) {
         const firstItem = callbackData.data.data[0];
-        // Only extract URLs if we're in complete stage AND have actual audio_url (not empty)
-        // For text/first stages, audio_url is empty string, so we should wait for complete callback
-        if (isComplete) {
-          // Only use audio_url if it's not empty - don't fall back to stream_audio_url for text stage
-          if (firstItem.audio_url && firstItem.audio_url.trim() !== "") {
-            audioUrl = firstItem.audio_url;
-            audioUrls = callbackData.data.data
-              .map((item: any) => item.audio_url)
-              .filter((url: string) => url && url.trim() !== "");
+        // Check if we have audio_url (not empty) - this indicates completion
+        if (firstItem.audio_url && firstItem.audio_url.trim() !== "") {
+          isComplete = true;
+          audioUrl = firstItem.audio_url;
+          audioUrls = callbackData.data.data
+            .map((item: any) => item.audio_url)
+            .filter((url: string) => url && url.trim() !== "");
+        } else if (firstItem.stream_audio_url && firstItem.stream_audio_url.trim() !== "") {
+          // If we have stream_audio_url but no audio_url, it might still be processing
+          // But if callbackType is complete, use it
+          if (isComplete) {
+            audioUrl = firstItem.stream_audio_url;
           }
-          title = firstItem.title;
         }
-        // For text/first stages, don't extract anything - just wait
+        title = firstItem.title || firstItem.name;
       }
-      // Fallback to old format
-      else {
-        audioUrl = callbackData.audioUrl || callbackData.audio_url;
-        audioUrls = callbackData.audioUrls || callbackData.audio_urls;
-        title = callbackData.title;
+      // Check for direct audio_url fields
+      else if (callbackData.audio_url || callbackData.audioUrl) {
+        isComplete = true;
+        audioUrl = callbackData.audio_url || callbackData.audioUrl;
+        title = callbackData.title || callbackData.name;
+      }
+      // Fallback: check if message indicates completion
+      else if (msg && (msg.toLowerCase().includes("success") || msg.toLowerCase().includes("complete") || msg.toLowerCase().includes("finished"))) {
+        // Message indicates completion but no audio URL yet - log and wait
+        console.log(`[API.box] Callback message indicates completion but no audio URL found: ${msg}`);
       }
 
       if (!taskId) {
@@ -235,7 +262,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ error: "Composition not found for this taskId" });
       }
 
-      // Only update composition when we have actual audio URLs (complete stage)
+      // Update composition when we have actual audio URLs
       if (isComplete && (audioUrl || (audioUrls && audioUrls.length > 0))) {
         const composition = await storage.getComposition(compositionId);
         if (composition) {
@@ -246,13 +273,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
               audioUrl: finalAudioUrl,
               title: title || composition.title,
             });
-            console.log(`[API.box] Updated composition ${compositionId} with audio URL: ${finalAudioUrl}`);
+            console.log(`[API.box] ✅ Updated composition ${compositionId} with audio URL: ${finalAudioUrl}`);
+            console.log(`[API.box] Title: ${title || composition.title}`);
           } else {
             console.log(`[API.box] Callback marked complete but no valid audio URL for taskId ${taskId}`);
           }
         }
       } else {
-        console.log(`[API.box] Callback stage: ${callbackType || "unknown"} for taskId ${taskId} - waiting for complete stage with audio URLs`);
+        console.log(`[API.box] Callback stage: ${callbackType || "unknown"} for taskId ${taskId} - isComplete: ${isComplete}, hasAudioUrl: ${!!audioUrl}`);
+        console.log(`[API.box] Message: ${msg}`);
+        console.log(`[API.box] Waiting for complete stage with audio URLs`);
       }
 
       // Always return 200 to acknowledge callback
@@ -337,6 +367,33 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error: any) {
       console.error("Error fetching compositions:", error);
       res.status(500).json({ error: "Failed to fetch compositions" });
+    }
+  });
+
+  // Check if a composition by taskId has completed (for delayed completions)
+  app.get("/api/compositions/by-task/:taskId", async (req, res) => {
+    try {
+      const { taskId } = req.params;
+      const compositionId = taskIdToCompositionId.get(taskId);
+      
+      if (!compositionId) {
+        return res.status(404).json({ error: "Composition not found for this taskId" });
+      }
+
+      const composition = await storage.getComposition(compositionId);
+      if (!composition) {
+        return res.status(404).json({ error: "Composition not found" });
+      }
+
+      // Return composition with completion status
+      res.json({
+        ...composition,
+        taskId,
+        isComplete: !!composition.audioUrl,
+      });
+    } catch (error: any) {
+      console.error("Error fetching composition by taskId:", error);
+      res.status(500).json({ error: "Failed to fetch composition" });
     }
   });
 
