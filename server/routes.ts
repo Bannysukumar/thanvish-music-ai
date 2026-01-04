@@ -1,7 +1,7 @@
 import type { Express, Request, Response, NextFunction } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
-import { generateMusicComposition, getMusicGenerationStatus } from "./apibox";
+import { generateMusicComposition, getMusicGenerationStatus, getRemainingCredits } from "./apibox";
 import {
   musicGenerationRequestSchema,
   insertContactSubmissionSchema,
@@ -615,6 +615,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error: any) {
       console.error("Error updating API key:", error);
       res.status(500).json({ error: "Failed to update API key" });
+    }
+  });
+
+  // Get remaining API credits
+  app.get("/api/admin/credits", requireAdmin, async (req, res) => {
+    try {
+      const credits = await getRemainingCredits();
+      res.json({ credits, success: true });
+    } catch (error: any) {
+      console.error("Error getting credits:", error);
+      res.status(500).json({ error: error.message || "Failed to get remaining credits" });
     }
   });
 

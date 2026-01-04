@@ -5,6 +5,7 @@ import {
   LayoutDashboard, 
   Users, 
   Settings,
+  Coins,
   Menu,
   X,
   LogOut
@@ -18,6 +19,7 @@ import { cn } from "@/lib/utils";
 const menuItems = [
   { path: "/admin/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { path: "/admin/users", label: "Users", icon: Users },
+  { path: "/admin/credits", label: "Credits", icon: Coins },
   { path: "/admin/settings", label: "Settings", icon: Settings },
 ];
 

@@ -4,6 +4,7 @@ import { AdminLayout } from "./AdminLayout";
 import AdminLogin from "@/pages/admin/AdminLogin";
 import AdminDashboard from "@/pages/admin/AdminDashboard";
 import AdminUsers from "@/pages/admin/AdminUsers";
+import AdminCredits from "@/pages/admin/AdminCredits";
 import AdminSettings from "@/pages/admin/AdminSettings";
 
 function ProtectedAdminRoute({ children }: { children: React.ReactNode }) {
@@ -52,6 +53,13 @@ export function AdminRouter() {
         <ProtectedAdminRoute>
           <AdminLayout>
             <AdminUsers />
+          </AdminLayout>
+        </ProtectedAdminRoute>
+      </Route>
+      <Route path="/admin/credits">
+        <ProtectedAdminRoute>
+          <AdminLayout>
+            <AdminCredits />
           </AdminLayout>
         </ProtectedAdminRoute>
       </Route>

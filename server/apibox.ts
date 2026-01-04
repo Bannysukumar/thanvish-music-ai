@@ -336,3 +336,51 @@ export async function getMusicGenerationStatus(
   }
 }
 
+/**
+ * Get remaining credits from API.box
+ */
+export async function getRemainingCredits(): Promise<number> {
+  const apiKey = getApiBoxKey();
+  const apiUrl = `${API_BOX_BASE_URL}/generate/credit`;
+
+  try {
+    const response = await fetch(apiUrl, {
+      method: "GET",
+      headers: {
+        "Authorization": `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+    });
+
+    if (!response.ok) {
+      const text = await response.text();
+      console.error(`[API.box] Credits API Error: Status ${response.status}`);
+      console.error(`[API.box] Response:`, text.substring(0, 500));
+      
+      if (response.status === 401) {
+        throw new Error("API authentication failed. Please check your API key.");
+      }
+      
+      throw new Error(`Failed to get credits: Status ${response.status}`);
+    }
+
+    const contentType = response.headers.get("content-type");
+    if (!contentType || !contentType.includes("application/json")) {
+      const text = await response.text();
+      console.error(`[API.box] Credits API Error: Expected JSON but got ${contentType}, Response:`, text.substring(0, 500));
+      throw new Error(`API returned non-JSON response (${contentType})`);
+    }
+
+    const data = await response.json();
+
+    if (data.code !== 200) {
+      throw new Error(data.msg || "Failed to get remaining credits");
+    }
+
+    return data.data || 0;
+  } catch (error: any) {
+    console.error("[API.box] Get Credits Error:", error);
+    throw new Error(`Failed to get remaining credits: ${error.message}`);
+  }
+}
+
