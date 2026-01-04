@@ -384,3 +384,48 @@ export async function getRemainingCredits(): Promise<number> {
   }
 }
 
+/**
+ * Get generation logs from API.box (if endpoint exists)
+ * This attempts to fetch logs from API.box's logs API
+ */
+export async function getApiBoxLogs(): Promise<any[]> {
+  const apiKey = getApiBoxKey();
+  
+  // Try common logs endpoint patterns
+  const possibleEndpoints = [
+    `${API_BOX_BASE_URL}/logs`,
+    `${API_BOX_BASE_URL}/generate/logs`,
+    `${API_BOX_BASE_URL}/history`,
+    `${API_BOX_BASE_URL}/generate/history`,
+  ];
+
+  for (const endpoint of possibleEndpoints) {
+    try {
+      const response = await fetch(endpoint, {
+        method: "GET",
+        headers: {
+          "Authorization": `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+        },
+      });
+
+      if (response.ok) {
+        const contentType = response.headers.get("content-type");
+        if (contentType && contentType.includes("application/json")) {
+          const data = await response.json();
+          if (data.code === 200 && data.data) {
+            console.log(`[API.box] Logs API found at: ${endpoint}`);
+            return Array.isArray(data.data) ? data.data : [];
+          }
+        }
+      }
+    } catch (error) {
+      // Try next endpoint
+      continue;
+    }
+  }
+
+  // If no endpoint works, return empty array
+  return [];
+}
+

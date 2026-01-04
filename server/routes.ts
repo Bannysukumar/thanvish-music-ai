@@ -1,7 +1,7 @@
 import type { Express, Request, Response, NextFunction } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
-import { generateMusicComposition, getMusicGenerationStatus, getRemainingCredits } from "./apibox";
+import { generateMusicComposition, getMusicGenerationStatus, getRemainingCredits, getApiBoxLogs } from "./apibox";
 import {
   musicGenerationRequestSchema,
   insertContactSubmissionSchema,
@@ -100,12 +100,54 @@ function writeEnvFile(env: Record<string, string>) {
   fs.writeFileSync(envPath, lines.join("\n") + "\n", "utf-8");
 }
 
+// Generation log interface
+interface GenerationLog {
+  id: string;
+  taskId: string;
+  compositionId: string | null;
+  time: string; // ISO timestamp
+  type: "generate";
+  model: string;
+  prompt: string;
+  callbackUrl: string;
+  status: "pending" | "success" | "failed";
+  creditsConsumed: number | null;
+  requestData: any;
+  createdAt: number; // Unix timestamp for sorting
+}
+
 export async function registerRoutes(app: Express): Promise<Server> {
   // Store taskId to compositionId mapping temporarily
   const taskIdToCompositionId = new Map<string, string>();
   
+  // Store multiple audio URLs for each composition (complement to audioUrl field)
+  const compositionAudioUrls = new Map<string, string[]>();
+  
+  // Store generation logs
+  const generationLogs = new Map<string, GenerationLog>();
+  
   // Cache to remember that API status endpoint doesn't exist (to avoid trying every time)
   let statusEndpointAvailable: boolean | null = null;
+  
+  // Helper function to extract audioUrls from description if stored there
+  const extractAudioUrlsFromDescription = (description: string | null | undefined): string[] | undefined => {
+    if (!description) return undefined;
+    const match = description.match(/<!--AUDIO_URLS:(.*?)-->/);
+    if (match) {
+      try {
+        return JSON.parse(match[1]);
+      } catch (e) {
+        return undefined;
+      }
+    }
+    return undefined;
+  };
+  
+  // Helper function to clean description (remove AUDIO_URLS marker)
+  const cleanDescription = (description: string | null | undefined): string => {
+    if (!description) return "";
+    return description.replace(/\n\n<!--AUDIO_URLS:.*?-->/, "").trim();
+  };
 
   app.post("/api/generate-music", async (req, res) => {
     try {
@@ -145,6 +187,62 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Store mapping for callback/polling
       taskIdToCompositionId.set(taskId, composition.id);
+
+      // Create generation log entry
+      const callbackUrl = process.env.API_BOX_CALLBACK_URL || 
+        `${process.env.BASE_URL || "http://localhost:5000"}/api/music-callback`;
+      const model = process.env.API_BOX_MODEL || "V5";
+      
+      // Build prompt display string
+      let promptDisplay = "";
+      if (validatedData.generationMode === "voice_only") {
+        promptDisplay = validatedData.prompt || "";
+      } else if (validatedData.generationMode === "full_music") {
+        const tradition = "classical";
+        promptDisplay = `Create a ${tradition} classical composition in Raga ${validatedData.raga || "N/A"} using Tala ${validatedData.tala || "N/A"}, featuring ${(validatedData.instruments || []).join(", ")}. Tempo is ${validatedData.tempo || 100} BPM with a ${validatedData.mood || "N/A"} mood. ${validatedData.prompt || ""}`;
+      } else {
+        const tradition = "classical";
+        promptDisplay = `Create a ${tradition} classical instrumental composition in Raga ${validatedData.raga || "N/A"} using Tala ${validatedData.tala || "N/A"}, featuring ${(validatedData.instruments || []).join(", ")}. Tempo is ${validatedData.tempo || 100} BPM with a ${validatedData.mood || "N/A"} mood.`;
+      }
+
+      const logEntry: GenerationLog = {
+        id: taskId,
+        taskId,
+        compositionId: composition.id,
+        time: new Date().toISOString(),
+        type: "generate",
+        model: model === "V5" ? "chirp-crow" : model, // API.box uses chirp-crow for V5 model
+        prompt: promptDisplay.substring(0, 200), // Truncate for display
+        callbackUrl,
+        status: "pending",
+        creditsConsumed: null,
+        requestData: validatedData,
+        createdAt: Date.now(),
+      };
+      
+      // Store in memory (for backwards compatibility)
+      generationLogs.set(taskId, logEntry);
+      
+      // Save to Firebase Firestore
+      try {
+        await adminDb.collection("generationLogs").doc(taskId).set({
+          taskId,
+          compositionId: composition.id,
+          time: logEntry.time,
+          type: logEntry.type,
+          model: logEntry.model,
+          prompt: logEntry.prompt,
+          callbackUrl,
+          status: logEntry.status,
+          creditsConsumed: null,
+          requestData: validatedData,
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+      } catch (firebaseError) {
+        console.error("Error saving log to Firebase:", firebaseError);
+        // Continue even if Firebase save fails
+      }
 
       res.json({
         ...composition,
@@ -189,10 +287,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
           const composition = await storage.getComposition(compositionId);
           if (composition && composition.audioUrl) {
             // Composition already has audio URL (callback worked)
+            const audioUrls = compositionAudioUrls.get(compositionId);
             return res.json({
               taskId,
               status: "complete",
               audioUrl: composition.audioUrl,
+              audioUrls: audioUrls || [composition.audioUrl],
               title: composition.title,
             });
           }
@@ -226,11 +326,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
           }
         }
 
+        const compositionId = taskIdToCompositionId.get(taskId);
+        const storedAudioUrls = compositionId ? compositionAudioUrls.get(compositionId) : undefined;
+        
         res.json({
           taskId: status.data.taskId,
           status: status.data.status,
           audioUrl: status.data.audioUrl || (status.data.audioUrls && status.data.audioUrls[0]),
-          audioUrls: status.data.audioUrls,
+          audioUrls: storedAudioUrls || status.data.audioUrls || (status.data.audioUrl ? [status.data.audioUrl] : []),
           title: status.data.title,
           lyrics: status.data.lyrics,
         });
@@ -316,12 +419,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       else if (callbackData.data?.data && Array.isArray(callbackData.data.data) && callbackData.data.data.length > 0) {
         const firstItem = callbackData.data.data[0];
         // Check if we have audio_url (not empty) - this indicates completion
-        if (firstItem.audio_url && firstItem.audio_url.trim() !== "") {
+          if (firstItem.audio_url && firstItem.audio_url.trim() !== "") {
           isComplete = true;
-          audioUrl = firstItem.audio_url;
-          audioUrls = callbackData.data.data
-            .map((item: any) => item.audio_url)
-            .filter((url: string) => url && url.trim() !== "");
+            audioUrl = firstItem.audio_url;
+            audioUrls = callbackData.data.data
+              .map((item: any) => item.audio_url)
+              .filter((url: string) => url && url.trim() !== "");
         } else if (firstItem.stream_audio_url && firstItem.stream_audio_url.trim() !== "") {
           // If we have stream_audio_url but no audio_url, it might still be processing
           // But if callbackType is complete, use it
@@ -360,17 +463,61 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const composition = await storage.getComposition(compositionId);
         if (composition) {
           const finalAudioUrl = audioUrl || (audioUrls && audioUrls[0]);
+          const allAudioUrls = audioUrls && audioUrls.length > 0 ? audioUrls : (audioUrl ? [audioUrl] : []);
+          
           // Only update if we have a valid, non-empty URL
           if (finalAudioUrl && finalAudioUrl.trim() !== "") {
+            // Store all audio URLs in the map
+            compositionAudioUrls.set(compositionId, allAudioUrls);
+            
             await storage.updateComposition(compositionId, {
               audioUrl: finalAudioUrl,
               title: title || composition.title,
             });
-            console.log(`[API.box] ✅ Updated composition ${compositionId} with audio URL: ${finalAudioUrl}`);
+            console.log(`[API.box] ✅ Updated composition ${compositionId} with ${allAudioUrls.length} audio URL(s)`);
             console.log(`[API.box] Title: ${title || composition.title}`);
+            if (allAudioUrls.length > 1) {
+              console.log(`[API.box] Multiple variations available: ${allAudioUrls.length} versions`);
+            }
+
+            // Update log entry with success status and credits consumed (typically 12 credits per generation)
+            const logEntry = generationLogs.get(taskId);
+            if (logEntry) {
+              logEntry.status = "success";
+              logEntry.creditsConsumed = 12; // API.box typically charges 12 credits per generation
+              generationLogs.set(taskId, logEntry);
+            }
+            
+            // Update in Firebase
+            try {
+              await adminDb.collection("generationLogs").doc(taskId).update({
+                status: "success",
+                creditsConsumed: 12,
+                updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+              });
+            } catch (firebaseError) {
+              console.error("Error updating log in Firebase:", firebaseError);
+            }
           } else {
             console.log(`[API.box] Callback marked complete but no valid audio URL for taskId ${taskId}`);
           }
+        }
+      } else if (msg && msg.toLowerCase().includes("fail")) {
+        // Update log entry with failed status
+        const logEntry = generationLogs.get(taskId);
+        if (logEntry) {
+          logEntry.status = "failed";
+          generationLogs.set(taskId, logEntry);
+        }
+        
+        // Update in Firebase
+        try {
+          await adminDb.collection("generationLogs").doc(taskId).update({
+            status: "failed",
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          });
+        } catch (firebaseError) {
+          console.error("Error updating log in Firebase:", firebaseError);
         }
       } else {
         console.log(`[API.box] Callback stage: ${callbackType || "unknown"} for taskId ${taskId} - isComplete: ${isComplete}, hasAudioUrl: ${!!audioUrl}`);
@@ -478,11 +625,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ error: "Composition not found" });
       }
 
-      // Return composition with completion status
+      // Get stored audioUrls for this composition
+      const audioUrls = compositionAudioUrls.get(compositionId);
+      
+      // Return composition with completion status and all audio URLs
       res.json({
         ...composition,
         taskId,
         isComplete: !!composition.audioUrl,
+        audioUrls: audioUrls || (composition.audioUrl ? [composition.audioUrl] : []),
       });
     } catch (error: any) {
       console.error("Error fetching composition by taskId:", error);
@@ -625,6 +776,204 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Get SMTP email settings (masked password)
+  app.get("/api/admin/settings/smtp", requireAdmin, async (req, res) => {
+    try {
+      const env = readEnvFile();
+      const smtpPassword = env.SMTP_PASSWORD || "";
+      const maskedPassword = smtpPassword ? `${smtpPassword.substring(0, 4)}...${smtpPassword.substring(smtpPassword.length - 4)}` : "";
+      
+      res.json({
+        smtpHost: env.SMTP_HOST || "",
+        smtpPort: env.SMTP_PORT || "",
+        smtpUser: env.SMTP_USER || "",
+        smtpPassword: maskedPassword,
+        smtpFrom: env.SMTP_FROM || "",
+        hasConfig: !!(env.SMTP_HOST && env.SMTP_USER && env.SMTP_PASSWORD),
+      });
+    } catch (error: any) {
+      console.error("Error getting SMTP settings:", error);
+      res.status(500).json({ error: "Failed to get SMTP settings" });
+    }
+  });
+
+  // Update SMTP email settings
+  app.put("/api/admin/settings/smtp", requireAdmin, async (req, res) => {
+    try {
+      const { smtpHost, smtpPort, smtpUser, smtpPassword, smtpFrom } = req.body;
+
+      if (!smtpHost || !smtpUser || !smtpPassword) {
+        return res.status(400).json({ error: "SMTP Host, User, and Password are required" });
+      }
+
+      // Validate port
+      const port = parseInt(smtpPort || "587");
+      if (isNaN(port) || port < 1 || port > 65535) {
+        return res.status(400).json({ error: "Invalid SMTP port. Must be between 1 and 65535" });
+      }
+
+      // Read current .env
+      const env = readEnvFile();
+      env.SMTP_HOST = smtpHost.trim();
+      env.SMTP_PORT = port.toString();
+      env.SMTP_USER = smtpUser.trim();
+      env.SMTP_PASSWORD = smtpPassword.trim();
+      env.SMTP_FROM = (smtpFrom || smtpUser).trim();
+      
+      // Write back to .env
+      writeEnvFile(env);
+      
+      // Update process.env (for current session)
+      process.env.SMTP_HOST = env.SMTP_HOST;
+      process.env.SMTP_PORT = env.SMTP_PORT;
+      process.env.SMTP_USER = env.SMTP_USER;
+      process.env.SMTP_PASSWORD = env.SMTP_PASSWORD;
+      process.env.SMTP_FROM = env.SMTP_FROM;
+
+      res.json({ success: true, message: "SMTP settings updated successfully" });
+    } catch (error: any) {
+      console.error("Error updating SMTP settings:", error);
+      res.status(500).json({ error: "Failed to update SMTP settings" });
+    }
+  });
+
+  // Get guest mode setting (public endpoint for frontend)
+  app.get("/api/settings/guest-mode", async (req, res) => {
+    try {
+      const env = readEnvFile();
+      // Default to enabled if not set (for backward compatibility)
+      const guestModeEnabled = env.GUEST_MODE_ENABLED === undefined || 
+                               env.GUEST_MODE_ENABLED === "" ||
+                               env.GUEST_MODE_ENABLED === "true" || 
+                               env.GUEST_MODE_ENABLED === "1";
+      res.json({ enabled: guestModeEnabled });
+    } catch (error: any) {
+      console.error("Error getting guest mode setting:", error);
+      // Default to enabled on error
+      res.json({ enabled: true });
+    }
+  });
+
+  // Get guest mode setting (admin endpoint)
+  app.get("/api/admin/settings/guest-mode", requireAdmin, async (req, res) => {
+    try {
+      const env = readEnvFile();
+      // Default to enabled if not set (for backward compatibility)
+      const guestModeEnabled = env.GUEST_MODE_ENABLED === undefined || 
+                               env.GUEST_MODE_ENABLED === "" ||
+                               env.GUEST_MODE_ENABLED === "true" || 
+                               env.GUEST_MODE_ENABLED === "1";
+      res.json({ enabled: guestModeEnabled });
+    } catch (error: any) {
+      console.error("Error getting guest mode setting:", error);
+      res.status(500).json({ error: "Failed to get guest mode setting" });
+    }
+  });
+
+  // Update guest mode setting
+  app.put("/api/admin/settings/guest-mode", requireAdmin, async (req, res) => {
+    try {
+      const { enabled } = req.body;
+
+      if (typeof enabled !== "boolean") {
+        return res.status(400).json({ error: "Enabled must be a boolean value" });
+      }
+
+      // Read current .env
+      const env = readEnvFile();
+      env.GUEST_MODE_ENABLED = enabled ? "true" : "false";
+      
+      // Write back to .env
+      writeEnvFile(env);
+      
+      // Update process.env (for current session)
+      process.env.GUEST_MODE_ENABLED = env.GUEST_MODE_ENABLED;
+
+      res.json({ 
+        success: true, 
+        message: `Guest mode ${enabled ? "enabled" : "disabled"} successfully`,
+        enabled 
+      });
+    } catch (error: any) {
+      console.error("Error updating guest mode setting:", error);
+      res.status(500).json({ error: "Failed to update guest mode setting" });
+    }
+  });
+
+  // Get generation logs
+  app.get("/api/admin/logs", requireAdmin, async (req, res) => {
+    try {
+      // Try to fetch logs from API.box API first (if available)
+      let apiBoxLogs: any[] = [];
+      try {
+        apiBoxLogs = await getApiBoxLogs();
+        console.log(`[API.box] Fetched ${apiBoxLogs.length} logs from API.box`);
+      } catch (apiBoxError) {
+        // API.box logs endpoint might not exist, that's okay - use Firebase logs
+        console.log("[API.box] Logs API not available, using Firebase logs only");
+      }
+
+      // Fetch logs from Firebase Firestore
+      const logsSnapshot = await adminDb.collection("generationLogs")
+        .orderBy("createdAt", "desc")
+        .limit(1000) // Limit to 1000 most recent logs
+        .get();
+
+      const firebaseLogsArray = logsSnapshot.docs.map(doc => {
+        const data = doc.data();
+        return {
+          id: doc.id,
+          taskId: data.taskId || doc.id,
+          compositionId: data.compositionId || null,
+          time: data.time || (data.createdAt?.toDate ? data.createdAt.toDate().toISOString() : new Date().toISOString()),
+          type: data.type || "generate",
+          model: data.model || "chirp-crow",
+          prompt: data.prompt || "",
+          callbackUrl: data.callbackUrl || "",
+          status: data.status || "pending",
+          creditsConsumed: data.creditsConsumed !== undefined ? data.creditsConsumed : null,
+        };
+      });
+
+      // If API.box logs are available, merge with Firebase logs (prefer API.box data)
+      // Create a map of taskIds from Firebase for deduplication
+      const firebaseTaskIdMap = new Map(firebaseLogsArray.map(log => [log.taskId, log]));
+      
+      // Process API.box logs and add to map (API.box logs take precedence)
+      apiBoxLogs.forEach(apiLog => {
+        // Convert API.box log format to our format
+        const taskId = apiLog.taskId || apiLog.id || apiLog.task_id;
+        if (taskId) {
+          firebaseTaskIdMap.set(taskId, {
+            id: taskId,
+            taskId: taskId,
+            compositionId: firebaseTaskIdMap.get(taskId)?.compositionId || null,
+            time: apiLog.time || apiLog.createdAt || apiLog.timestamp || new Date().toISOString(),
+            type: "generate",
+            model: apiLog.model || "chirp-crow",
+            prompt: apiLog.prompt || apiLog.input || "",
+            callbackUrl: apiLog.callbackUrl || apiLog.callback_url || "",
+            status: apiLog.status === "success" || apiLog.status === "complete" ? "success" : 
+                   apiLog.status === "failed" ? "failed" : "pending",
+            creditsConsumed: apiLog.creditsConsumed || apiLog.credits || null,
+          });
+        }
+      });
+
+      // Convert map back to array and sort by time (newest first)
+      const allLogs = Array.from(firebaseTaskIdMap.values()).sort((a, b) => {
+        const timeA = new Date(a.time).getTime();
+        const timeB = new Date(b.time).getTime();
+        return timeB - timeA; // Newest first
+      });
+
+      res.json({ logs: allLogs });
+    } catch (error: any) {
+      console.error("Error fetching generation logs:", error);
+      res.status(500).json({ error: "Failed to fetch generation logs: " + (error.message || "Unknown error") });
+    }
+  });
+
   // Get remaining API credits
   app.get("/api/admin/credits", requireAdmin, async (req, res) => {
     try {
@@ -666,7 +1015,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
               role: userRole,
               isBlocked: firebaseUser.disabled || false,
               isActive: !firebaseUser.disabled,
-              emailVerified: firebaseUser.emailVerified,
+              // Use Firestore emailVerified if available (from OTP verification), otherwise use Firebase Auth's emailVerified
+              emailVerified: profileData?.emailVerified !== undefined ? profileData.emailVerified : firebaseUser.emailVerified,
               createdAt: firebaseUser.metadata.creationTime,
               lastSignIn: firebaseUser.metadata.lastSignInTime,
               profileData: profileData ? {
@@ -696,6 +1046,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               role: userRole,
               isBlocked: firebaseUser.disabled || false,
               isActive: !firebaseUser.disabled,
+              // Use Firebase Auth's emailVerified as fallback (no Firestore profile)
               emailVerified: firebaseUser.emailVerified,
               createdAt: firebaseUser.metadata.creationTime,
               lastSignIn: firebaseUser.metadata.lastSignInTime,

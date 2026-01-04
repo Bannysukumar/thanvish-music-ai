@@ -249,6 +249,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       throw new Error("Name and mobile number are required for guest users");
     }
 
+    // Check if guest mode is enabled
+    try {
+      const response = await fetch("/api/settings/guest-mode");
+      if (response.ok) {
+        const data = await response.json();
+        if (data.enabled === false) {
+          throw new Error("Guest mode is currently disabled. Please create an account to continue.");
+        }
+      }
+    } catch (error) {
+      // If it's already an error about guest mode being disabled, rethrow it
+      if (error instanceof Error && error.message.includes("Guest mode is currently disabled")) {
+        throw error;
+      }
+      // Otherwise, continue (default to enabled if check fails)
+      console.warn("Could not verify guest mode status, proceeding with guest login");
+    }
+
     const guestId = `guest_${Date.now()}`;
     const guestUser: User = {
       id: guestId,

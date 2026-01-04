@@ -5,8 +5,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { useToast } from "@/hooks/use-toast";
-import { Loader2, Eye, EyeOff, Save, Key, AlertCircle, CheckCircle2, Info } from "lucide-react";
+import { Loader2, Eye, EyeOff, Save, Key, AlertCircle, CheckCircle2, Info, Mail, User } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Switch } from "@/components/ui/switch";
 
 export default function AdminSettings() {
   const { toast } = useToast();
@@ -16,28 +17,72 @@ export default function AdminSettings() {
   const [isFetching, setIsFetching] = useState(true);
   const [hasApiKey, setHasApiKey] = useState(false);
 
+  // SMTP settings state
+  const [smtpHost, setSmtpHost] = useState("");
+  const [smtpPort, setSmtpPort] = useState("");
+  const [smtpUser, setSmtpUser] = useState("");
+  const [smtpPassword, setSmtpPassword] = useState("");
+  const [smtpFrom, setSmtpFrom] = useState("");
+  const [showSmtpPassword, setShowSmtpPassword] = useState(false);
+  const [isSavingSmtp, setIsSavingSmtp] = useState(false);
+  const [hasSmtpConfig, setHasSmtpConfig] = useState(false);
+
+  // Guest mode state
+  const [guestModeEnabled, setGuestModeEnabled] = useState(false);
+  const [isSavingGuestMode, setIsSavingGuestMode] = useState(false);
+
   useEffect(() => {
-    const fetchApiKey = async () => {
+    const fetchSettings = async () => {
       try {
         const sessionId = localStorage.getItem("adminSession");
         if (!sessionId) return;
 
-        const response = await fetch("/api/admin/settings/api-key", {
+        // Fetch API key
+        const apiKeyResponse = await fetch("/api/admin/settings/api-key", {
           headers: {
             Authorization: `Bearer ${sessionId}`,
           },
         });
 
-        if (response.ok) {
-          const data = await response.json();
-          setApiKey(data.apiKey || "");
-          setHasApiKey(data.hasKey || false);
+        if (apiKeyResponse.ok) {
+          const apiKeyData = await apiKeyResponse.json();
+          setApiKey(apiKeyData.apiKey || "");
+          setHasApiKey(apiKeyData.hasKey || false);
+        }
+
+        // Fetch SMTP settings
+        const smtpResponse = await fetch("/api/admin/settings/smtp", {
+          headers: {
+            Authorization: `Bearer ${sessionId}`,
+          },
+        });
+
+        if (smtpResponse.ok) {
+          const smtpData = await smtpResponse.json();
+          setSmtpHost(smtpData.smtpHost || "");
+          setSmtpPort(smtpData.smtpPort || "587");
+          setSmtpUser(smtpData.smtpUser || "");
+          setSmtpPassword(""); // Don't show masked password, user needs to enter new one or leave blank
+          setSmtpFrom(smtpData.smtpFrom || "");
+          setHasSmtpConfig(smtpData.hasConfig || false);
+        }
+
+        // Fetch guest mode setting
+        const guestModeResponse = await fetch("/api/admin/settings/guest-mode", {
+          headers: {
+            Authorization: `Bearer ${sessionId}`,
+          },
+        });
+
+        if (guestModeResponse.ok) {
+          const guestModeData = await guestModeResponse.json();
+          setGuestModeEnabled(guestModeData.enabled || false);
         }
       } catch (error) {
-        console.error("Error fetching API key:", error);
+        console.error("Error fetching settings:", error);
         toast({
           title: "Error",
-          description: "Failed to fetch API key",
+          description: "Failed to fetch settings",
           variant: "destructive",
         });
       } finally {
@@ -45,7 +90,7 @@ export default function AdminSettings() {
       }
     };
 
-    fetchApiKey();
+    fetchSettings();
   }, [toast]);
 
   const handleSave = async () => {
@@ -93,6 +138,102 @@ export default function AdminSettings() {
       });
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleSaveSmtp = async () => {
+    if (!smtpHost.trim() || !smtpUser.trim() || !smtpPassword.trim()) {
+      toast({
+        title: "Error",
+        description: "SMTP Host, User, and Password are required",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setIsSavingSmtp(true);
+    try {
+      const sessionId = localStorage.getItem("adminSession");
+      if (!sessionId) {
+        throw new Error("Not authenticated");
+      }
+
+      const response = await fetch("/api/admin/settings/smtp", {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${sessionId}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          smtpHost: smtpHost.trim(),
+          smtpPort: smtpPort.trim() || "587",
+          smtpUser: smtpUser.trim(),
+          smtpPassword: smtpPassword.trim(),
+          smtpFrom: smtpFrom.trim() || smtpUser.trim(),
+        }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Failed to update SMTP settings");
+      }
+
+      setHasSmtpConfig(true);
+      setSmtpPassword(""); // Clear password field after save
+      toast({
+        title: "Success",
+        description: "SMTP settings updated successfully",
+      });
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: error instanceof Error ? error.message : "Failed to update SMTP settings",
+        variant: "destructive",
+      });
+    } finally {
+      setIsSavingSmtp(false);
+    }
+  };
+
+  const handleToggleGuestMode = async (enabled: boolean) => {
+    setIsSavingGuestMode(true);
+    try {
+      const sessionId = localStorage.getItem("adminSession");
+      if (!sessionId) {
+        throw new Error("Not authenticated");
+      }
+
+      const response = await fetch("/api/admin/settings/guest-mode", {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${sessionId}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ enabled }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Failed to update guest mode setting");
+      }
+
+      setGuestModeEnabled(enabled);
+      toast({
+        title: "Success",
+        description: `Guest mode ${enabled ? "enabled" : "disabled"} successfully`,
+      });
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: error instanceof Error ? error.message : "Failed to update guest mode setting",
+        variant: "destructive",
+      });
+      // Revert the toggle on error
+      setGuestModeEnabled(!enabled);
+    } finally {
+      setIsSavingGuestMode(false);
     }
   };
 
@@ -209,6 +350,218 @@ export default function AdminSettings() {
                 </AlertDescription>
               </Alert>
             </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* SMTP Email Configuration Card */}
+      <Card>
+        <CardHeader className="pb-4">
+          <div className="flex items-center gap-3">
+            <div className="p-2 rounded-lg bg-primary/10">
+              <Mail className="h-5 w-5 text-primary" />
+            </div>
+            <div className="flex-1">
+              <CardTitle className="text-xl">Email Configuration</CardTitle>
+              <CardDescription className="mt-1">
+                Configure SMTP settings for sending OTP verification emails
+              </CardDescription>
+            </div>
+            {hasSmtpConfig && (
+              <div className="flex items-center gap-2 text-sm text-green-600 dark:text-green-400">
+                <CheckCircle2 className="h-4 w-4" />
+                <span className="font-medium">Configured</span>
+              </div>
+            )}
+          </div>
+        </CardHeader>
+        <Separator />
+        <CardContent className="pt-6">
+          <div className="space-y-6">
+            <div className="grid gap-4 sm:grid-cols-2">
+              {/* SMTP Host */}
+              <div className="space-y-2">
+                <Label htmlFor="smtp-host" className="text-base font-medium">
+                  SMTP Host <span className="text-destructive">*</span>
+                </Label>
+                <Input
+                  id="smtp-host"
+                  type="text"
+                  placeholder="smtp.gmail.com"
+                  value={smtpHost}
+                  onChange={(e) => setSmtpHost(e.target.value)}
+                  disabled={isSavingSmtp}
+                />
+              </div>
+
+              {/* SMTP Port */}
+              <div className="space-y-2">
+                <Label htmlFor="smtp-port" className="text-base font-medium">
+                  SMTP Port
+                </Label>
+                <Input
+                  id="smtp-port"
+                  type="number"
+                  placeholder="587"
+                  value={smtpPort}
+                  onChange={(e) => setSmtpPort(e.target.value)}
+                  disabled={isSavingSmtp}
+                />
+              </div>
+            </div>
+
+            {/* SMTP User */}
+            <div className="space-y-2">
+              <Label htmlFor="smtp-user" className="text-base font-medium">
+                SMTP User (Email) <span className="text-destructive">*</span>
+              </Label>
+              <Input
+                id="smtp-user"
+                type="email"
+                placeholder="your-email@gmail.com"
+                value={smtpUser}
+                onChange={(e) => setSmtpUser(e.target.value)}
+                disabled={isSavingSmtp}
+              />
+            </div>
+
+            {/* SMTP Password */}
+            <div className="space-y-2">
+              <Label htmlFor="smtp-password" className="text-base font-medium">
+                SMTP Password (App Password) <span className="text-destructive">*</span>
+              </Label>
+              <div className="relative flex items-center">
+                <Input
+                  id="smtp-password"
+                  type={showSmtpPassword ? "text" : "password"}
+                  placeholder="Enter your SMTP password or app password"
+                  value={smtpPassword}
+                  onChange={(e) => setSmtpPassword(e.target.value)}
+                  disabled={isSavingSmtp}
+                  className="pr-11 h-11 text-base font-mono"
+                />
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="absolute right-0 h-11 w-11 hover:bg-transparent rounded-l-none"
+                  onClick={() => setShowSmtpPassword(!showSmtpPassword)}
+                  disabled={isSavingSmtp}
+                  aria-label={showSmtpPassword ? "Hide password" : "Show password"}
+                >
+                  {showSmtpPassword ? (
+                    <EyeOff className="h-4 w-4 text-muted-foreground" />
+                  ) : (
+                    <Eye className="h-4 w-4 text-muted-foreground" />
+                  )}
+                </Button>
+              </div>
+            </div>
+
+            {/* SMTP From */}
+            <div className="space-y-2">
+              <Label htmlFor="smtp-from" className="text-base font-medium">
+                From Email Address
+              </Label>
+              <Input
+                id="smtp-from"
+                type="email"
+                placeholder="noreply@thanvish.com"
+                value={smtpFrom}
+                onChange={(e) => setSmtpFrom(e.target.value)}
+                disabled={isSavingSmtp}
+              />
+              <p className="text-xs text-muted-foreground">
+                Leave empty to use SMTP User email as From address
+              </p>
+            </div>
+
+            <Button
+              onClick={handleSaveSmtp}
+              disabled={isSavingSmtp || !smtpHost.trim() || !smtpUser.trim() || !smtpPassword.trim()}
+              className="w-full sm:w-auto"
+              size="lg"
+            >
+              {isSavingSmtp ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Saving...
+                </>
+              ) : (
+                <>
+                  <Save className="mr-2 h-4 w-4" />
+                  Save SMTP Settings
+                </>
+              )}
+            </Button>
+
+            <Alert>
+              <Info className="h-4 w-4" />
+              <AlertTitle>SMTP Configuration</AlertTitle>
+              <AlertDescription className="mt-2">
+                These settings are stored in your server's <code className="px-1.5 py-0.5 rounded bg-muted text-xs font-mono">.env</code> file.
+                For Gmail, use an App Password (not your regular password). The settings will be used for sending OTP verification emails to users during account creation.
+              </AlertDescription>
+            </Alert>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Guest Mode Configuration Card */}
+      <Card>
+        <CardHeader className="pb-4">
+          <div className="flex items-center gap-3">
+            <div className="p-2 rounded-lg bg-primary/10">
+              <User className="h-5 w-5 text-primary" />
+            </div>
+            <div className="flex-1">
+              <CardTitle className="text-xl">Guest Mode</CardTitle>
+              <CardDescription className="mt-1">
+                Enable or disable guest user access to the platform
+              </CardDescription>
+            </div>
+            <div className="flex items-center gap-3">
+              {guestModeEnabled ? (
+                <div className="flex items-center gap-2 text-sm text-green-600 dark:text-green-400">
+                  <CheckCircle2 className="h-4 w-4" />
+                  <span className="font-medium">Enabled</span>
+                </div>
+              ) : (
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <span className="font-medium">Disabled</span>
+                </div>
+              )}
+            </div>
+          </div>
+        </CardHeader>
+        <Separator />
+        <CardContent className="pt-6">
+          <div className="space-y-6">
+            <div className="flex items-center justify-between">
+              <div className="space-y-0.5">
+                <Label htmlFor="guest-mode" className="text-base font-medium">
+                  Allow Guest Access
+                </Label>
+                <p className="text-sm text-muted-foreground">
+                  When enabled, users can access the platform without creating an account
+                </p>
+              </div>
+              <Switch
+                id="guest-mode"
+                checked={guestModeEnabled}
+                onCheckedChange={handleToggleGuestMode}
+                disabled={isSavingGuestMode}
+              />
+            </div>
+
+            <Alert>
+              <Info className="h-4 w-4" />
+              <AlertTitle>About Guest Mode</AlertTitle>
+              <AlertDescription className="mt-2">
+                When guest mode is enabled, users can continue without signing up. Guest users have limited access and cannot save their compositions permanently. 
+                When disabled, users must create an account to access the platform.
+              </AlertDescription>
+            </Alert>
           </div>
         </CardContent>
       </Card>

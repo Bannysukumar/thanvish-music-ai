@@ -8,7 +8,8 @@ import {
   Coins,
   Menu,
   X,
-  LogOut
+  LogOut,
+  FileText
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
@@ -19,6 +20,7 @@ import { cn } from "@/lib/utils";
 const menuItems = [
   { path: "/admin/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { path: "/admin/users", label: "Users", icon: Users },
+  { path: "/admin/logs", label: "Logs", icon: FileText },
   { path: "/admin/credits", label: "Credits", icon: Coins },
   { path: "/admin/settings", label: "Settings", icon: Settings },
 ];

@@ -4,6 +4,7 @@ import { AdminLayout } from "./AdminLayout";
 import AdminLogin from "@/pages/admin/AdminLogin";
 import AdminDashboard from "@/pages/admin/AdminDashboard";
 import AdminUsers from "@/pages/admin/AdminUsers";
+import AdminLogs from "@/pages/admin/AdminLogs";
 import AdminCredits from "@/pages/admin/AdminCredits";
 import AdminSettings from "@/pages/admin/AdminSettings";
 
@@ -53,6 +54,13 @@ export function AdminRouter() {
         <ProtectedAdminRoute>
           <AdminLayout>
             <AdminUsers />
+          </AdminLayout>
+        </ProtectedAdminRoute>
+      </Route>
+      <Route path="/admin/logs">
+        <ProtectedAdminRoute>
+          <AdminLayout>
+            <AdminLogs />
           </AdminLayout>
         </ProtectedAdminRoute>
       </Route>

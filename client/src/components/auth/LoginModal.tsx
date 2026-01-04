@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
@@ -52,6 +52,28 @@ export function LoginModal({
   const { login } = useAuth();
   const { toast } = useToast();
   const [isLoading, setIsLoading] = useState(false);
+  const [guestModeEnabled, setGuestModeEnabled] = useState(true); // Default to enabled
+
+  // Check guest mode status
+  useEffect(() => {
+    const checkGuestMode = async () => {
+      try {
+        const response = await fetch("/api/settings/guest-mode");
+        if (response.ok) {
+          const data = await response.json();
+          setGuestModeEnabled(data.enabled !== false); // Default to true if not set
+        }
+      } catch (error) {
+        console.error("Error checking guest mode:", error);
+        // Default to enabled on error
+        setGuestModeEnabled(true);
+      }
+    };
+
+    if (open) {
+      checkGuestMode();
+    }
+  }, [open]);
 
   const {
     register,
@@ -153,26 +175,31 @@ export function LoginModal({
             )}
           </Button>
 
-          {/* Divider */}
-          <div className="relative">
-            <div className="absolute inset-0 flex items-center">
-              <span className="w-full border-t" />
-            </div>
-            <div className="relative flex justify-center text-xs uppercase">
-              <span className="bg-background px-2 text-muted-foreground">Or</span>
-            </div>
-          </div>
+          {/* Guest login section - only show if guest mode is enabled */}
+          {guestModeEnabled && (
+            <>
+              {/* Divider */}
+              <div className="relative">
+                <div className="absolute inset-0 flex items-center">
+                  <span className="w-full border-t" />
+                </div>
+                <div className="relative flex justify-center text-xs uppercase">
+                  <span className="bg-background px-2 text-muted-foreground">Or</span>
+                </div>
+              </div>
 
-          {/* Guest login button */}
-          <Button
-            type="button"
-            variant="outline"
-            className="w-full"
-            onClick={onGuestLogin}
-            disabled={isLoading}
-          >
-            Continue as Guest
-          </Button>
+              {/* Guest login button */}
+              <Button
+                type="button"
+                variant="outline"
+                className="w-full"
+                onClick={onGuestLogin}
+                disabled={isLoading}
+              >
+                Continue as Guest
+              </Button>
+            </>
+          )}
 
           {/* Sign up link */}
           <div className="text-center text-sm">

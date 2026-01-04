@@ -49,6 +49,7 @@ function Router() {
       <Route path="/admin/login" component={AdminRouter} />
       <Route path="/admin/dashboard" component={AdminRouter} />
       <Route path="/admin/users" component={AdminRouter} />
+      <Route path="/admin/logs" component={AdminRouter} />
       <Route path="/admin/credits" component={AdminRouter} />
       <Route path="/admin/settings" component={AdminRouter} />
 

@@ -207,6 +207,8 @@ export default function Generator() {
   const SILENCE_TIMEOUT = 2000; // Stop recording after 2 seconds of silence (2000ms)
   const [generatedComposition, setGeneratedComposition] = useState<any>(null);
   const [audioSrc, setAudioSrc] = useState<string>("");
+  const [audioUrls, setAudioUrls] = useState<string[]>([]);
+  const [selectedAudioIndex, setSelectedAudioIndex] = useState<number>(0);
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const [isGenerating, setIsGenerating] = useState<boolean>(false);
@@ -434,9 +436,12 @@ export default function Generator() {
               // Composition completed! Save it
               await saveCompletedComposition(composition, task.requestData);
               
+              const variationText = composition.audioUrls && composition.audioUrls.length > 1 
+                ? ` (${composition.audioUrls.length} variations)` 
+                : "";
               toast({
                 title: "Composition Ready!",
-                description: `Your music "${composition.title}" has been generated and saved to your library.`,
+                description: `Your music "${composition.title}" has been generated and saved to your library.${variationText}`,
               });
               
               // Don't add to updatedTasks - remove it from pending list
@@ -599,6 +604,11 @@ export default function Generator() {
                   ? `Generated ${requestData.raga} composition in ${requestData.tala} with ${requestData.instruments.join(", ")}${languageLabel ? ` in ${languageLabel}` : ""}`
                   : `Generated music composition${languageLabel ? ` in ${languageLabel}` : ""}`;
                 
+                // Get all audio URLs (multiple variations)
+                const allAudioUrls = status.audioUrls && status.audioUrls.length > 0 
+                  ? status.audioUrls 
+                  : [status.audioUrl];
+                
                 const updatedComposition = {
                   ...requestData,
                   audioUrl: status.audioUrl,
@@ -606,18 +616,23 @@ export default function Generator() {
                   description,
                 };
                 setGeneratedComposition(updatedComposition);
-                setAudioSrc(status.audioUrl);
+                setAudioUrls(allAudioUrls);
+                setSelectedAudioIndex(0);
+                setAudioSrc(allAudioUrls[0]);
                 setIsGenerating(false);
                 
-                // Save to library
+                // Save to library (save all variations if multiple)
                 await saveCompletedComposition(updatedComposition, requestData);
                 
                 // Remove from pending tasks
                 removePendingTask(taskId);
                 
+                const variationText = allAudioUrls.length > 1 
+                  ? ` (${allAudioUrls.length} variations generated)` 
+                  : "";
                 toast({
                   title: "Composition Generated!",
-                  description: "Your music piece is ready to play and has been saved to your library.",
+                  description: `Your music piece is ready to play and has been saved to your library.${variationText}`,
                 });
               } else if (status.status === "failed") {
                 // Remove from pending tasks on failure
@@ -1449,6 +1464,37 @@ export default function Generator() {
                         {generatedComposition.description}
                       </p>
                     </div>
+
+                    {/* Audio Variation Selector (if multiple variations) */}
+                    {audioUrls.length > 1 && (
+                      <div className="space-y-2">
+                        <Label className="text-sm font-medium">Variation ({audioUrls.length} versions)</Label>
+                        <Select
+                          value={selectedAudioIndex.toString()}
+                          onValueChange={(value) => {
+                            const index = parseInt(value);
+                            setSelectedAudioIndex(index);
+                            setAudioSrc(audioUrls[index]);
+                            setIsPlaying(false);
+                            if (audioRef.current) {
+                              audioRef.current.pause();
+                              audioRef.current.load();
+                            }
+                          }}
+                        >
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {audioUrls.map((url, index) => (
+                              <SelectItem key={index} value={index.toString()}>
+                                Variation {index + 1}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    )}
 
                     {/* Hidden audio element used for playback control */}
                     <audio
