@@ -10,6 +10,13 @@ import * as fs from "fs";
 import * as path from "path";
 import { randomBytes } from "crypto";
 import { adminAuth, adminDb, admin } from "./firebase-admin";
+import {
+  generateAndSendOTP,
+  verifyOTP,
+  isEmailVerified,
+  getResendCooldown,
+  removeVerifiedOTP,
+} from "./otp-service.js";
 
 // Admin session storage (in-memory, use Redis in production)
 const adminSessions = new Map<string, { username: string; expiresAt: number }>();
@@ -810,6 +817,170 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       
       res.status(500).json({ error: "Failed to update user role: " + (error.message || "Unknown error") });
+    }
+  });
+
+  // ==================== OTP Verification Endpoints ====================
+
+  /**
+   * Send OTP to email for verification
+   * POST /api/auth/send-otp
+   */
+  app.post("/api/auth/send-otp", async (req, res) => {
+    try {
+      const { email } = req.body;
+
+      if (!email || typeof email !== "string") {
+        return res.status(400).json({ error: "Email is required" });
+      }
+
+      // Check if email already exists in Firebase
+      try {
+        await adminAuth.getUserByEmail(email);
+        return res.status(400).json({ error: "An account with this email already exists" });
+      } catch (error: any) {
+        // If user not found, that's good - email is available
+        if (error.code !== "auth/user-not-found") {
+          throw error;
+        }
+      }
+
+      const result = await generateAndSendOTP(email);
+
+      if (!result.success) {
+        return res.status(400).json({
+          error: result.message,
+          resendCooldown: result.resendCooldown,
+        });
+      }
+
+      res.json({
+        success: true,
+        message: result.message,
+        resendCooldown: result.resendCooldown,
+      });
+    } catch (error: any) {
+      console.error("Error sending OTP:", error);
+      res.status(500).json({ error: "Failed to send OTP: " + (error.message || "Unknown error") });
+    }
+  });
+
+  /**
+   * Verify OTP
+   * POST /api/auth/verify-otp
+   */
+  app.post("/api/auth/verify-otp", async (req, res) => {
+    try {
+      const { email, otp } = req.body;
+
+      if (!email || typeof email !== "string") {
+        return res.status(400).json({ error: "Email is required" });
+      }
+
+      if (!otp || typeof otp !== "string") {
+        return res.status(400).json({ error: "OTP is required" });
+      }
+
+      // Validate OTP format (6 digits)
+      if (!/^\d{6}$/.test(otp)) {
+        return res.status(400).json({ error: "OTP must be a 6-digit number" });
+      }
+
+      const result = verifyOTP(email, otp);
+
+      if (!result.success) {
+        return res.status(400).json({ error: result.message });
+      }
+
+      res.json({
+        success: true,
+        message: result.message,
+        verified: true,
+      });
+    } catch (error: any) {
+      console.error("Error verifying OTP:", error);
+      res.status(500).json({ error: "Failed to verify OTP: " + (error.message || "Unknown error") });
+    }
+  });
+
+  /**
+   * Resend OTP
+   * POST /api/auth/resend-otp
+   */
+  app.post("/api/auth/resend-otp", async (req, res) => {
+    try {
+      const { email } = req.body;
+
+      if (!email || typeof email !== "string") {
+        return res.status(400).json({ error: "Email is required" });
+      }
+
+      // Check cooldown
+      const cooldown = getResendCooldown(email);
+      if (cooldown > 0) {
+        return res.status(429).json({
+          error: `Please wait ${cooldown} seconds before requesting a new OTP`,
+          resendCooldown: cooldown,
+        });
+      }
+
+      const result = await generateAndSendOTP(email);
+
+      if (!result.success) {
+        return res.status(400).json({
+          error: result.message,
+          resendCooldown: result.resendCooldown,
+        });
+      }
+
+      res.json({
+        success: true,
+        message: result.message,
+        resendCooldown: result.resendCooldown,
+      });
+    } catch (error: any) {
+      console.error("Error resending OTP:", error);
+      res.status(500).json({ error: "Failed to resend OTP: " + (error.message || "Unknown error") });
+    }
+  });
+
+  /**
+   * Check if email is verified
+   * GET /api/auth/check-email-verification
+   */
+  app.get("/api/auth/check-email-verification", async (req, res) => {
+    try {
+      const email = req.query.email as string;
+
+      if (!email || typeof email !== "string") {
+        return res.status(400).json({ error: "Email is required" });
+      }
+
+      const verified = isEmailVerified(email);
+      res.json({ verified });
+    } catch (error: any) {
+      console.error("Error checking email verification:", error);
+      res.status(500).json({ error: "Failed to check email verification" });
+    }
+  });
+
+  /**
+   * Remove verified OTP after account creation (cleanup)
+   * POST /api/auth/remove-otp
+   */
+  app.post("/api/auth/remove-otp", async (req, res) => {
+    try {
+      const { email } = req.body;
+
+      if (!email || typeof email !== "string") {
+        return res.status(400).json({ error: "Email is required" });
+      }
+
+      removeVerifiedOTP(email);
+      res.json({ success: true });
+    } catch (error: any) {
+      console.error("Error removing OTP:", error);
+      res.status(500).json({ error: "Failed to remove OTP" });
     }
   });
 

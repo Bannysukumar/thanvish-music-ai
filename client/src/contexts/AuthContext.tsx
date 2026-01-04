@@ -168,6 +168,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   /**
    * Signup function - creates new user account with Firebase
+   * Requires email to be verified via OTP first
    */
   const signup = async (name: string, email: string, password: string, mobileNumber: string) => {
     if (!name || !email || !password || !mobileNumber) {
@@ -175,6 +176,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     try {
+      // Verify email is verified via OTP before creating account
+      const verificationResponse = await fetch(`/api/auth/check-email-verification?email=${encodeURIComponent(email)}`);
+      const verificationData = await verificationResponse.json();
+      
+      if (!verificationData.verified) {
+        throw new Error("Email must be verified via OTP before creating an account. Please verify your email first.");
+      }
+
       // Create user with Firebase
       const userCredential = await createUserWithEmailAndPassword(auth, email, password);
       
@@ -190,9 +199,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           name: name.trim(),
           email: email.trim(),
           mobileNumber: mobileNumber.trim(),
+          emailVerified: true, // Mark as verified since OTP was verified
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
         });
+
+        // Clean up OTP after successful account creation
+        try {
+          await fetch("/api/auth/remove-otp", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ email }),
+          });
+        } catch (error) {
+          // Ignore cleanup errors
+          console.warn("Failed to cleanup OTP:", error);
+        }
       }
       
       // User state will be updated automatically via onAuthStateChanged
@@ -200,7 +222,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // Handle Firebase auth errors
       let errorMessage = "Failed to create account. Please try again.";
       
-      if (error.code === "auth/email-already-in-use") {
+      if (error.message?.includes("Email must be verified")) {
+        errorMessage = error.message;
+      } else if (error.code === "auth/email-already-in-use") {
         errorMessage = "An account with this email already exists.";
       } else if (error.code === "auth/invalid-email") {
         errorMessage = "Invalid email address.";
