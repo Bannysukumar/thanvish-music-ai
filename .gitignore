@@ -5,3 +5,7 @@ dist
 server/public
 .env
 
+# Firebase service account keys (sensitive)
+*-firebase-adminsdk-*.json
+firebase-adminsdk-*.json
+

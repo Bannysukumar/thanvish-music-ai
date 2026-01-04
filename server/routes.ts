@@ -1,4 +1,4 @@
-import type { Express } from "express";
+import type { Express, Request, Response, NextFunction } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { generateMusicComposition, getMusicGenerationStatus } from "./apibox";
@@ -6,6 +6,92 @@ import {
   musicGenerationRequestSchema,
   insertContactSubmissionSchema,
 } from "@shared/schema";
+import * as fs from "fs";
+import * as path from "path";
+import { randomBytes } from "crypto";
+import { adminAuth, adminDb, admin } from "./firebase-admin";
+
+// Admin session storage (in-memory, use Redis in production)
+const adminSessions = new Map<string, { username: string; expiresAt: number }>();
+
+// Admin authentication middleware
+function requireAdmin(req: Request, res: Response, next: NextFunction) {
+  const authHeader = req.headers.authorization;
+  const sessionId = authHeader?.replace("Bearer ", "") || (req as any).cookies?.adminSession;
+  
+  if (!sessionId) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+
+  const session = adminSessions.get(sessionId);
+  if (!session || session.expiresAt < Date.now()) {
+    adminSessions.delete(sessionId);
+    return res.status(401).json({ error: "Session expired" });
+  }
+
+  // Extend session
+  session.expiresAt = Date.now() + 24 * 60 * 60 * 1000; // 24 hours
+  next();
+}
+
+// Helper to read .env file
+function readEnvFile(): Record<string, string> {
+  const envPath = path.join(process.cwd(), ".env");
+  if (!fs.existsSync(envPath)) {
+    return {};
+  }
+  
+  const content = fs.readFileSync(envPath, "utf-8");
+  const env: Record<string, string> = {};
+  
+  content.split("\n").forEach((line) => {
+    const trimmed = line.trim();
+    if (trimmed && !trimmed.startsWith("#")) {
+      const [key, ...valueParts] = trimmed.split("=");
+      if (key && valueParts.length > 0) {
+        env[key.trim()] = valueParts.join("=").trim().replace(/^["']|["']$/g, "");
+      }
+    }
+  });
+  
+  return env;
+}
+
+// Helper to write .env file
+function writeEnvFile(env: Record<string, string>) {
+  const envPath = path.join(process.cwd(), ".env");
+  const lines: string[] = [];
+  
+  // Preserve comments and structure
+  if (fs.existsSync(envPath)) {
+    const content = fs.readFileSync(envPath, "utf-8");
+    content.split("\n").forEach((line) => {
+      const trimmed = line.trim();
+      if (trimmed.startsWith("#")) {
+        lines.push(line);
+      } else if (trimmed && trimmed.includes("=")) {
+        const [key] = trimmed.split("=");
+        if (key && env[key.trim()]) {
+          lines.push(`${key.trim()}=${env[key.trim()]}`);
+          delete env[key.trim()];
+        } else {
+          lines.push(line);
+        }
+      } else {
+        lines.push(line);
+      }
+    });
+  }
+  
+  // Add any new keys
+  Object.entries(env).forEach(([key, value]) => {
+    if (value) {
+      lines.push(`${key}=${value}`);
+    }
+  });
+  
+  fs.writeFileSync(envPath, lines.join("\n") + "\n", "utf-8");
+}
 
 export async function registerRoutes(app: Express): Promise<Server> {
   // Store taskId to compositionId mapping temporarily
@@ -394,6 +480,325 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error: any) {
       console.error("Error fetching composition by taskId:", error);
       res.status(500).json({ error: "Failed to fetch composition" });
+    }
+  });
+
+  // ========== ADMIN ROUTES ==========
+  
+  // Admin login
+  app.post("/api/admin/login", async (req, res) => {
+    try {
+      const { email, password } = req.body;
+
+      if (!email || !password) {
+        return res.status(400).json({ error: "Email and password are required" });
+      }
+
+      // Verify user exists in Firebase and check admin role
+      let userRecord;
+      try {
+        userRecord = await adminAuth.getUserByEmail(email);
+      } catch (error: any) {
+        if (error.code === "auth/user-not-found") {
+          return res.status(401).json({ error: "Invalid credentials" });
+        }
+        throw error;
+      }
+
+      // Check if user is admin in Firestore
+      const adminDoc = await adminDb.collection("admins").doc(userRecord.uid).get();
+      if (!adminDoc.exists || !adminDoc.data()?.isAdmin) {
+        return res.status(403).json({ error: "Access denied. Admin privileges required." });
+      }
+
+      // Verify password by attempting to sign in (we'll use Firebase Auth REST API)
+      // For security, we'll create a custom token and verify it
+      // Actually, we need to verify the password. Let's use Firebase Auth REST API
+      const firebaseApiKey = process.env.VITE_FIREBASE_API_KEY || "AIzaSyDqVNSOnxuksvNtVNfcmIQKsHdZEAuTDds";
+      
+      try {
+        // Verify password using Firebase Auth REST API
+        const verifyResponse = await fetch(
+          `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${firebaseApiKey}`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              email: email,
+              password: password,
+              returnSecureToken: true,
+            }),
+          }
+        );
+
+        const verifyData = await verifyResponse.json();
+        
+        if (!verifyResponse.ok) {
+          return res.status(401).json({ 
+            error: verifyData.error?.message || "Invalid credentials" 
+          });
+        }
+
+        // Password is correct, create admin session
+        const sessionId = randomBytes(32).toString("hex");
+        adminSessions.set(sessionId, {
+          username: email,
+          userId: userRecord.uid,
+          expiresAt: Date.now() + 24 * 60 * 60 * 1000, // 24 hours
+        });
+
+        res.json({ sessionId, username: email, userId: userRecord.uid });
+      } catch (verifyError: any) {
+        console.error("Password verification error:", verifyError);
+        return res.status(401).json({ error: "Invalid credentials" });
+      }
+    } catch (error: any) {
+      console.error("Admin login error:", error);
+      res.status(500).json({ error: "Failed to login" });
+    }
+  });
+
+  // Admin logout
+  app.post("/api/admin/logout", requireAdmin, async (req, res) => {
+    try {
+      const authHeader = req.headers.authorization;
+      const sessionId = authHeader?.replace("Bearer ", "") || (req as any).cookies?.adminSession;
+      if (sessionId) {
+        adminSessions.delete(sessionId);
+      }
+      res.json({ success: true });
+    } catch (error: any) {
+      console.error("Admin logout error:", error);
+      res.status(500).json({ error: "Failed to logout" });
+    }
+  });
+
+  // Verify admin session
+  app.get("/api/admin/verify", requireAdmin, async (req, res) => {
+    const authHeader = req.headers.authorization;
+    const sessionId = authHeader?.replace("Bearer ", "") || (req as any).cookies?.adminSession;
+    const session = sessionId ? adminSessions.get(sessionId) : null;
+    res.json({ authenticated: true, username: session?.username });
+  });
+
+  // Get API key (masked)
+  app.get("/api/admin/settings/api-key", requireAdmin, async (req, res) => {
+    try {
+      const apiKey = process.env.API_BOX_API_KEY || "";
+      const masked = apiKey ? `${apiKey.substring(0, 8)}...${apiKey.substring(apiKey.length - 4)}` : "";
+      res.json({ apiKey: masked, hasKey: !!apiKey });
+    } catch (error: any) {
+      console.error("Error getting API key:", error);
+      res.status(500).json({ error: "Failed to get API key" });
+    }
+  });
+
+  // Update API key
+  app.put("/api/admin/settings/api-key", requireAdmin, async (req, res) => {
+    try {
+      const { apiKey } = req.body;
+      if (!apiKey || typeof apiKey !== "string") {
+        return res.status(400).json({ error: "API key is required" });
+      }
+
+      // Read current .env
+      const env = readEnvFile();
+      env.API_BOX_API_KEY = apiKey.trim();
+      
+      // Write back to .env
+      writeEnvFile(env);
+      
+      // Update process.env (for current session)
+      process.env.API_BOX_API_KEY = apiKey.trim();
+
+      res.json({ success: true, message: "API key updated successfully" });
+    } catch (error: any) {
+      console.error("Error updating API key:", error);
+      res.status(500).json({ error: "Failed to update API key" });
+    }
+  });
+
+  // Get all users (from Firebase)
+  app.get("/api/admin/users", requireAdmin, async (req, res) => {
+    try {
+      // List all users from Firebase Auth
+      const listUsersResult = await adminAuth.listUsers(1000); // Get up to 1000 users
+      const firebaseUsers = listUsersResult.users;
+
+      // Fetch user profiles from Firestore
+      const usersWithProfiles = await Promise.all(
+        firebaseUsers.map(async (firebaseUser) => {
+          try {
+            // Get user profile from Firestore
+            const userDoc = await adminDb.collection("users").doc(firebaseUser.uid).get();
+            const profileData = userDoc.exists ? userDoc.data() : null;
+
+            // Check if user is admin
+            const adminDoc = await adminDb.collection("admins").doc(firebaseUser.uid).get();
+            const isAdmin = adminDoc.exists && adminDoc.data()?.isAdmin === true;
+            
+            // Get user role from Firestore (default to "user")
+            const userRole = profileData?.role || (isAdmin ? "admin" : "user");
+
+            return {
+              id: firebaseUser.uid,
+              email: firebaseUser.email || "",
+              name: profileData?.name || firebaseUser.displayName || firebaseUser.email?.split("@")[0] || "Unknown",
+              mobileNumber: profileData?.mobileNumber || null,
+              role: userRole,
+              isBlocked: firebaseUser.disabled || false,
+              isActive: !firebaseUser.disabled,
+              emailVerified: firebaseUser.emailVerified,
+              createdAt: firebaseUser.metadata.creationTime,
+              lastSignIn: firebaseUser.metadata.lastSignInTime,
+              profileData: profileData ? {
+                createdAt: profileData.createdAt,
+                updatedAt: profileData.updatedAt,
+              } : null,
+            };
+          } catch (error) {
+            console.error(`Error fetching profile for user ${firebaseUser.uid}:`, error);
+            // Return basic user info even if Firestore fetch fails
+            // Check if user is admin
+            let userRole = "user";
+            try {
+              const adminDoc = await adminDb.collection("admins").doc(firebaseUser.uid).get();
+              if (adminDoc.exists && adminDoc.data()?.isAdmin === true) {
+                userRole = "admin";
+              }
+            } catch (error) {
+              console.error(`Error checking admin status for user ${firebaseUser.uid}:`, error);
+            }
+
+            return {
+              id: firebaseUser.uid,
+              email: firebaseUser.email || "",
+              name: firebaseUser.displayName || firebaseUser.email?.split("@")[0] || "Unknown",
+              mobileNumber: null,
+              role: userRole,
+              isBlocked: firebaseUser.disabled || false,
+              isActive: !firebaseUser.disabled,
+              emailVerified: firebaseUser.emailVerified,
+              createdAt: firebaseUser.metadata.creationTime,
+              lastSignIn: firebaseUser.metadata.lastSignInTime,
+              profileData: null,
+            };
+          }
+        })
+      );
+
+      res.json({ users: usersWithProfiles });
+    } catch (error: any) {
+      console.error("Error fetching users:", error);
+      res.status(500).json({ error: "Failed to fetch users: " + (error.message || "Unknown error") });
+    }
+  });
+
+  // Update user status (block/deactivate)
+  app.put("/api/admin/users/:userId/status", requireAdmin, async (req, res) => {
+    try {
+      const { userId } = req.params;
+      const { isBlocked, isActive } = req.body;
+      
+      // Determine if user should be disabled (blocked or inactive)
+      const shouldDisable = isBlocked === true || isActive === false;
+
+      // Update user in Firebase Auth
+      await adminAuth.updateUser(userId, {
+        disabled: shouldDisable,
+      });
+
+      // Also update status in Firestore for easier querying
+      const userRef = adminDb.collection("users").doc(userId);
+      const userDoc = await userRef.get();
+      
+      if (userDoc.exists) {
+        await userRef.update({
+          isBlocked: isBlocked ?? false,
+          isActive: isActive !== false, // Default to true if not specified
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+      } else {
+        // If user profile doesn't exist in Firestore, create it with status
+        await userRef.set({
+          isBlocked: isBlocked ?? false,
+          isActive: isActive !== false,
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        }, { merge: true });
+      }
+
+      res.json({ 
+        success: true, 
+        message: `User ${shouldDisable ? "blocked/deactivated" : "activated"}`,
+        userId,
+        isBlocked: isBlocked ?? false,
+        isActive: isActive !== false,
+      });
+    } catch (error: any) {
+      console.error("Error updating user status:", error);
+      
+      if (error.code === "auth/user-not-found") {
+        return res.status(404).json({ error: "User not found" });
+      }
+      
+      res.status(500).json({ error: "Failed to update user status: " + (error.message || "Unknown error") });
+    }
+  });
+
+  // Update user role
+  app.put("/api/admin/users/:userId/role", requireAdmin, async (req, res) => {
+    try {
+      const { userId } = req.params;
+      const { role } = req.body;
+
+      if (!role || !["user", "admin", "moderator"].includes(role)) {
+        return res.status(400).json({ error: "Invalid role. Must be 'user', 'admin', or 'moderator'" });
+      }
+
+      // Update role in Firestore users collection
+      const userRef = adminDb.collection("users").doc(userId);
+      const userDoc = await userRef.get();
+      
+      if (userDoc.exists) {
+        await userRef.update({
+          role: role,
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+      } else {
+        // If user profile doesn't exist, create it
+        await userRef.set({
+          role: role,
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        }, { merge: true });
+      }
+
+      // If role is admin, also update admins collection
+      if (role === "admin") {
+        await adminDb.collection("admins").doc(userId).set({
+          isAdmin: true,
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        }, { merge: true });
+      } else {
+        // Remove from admins collection if not admin
+        await adminDb.collection("admins").doc(userId).delete().catch(() => {
+          // Ignore error if document doesn't exist
+        });
+      }
+
+      res.json({ 
+        success: true, 
+        message: `User role updated to ${role}`,
+        userId,
+        role,
+      });
+    } catch (error: any) {
+      console.error("Error updating user role:", error);
+      
+      if (error.code === "auth/user-not-found") {
+        return res.status(404).json({ error: "User not found" });
+      }
+      
+      res.status(500).json({ error: "Failed to update user role: " + (error.message || "Unknown error") });
     }
   });
 

@@ -8,6 +8,7 @@ import { Layout } from "@/components/Layout";
 import { SplashScreen } from "@/components/SplashScreen";
 import { AuthProvider } from "@/contexts/AuthContext";
 import { DashboardRouter } from "@/components/dashboard/DashboardRouter";
+import { AdminRouter } from "@/components/admin/AdminRouter";
 import Home from "@/pages/Home";
 import About from "@/pages/About";
 import Vision from "@/pages/Vision";
@@ -43,6 +44,13 @@ function PublicRouter() {
 function Router() {
   return (
     <Switch>
+      {/* Admin routes */}
+      <Route path="/admin" component={AdminRouter} />
+      <Route path="/admin/login" component={AdminRouter} />
+      <Route path="/admin/dashboard" component={AdminRouter} />
+      <Route path="/admin/users" component={AdminRouter} />
+      <Route path="/admin/settings" component={AdminRouter} />
+
       {/* Protected dashboard routes - all dashboard paths */}
       <Route path="/dashboard" component={DashboardRouter} />
       <Route path="/dashboard/generate" component={DashboardRouter} />
