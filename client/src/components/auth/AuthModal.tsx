@@ -33,11 +33,19 @@ export function AuthModal({ open, onOpenChange }: AuthModalProps) {
   };
 
   /**
-   * Handle successful login/signup and navigate to dashboard
+   * Handle successful login and navigate to dashboard (or onboarding if not completed)
    */
-  const handleAuthSuccess = () => {
+  const handleLoginSuccess = () => {
     onOpenChange(false);
     setLocation("/dashboard");
+  };
+
+  /**
+   * Handle successful signup and navigate to onboarding
+   */
+  const handleSignupSuccess = () => {
+    onOpenChange(false);
+    setLocation("/onboarding");
   };
 
   /**
@@ -61,7 +69,7 @@ export function AuthModal({ open, onOpenChange }: AuthModalProps) {
         onSwitchToSignup={() => setView("signup")}
         onSwitchToForgotPassword={() => setView("forgot-password")}
         onGuestLogin={handleGuestLogin}
-        onSuccess={handleAuthSuccess}
+        onSuccess={handleLoginSuccess}
       />
 
       {/* Signup Modal */}
@@ -73,7 +81,7 @@ export function AuthModal({ open, onOpenChange }: AuthModalProps) {
           }
         }}
         onSwitchToLogin={() => setView("login")}
-        onSuccess={handleAuthSuccess}
+        onSuccess={handleSignupSuccess}
       />
 
       {/* Forgot Password Modal */}

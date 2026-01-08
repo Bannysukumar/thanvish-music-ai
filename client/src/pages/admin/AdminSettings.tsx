@@ -17,6 +17,12 @@ export default function AdminSettings() {
   const [isFetching, setIsFetching] = useState(true);
   const [hasApiKey, setHasApiKey] = useState(false);
 
+  // Groq API key state
+  const [groqApiKey, setGroqApiKey] = useState("");
+  const [showGroqApiKey, setShowGroqApiKey] = useState(false);
+  const [isLoadingGroq, setIsLoadingGroq] = useState(false);
+  const [hasGroqApiKey, setHasGroqApiKey] = useState(false);
+
   // SMTP settings state
   const [smtpHost, setSmtpHost] = useState("");
   const [smtpPort, setSmtpPort] = useState("");
@@ -48,6 +54,19 @@ export default function AdminSettings() {
           const apiKeyData = await apiKeyResponse.json();
           setApiKey(apiKeyData.apiKey || "");
           setHasApiKey(apiKeyData.hasKey || false);
+        }
+
+        // Fetch Groq API key
+        const groqApiKeyResponse = await fetch("/api/admin/settings/groq-api-key", {
+          headers: {
+            Authorization: `Bearer ${sessionId}`,
+          },
+        });
+
+        if (groqApiKeyResponse.ok) {
+          const groqApiKeyData = await groqApiKeyResponse.json();
+          setGroqApiKey(groqApiKeyData.apiKey || "");
+          setHasGroqApiKey(groqApiKeyData.hasKey || false);
         }
 
         // Fetch SMTP settings
@@ -138,6 +157,54 @@ export default function AdminSettings() {
       });
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleSaveGroqApiKey = async () => {
+    if (!groqApiKey.trim()) {
+      toast({
+        title: "Error",
+        description: "Groq API key cannot be empty",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setIsLoadingGroq(true);
+    try {
+      const sessionId = localStorage.getItem("adminSession");
+      if (!sessionId) {
+        throw new Error("Not authenticated");
+      }
+
+      const response = await fetch("/api/admin/settings/groq-api-key", {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${sessionId}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ apiKey: groqApiKey.trim() }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Failed to update Groq API key");
+      }
+
+      setHasGroqApiKey(true);
+      toast({
+        title: "Success",
+        description: "Groq API key updated successfully",
+      });
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: error instanceof Error ? error.message : "Failed to update Groq API key",
+        variant: "destructive",
+      });
+    } finally {
+      setIsLoadingGroq(false);
     }
   };
 
@@ -347,6 +414,106 @@ export default function AdminSettings() {
                 <AlertDescription className="mt-2">
                   The API key is securely stored in your server's <code className="px-1.5 py-0.5 rounded bg-muted text-xs font-mono">.env</code> file and will be used for all music generation requests. 
                   Keep your API key secure and never share it publicly.
+                </AlertDescription>
+              </Alert>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Groq AI API Configuration Card */}
+      <Card>
+        <CardHeader className="pb-4">
+          <div className="flex items-center gap-3">
+            <div className="p-2 rounded-lg bg-primary/10">
+              <Key className="h-5 w-5 text-primary" />
+            </div>
+            <div className="flex-1">
+              <CardTitle className="text-xl">Groq AI API Configuration</CardTitle>
+              <CardDescription className="mt-1">
+                Configure the Groq API key for AI chat assistant
+              </CardDescription>
+            </div>
+            {hasGroqApiKey && (
+              <div className="flex items-center gap-2 text-sm text-green-600 dark:text-green-400">
+                <CheckCircle2 className="h-4 w-4" />
+                <span className="font-medium">Configured</span>
+              </div>
+            )}
+          </div>
+        </CardHeader>
+        <Separator />
+        <CardContent className="pt-6">
+          <div className="space-y-6">
+            {/* Groq API Key Input Section */}
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <Label htmlFor="groq-api-key" className="text-base font-medium">
+                  Groq API Key
+                </Label>
+                {!hasGroqApiKey && (
+                  <span className="text-xs text-amber-600 dark:text-amber-400 flex items-center gap-1">
+                    <AlertCircle className="h-3 w-3" />
+                    Required
+                  </span>
+                )}
+              </div>
+              
+              <div className="space-y-3">
+                <div className="relative flex items-center">
+                  <Input
+                    id="groq-api-key"
+                    type={showGroqApiKey ? "text" : "password"}
+                    value={groqApiKey}
+                    onChange={(e) => setGroqApiKey(e.target.value)}
+                    placeholder="Enter your Groq API key"
+                    disabled={isLoadingGroq}
+                    className="pr-11 h-11 text-base font-mono"
+                  />
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="absolute right-0 h-11 w-11 hover:bg-transparent rounded-l-none"
+                    onClick={() => setShowGroqApiKey(!showGroqApiKey)}
+                    disabled={isLoadingGroq}
+                    aria-label={showGroqApiKey ? "Hide API key" : "Show API key"}
+                  >
+                    {showGroqApiKey ? (
+                      <EyeOff className="h-4 w-4 text-muted-foreground" />
+                    ) : (
+                      <Eye className="h-4 w-4 text-muted-foreground" />
+                    )}
+                  </Button>
+                </div>
+
+                <Button 
+                  onClick={handleSaveGroqApiKey} 
+                  disabled={isLoadingGroq || !groqApiKey.trim()}
+                  className="w-full sm:w-auto"
+                  size="lg"
+                >
+                  {isLoadingGroq ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      Saving...
+                    </>
+                  ) : (
+                    <>
+                      <Save className="mr-2 h-4 w-4" />
+                      Save Groq API Key
+                    </>
+                  )}
+                </Button>
+              </div>
+
+              <Alert>
+                <Info className="h-4 w-4" />
+                <AlertTitle>How it works</AlertTitle>
+                <AlertDescription className="mt-2">
+                  The Groq API key is used for the AI chat assistant feature on the music generation page. 
+                  Get your API key from <a href="https://console.groq.com/keys" target="_blank" rel="noopener noreferrer" className="underline">Groq Console</a>. 
+                  The key is securely stored in your server's <code className="px-1.5 py-0.5 rounded bg-muted text-xs font-mono">.env</code> file.
                 </AlertDescription>
               </Alert>
             </div>

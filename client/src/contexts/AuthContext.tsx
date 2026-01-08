@@ -200,6 +200,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           email: email.trim(),
           mobileNumber: mobileNumber.trim(),
           emailVerified: true, // Mark as verified since OTP was verified
+          onboardingCompleted: false, // New users need to complete onboarding
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
         });

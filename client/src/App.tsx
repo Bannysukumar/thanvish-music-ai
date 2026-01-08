@@ -9,6 +9,7 @@ import { SplashScreen } from "@/components/SplashScreen";
 import { AuthProvider } from "@/contexts/AuthContext";
 import { DashboardRouter } from "@/components/dashboard/DashboardRouter";
 import { AdminRouter } from "@/components/admin/AdminRouter";
+import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
 import Home from "@/pages/Home";
 import About from "@/pages/About";
 import Vision from "@/pages/Vision";
@@ -20,6 +21,7 @@ import BlogPostDetail from "@/pages/BlogPostDetail";
 import TeamMembers from "@/pages/TeamMembers";
 import Contact from "@/pages/Contact";
 import NotFound from "@/pages/not-found";
+import Onboarding from "@/pages/Onboarding";
 
 function PublicRouter() {
   return (
@@ -52,6 +54,13 @@ function Router() {
       <Route path="/admin/logs" component={AdminRouter} />
       <Route path="/admin/credits" component={AdminRouter} />
       <Route path="/admin/settings" component={AdminRouter} />
+
+      {/* Onboarding route - protected */}
+      <Route path="/onboarding">
+        <ProtectedRoute>
+          <Onboarding />
+        </ProtectedRoute>
+      </Route>
 
       {/* Protected dashboard routes - all dashboard paths */}
       <Route path="/dashboard" component={DashboardRouter} />

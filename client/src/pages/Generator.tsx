@@ -6,7 +6,8 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
 import { Badge } from "@/components/ui/badge";
-import { Sparkles, Play, Download, Loader2, Music, Save, Mic, Square, Clock } from "lucide-react";
+import { Sparkles, Play, Download, Loader2, Music, Save, Mic, Square, Clock, ChevronLeft, ChevronRight, CheckCircle2, MessageCircle } from "lucide-react";
+import { AIChatPanel } from "@/components/chat/AIChatPanel";
 import { useMutation } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -15,7 +16,7 @@ import { Textarea } from "@/components/ui/textarea";
 import type { MusicGenerationRequest } from "@shared/schema";
 import { useAuth } from "@/contexts/AuthContext";
 import { db } from "@/lib/firebase";
-import { addDoc, collection, serverTimestamp } from "firebase/firestore";
+import { addDoc, collection, serverTimestamp, doc, getDoc } from "firebase/firestore";
 
 const RAGAS = [
   // Hindustani Ragas
@@ -218,6 +219,70 @@ export default function Generator() {
   const [elapsedTime, setElapsedTime] = useState<number>(0);
   const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const elapsedTimeIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const [currentStep, setCurrentStep] = useState<number>(0);
+  const [preferencesLoaded, setPreferencesLoaded] = useState<boolean>(false);
+  const [isChatOpen, setIsChatOpen] = useState<boolean>(false);
+
+  // Load user preferences from Firebase on mount
+  useEffect(() => {
+    const loadUserPreferences = async () => {
+      if (!user || user.isGuest || preferencesLoaded) {
+        return;
+      }
+
+      try {
+        const userDocRef = doc(db, "users", user.id);
+        const userDocSnap = await getDoc(userDocRef);
+        
+        if (userDocSnap.exists()) {
+          const userData = userDocSnap.data();
+          
+          // Load preferences if they exist
+          // Load generation mode first as it affects step calculation
+          if (userData.generationMode) {
+            setGenerationMode(userData.generationMode as "voice_only" | "instrumental_only" | "full_music" | "");
+          }
+          // Load tradition before raga/tala since they depend on tradition
+          if (userData.tradition) {
+            setTradition(userData.tradition);
+          }
+          // Load raga and tala after tradition
+          if (userData.raga) {
+            setRaga(userData.raga);
+          }
+          if (userData.tala) {
+            setTala(userData.tala);
+          }
+          // Load instruments
+          if (userData.instruments && Array.isArray(userData.instruments) && userData.instruments.length > 0) {
+            setSelectedInstruments(userData.instruments);
+          }
+          // Load tempo
+          if (userData.tempo && typeof userData.tempo === 'number') {
+            setTempo([userData.tempo]);
+          }
+          // Load mood
+          if (userData.mood) {
+            setMood(userData.mood);
+          }
+          // Load gender (optional)
+          if (userData.gender) {
+            setGender(userData.gender);
+          }
+          // Load language (optional)
+          if (userData.language) {
+            setLanguage(userData.language);
+          }
+        }
+      } catch (error) {
+        console.error("Error loading user preferences:", error);
+      } finally {
+        setPreferencesLoaded(true);
+      }
+    };
+
+    loadUserPreferences();
+  }, [user, preferencesLoaded]);
 
   // Initialize Speech Recognition
   useEffect(() => {
@@ -965,23 +1030,186 @@ export default function Generator() {
     setTala(""); // Clear tala when tradition changes
   };
 
+  // Step management
+  const getSteps = () => {
+    const steps = [
+      { id: "mode", title: "Generation Mode", required: true },
+    ];
+
+    if (generationMode === "voice_only") {
+      steps.push(
+        { id: "prompt", title: "Custom Prompt", required: true },
+        { id: "gender", title: "Voice Gender", required: false },
+        { id: "language", title: "Language", required: false }
+      );
+    } else if (generationMode === "instrumental_only") {
+      steps.push(
+        { id: "tradition", title: "Tradition", required: true },
+        { id: "raga", title: "Raga", required: true },
+        { id: "tala", title: "Tala", required: true },
+        { id: "instruments", title: "Instruments", required: true },
+        { id: "tempo", title: "Tempo", required: true },
+        { id: "mood", title: "Mood", required: true }
+      );
+    } else if (generationMode === "full_music") {
+      steps.push(
+        { id: "tradition", title: "Tradition", required: true },
+        { id: "raga", title: "Raga", required: true },
+        { id: "tala", title: "Tala", required: true },
+        { id: "instruments", title: "Instruments", required: true },
+        { id: "tempo", title: "Tempo", required: true },
+        { id: "mood", title: "Mood", required: true },
+        { id: "prompt", title: "Custom Prompt", required: true },
+        { id: "gender", title: "Voice Gender", required: false },
+        { id: "language", title: "Language", required: false }
+      );
+    }
+
+    return steps;
+  };
+
+  const steps = getSteps();
+  const totalSteps = steps.length;
+  const currentStepData = steps[currentStep];
+
+  const isStepValid = (stepId: string): boolean => {
+    switch (stepId) {
+      case "mode":
+        return !!generationMode;
+      case "prompt":
+        return !!customPrompt.trim();
+      case "tradition":
+        return !!tradition;
+      case "raga":
+        return !!raga;
+      case "tala":
+        return !!tala;
+      case "instruments":
+        return selectedInstruments.length > 0;
+      case "tempo":
+        return tempo[0] > 0;
+      case "mood":
+        return !!mood;
+      case "gender":
+      case "language":
+        return true; // Optional steps
+      default:
+        return true;
+    }
+  };
+
+  const canGoNext = (): boolean => {
+    if (!currentStepData) return false;
+    if (currentStepData.required) {
+      return isStepValid(currentStepData.id);
+    }
+    return true;
+  };
+
+  const handleNext = () => {
+    if (canGoNext() && currentStep < totalSteps - 1) {
+      setCurrentStep(currentStep + 1);
+    }
+  };
+
+  const handleBack = () => {
+    if (currentStep > 0) {
+      setCurrentStep(currentStep - 1);
+    }
+  };
+
+  const handleStepClick = (stepIndex: number) => {
+    // Allow clicking on completed steps or the current step
+    if (stepIndex <= currentStep || isStepValid(steps[stepIndex]?.id || "")) {
+      setCurrentStep(stepIndex);
+    }
+  };
+
+  // Reset step when generation mode changes
+  useEffect(() => {
+    if (generationMode) {
+      const newSteps = getSteps();
+      if (currentStep >= newSteps.length) {
+        setCurrentStep(0);
+      }
+    } else {
+      setCurrentStep(0);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [generationMode]);
+
   return (
     <div className="py-12 md:py-20">
-      <div className="max-w-7xl mx-auto px-6">
-        <div className="text-center mb-12">
+      <div className="max-w-4xl mx-auto px-6">
+        <div className="text-center mb-8">
           <h1 className="font-serif text-4xl md:text-5xl font-bold mb-4" data-testid="generator-title">
             AI Music Generator
           </h1>
           <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
-            Create authentic classical compositions by selecting traditional ragas, talas, and instruments
+            Create authentic classical compositions step by step
           </p>
         </div>
 
+        {/* Progress Indicator */}
+        {generationMode && totalSteps > 1 && (
+          <div className="mb-8">
+            <div className="flex items-center justify-between mb-4">
+              {steps.map((step, index) => {
+                const isCompleted = index < currentStep;
+                const isCurrent = index === currentStep;
+                const isValid = isStepValid(step.id);
+                return (
+                  <div
+                    key={step.id}
+                    className="flex items-center flex-1"
+                    onClick={() => handleStepClick(index)}
+                    style={{ cursor: index <= currentStep ? "pointer" : "default" }}
+                  >
+                    <div className="flex flex-col items-center flex-1">
+                      <div
+                        className={`w-10 h-10 rounded-full flex items-center justify-center transition-all ${
+                          isCompleted
+                            ? "bg-primary text-primary-foreground"
+                            : isCurrent
+                            ? "bg-primary text-primary-foreground ring-4 ring-primary/20"
+                            : "bg-muted text-muted-foreground"
+                        }`}
+                      >
+                        {isCompleted ? (
+                          <CheckCircle2 className="w-6 h-6" />
+                        ) : (
+                          <span className="font-semibold">{index + 1}</span>
+                        )}
+                      </div>
+                      <span
+                        className={`mt-2 text-xs text-center max-w-[80px] ${
+                          isCurrent ? "font-semibold text-foreground" : "text-muted-foreground"
+                        }`}
+                      >
+                        {step.title}
+                      </span>
+                    </div>
+                    {index < totalSteps - 1 && (
+                      <div
+                        className={`h-1 flex-1 mx-2 rounded ${
+                          isCompleted ? "bg-primary" : "bg-muted"
+                        }`}
+                      />
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
           <div className="lg:col-span-2 space-y-6">
+            {/* Step 1: Generation Mode */}
+            {currentStepData?.id === "mode" && (
             <Card data-testid="card-generation-mode">
               <CardHeader>
-                <CardTitle>Generation Mode (Required)</CardTitle>
+                  <CardTitle>Step {currentStep + 1} of {totalSteps}: Generation Mode</CardTitle>
                 <CardDescription>
                   Select the type of music you want to generate. This determines which options are available.
                 </CardDescription>
@@ -1012,18 +1240,17 @@ export default function Generator() {
                 </RadioGroup>
               </CardContent>
             </Card>
+            )}
 
-            <Card data-testid="card-custom-prompt" className={generationMode === "instrumental_only" ? "opacity-60" : ""}>
+            {/* Step: Custom Prompt */}
+            {currentStepData?.id === "prompt" && (
+              <Card data-testid="card-custom-prompt">
               <CardHeader>
-                <CardTitle>
-                  Custom Prompt {generationMode === "voice_only" || generationMode === "full_music" ? "(Required)" : "(Disabled)"}
-                </CardTitle>
+                  <CardTitle>Step {currentStep + 1} of {totalSteps}: Custom Prompt</CardTitle>
                 <CardDescription>
                   {generationMode === "voice_only" 
                     ? "Provide lyrics or vocal instructions for voice-only generation."
-                    : generationMode === "full_music"
-                    ? "Provide your own detailed description or instructions for the music generation."
-                    : "Custom prompt is not available for Instrumental Only mode."}
+                      : "Provide your own detailed description or instructions for the music generation."}
                 </CardDescription>
               </CardHeader>
               <CardContent>
@@ -1037,7 +1264,6 @@ export default function Generator() {
                       onClick={toggleRecording}
                       className="gap-2"
                       data-testid="button-microphone"
-                      disabled={generationMode === "instrumental_only"}
                     >
                       {isRecording ? (
                         <>
@@ -1063,7 +1289,6 @@ export default function Generator() {
                       className="min-h-[120px] resize-y pr-12"
                       maxLength={1000}
                       data-testid="textarea-custom-prompt"
-                      disabled={generationMode === "instrumental_only"}
                     />
                     {isRecording && (
                       <div className="absolute top-3 right-3 flex items-center gap-2">
@@ -1079,128 +1304,152 @@ export default function Generator() {
                 </div>
               </CardContent>
             </Card>
+            )}
 
-            <Card data-testid="card-raga-selection" className={generationMode === "voice_only" ? "opacity-60" : ""}>
+            {/* Step: Tradition */}
+            {currentStepData?.id === "tradition" && (
+              <Card data-testid="card-tradition-selection">
               <CardHeader>
-                <CardTitle>Select Raga {generationMode === "voice_only" ? "(Disabled)" : "(Required)"}</CardTitle>
+                  <CardTitle>Step {currentStep + 1} of {totalSteps}: Select Tradition</CardTitle>
                 <CardDescription>
-                  {generationMode === "voice_only" 
-                    ? "Raga selection is not available for Voice Only mode."
-                    : "Choose the melodic framework for your composition"}
+                    Choose between Hindustani or Carnatic classical tradition
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
-                <div className="space-y-2">
-                  <Label>Select Tradition</Label>
-                  <Select value={tradition} onValueChange={handleTraditionChange} disabled={generationMode === "voice_only"}>
-                    <SelectTrigger data-testid="select-tradition">
+                  <Select value={tradition} onValueChange={handleTraditionChange}>
+                    <SelectTrigger data-testid="select-tradition" className="h-14">
                       <SelectValue placeholder="Select Hindustani or Carnatic" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="Hindustani">Hindustani</SelectItem>
-                      <SelectItem value="Carnatic">Carnatic</SelectItem>
+                      <SelectItem value="Hindustani" className="py-3">
+                        <div>
+                          <div className="font-medium">Hindustani</div>
+                          <div className="text-xs text-muted-foreground">North Indian classical tradition</div>
+                        </div>
+                      </SelectItem>
+                      <SelectItem value="Carnatic" className="py-3">
+                        <div>
+                          <div className="font-medium">Carnatic</div>
+                          <div className="text-xs text-muted-foreground">South Indian classical tradition</div>
+                        </div>
+                      </SelectItem>
                     </SelectContent>
                   </Select>
-                </div>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Step: Raga */}
+            {currentStepData?.id === "raga" && (
+              <Card data-testid="card-raga-selection">
+                <CardHeader>
+                  <CardTitle>Step {currentStep + 1} of {totalSteps}: Select Raga</CardTitle>
+                  <CardDescription>
+                    Choose the melodic framework for your composition
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
                 <div className="space-y-2">
                   <Label>Choose a Raga</Label>
                   <Select 
                     value={raga} 
                     onValueChange={setRaga}
-                    disabled={!tradition || generationMode === "voice_only"}
+                      disabled={!tradition}
                   >
-                    <SelectTrigger data-testid="select-raga">
-                      <SelectValue placeholder={generationMode === "voice_only" ? "Not available in Voice Only mode" : tradition ? "Choose a raga" : "First select a tradition"} />
+                      <SelectTrigger data-testid="select-raga" className="h-14">
+                        <SelectValue placeholder={tradition ? "Choose a raga" : "First select a tradition"} />
                     </SelectTrigger>
                     <SelectContent>
                       {filteredRagas.map((r) => (
-                        <SelectItem key={r.value} value={r.value}>
-                          {r.label}
+                          <SelectItem key={r.value} value={r.value} className="py-3">
+                            <div>
+                              <div className="font-medium">{r.label}</div>
+                              <div className="text-xs text-muted-foreground">{r.description}</div>
+                            </div>
                         </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
-                  {generationMode === "voice_only" ? (
+                    {!tradition && (
                     <p className="text-xs text-muted-foreground mt-1">
-                      Raga selection is disabled for Voice Only mode
-                    </p>
-                  ) : !tradition && (
-                    <p className="text-xs text-muted-foreground mt-1">
-                      Please select a tradition first to see available ragas
+                        Please go back and select a tradition first
                     </p>
                   )}
                 </div>
                 {selectedRaga && (
-                  <p className="text-sm text-muted-foreground mt-3" data-testid="raga-description">
+                    <div className="p-4 bg-muted rounded-lg">
+                      <p className="text-sm font-medium mb-1">{selectedRaga.label}</p>
+                      <p className="text-sm text-muted-foreground" data-testid="raga-description">
                     {selectedRaga.description}
                   </p>
+                    </div>
                 )}
               </CardContent>
             </Card>
+            )}
 
-            <Card data-testid="card-tala-selection" className={generationMode === "voice_only" ? "opacity-60" : ""}>
+            {/* Step: Tala */}
+            {currentStepData?.id === "tala" && (
+              <Card data-testid="card-tala-selection">
               <CardHeader>
-                <CardTitle>Select Tala {generationMode === "voice_only" ? "(Disabled)" : "(Required)"}</CardTitle>
+                  <CardTitle>Step {currentStep + 1} of {totalSteps}: Select Tala</CardTitle>
                 <CardDescription>
-                  {generationMode === "voice_only" 
-                    ? "Tala selection is not available for Voice Only mode."
-                    : "Choose the rhythmic cycle for your composition"}
+                    Choose the rhythmic cycle for your composition
                 </CardDescription>
               </CardHeader>
               <CardContent>
                 <Select 
                   value={tala} 
                   onValueChange={setTala}
-                  disabled={!tradition || generationMode === "voice_only"}
+                    disabled={!tradition}
                 >
-                  <SelectTrigger data-testid="select-tala">
-                    <SelectValue placeholder={generationMode === "voice_only" ? "Not available in Voice Only mode" : tradition ? "Choose a tala" : "First select a tradition"} />
+                    <SelectTrigger data-testid="select-tala" className="h-14">
+                      <SelectValue placeholder={tradition ? "Choose a tala" : "First select a tradition"} />
                   </SelectTrigger>
                   <SelectContent>
                     {filteredTalas.map((t) => (
-                      <SelectItem key={t.value} value={t.value}>
-                        {t.label} ({t.beats})
+                        <SelectItem key={t.value} value={t.value} className="py-3">
+                          <div>
+                            <div className="font-medium">{t.label} ({t.beats})</div>
+                            <div className="text-xs text-muted-foreground">{t.description}</div>
+                          </div>
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
-                {generationMode === "voice_only" ? (
+                  {!tradition && (
                   <p className="text-xs text-muted-foreground mt-1">
-                    Tala selection is disabled for Voice Only mode
-                  </p>
-                ) : !tradition && (
-                  <p className="text-xs text-muted-foreground mt-1">
-                    Please select a tradition first to see available talas
+                      Please go back and select a tradition first
                   </p>
                 )}
                 {selectedTala && (
-                  <p className="text-sm text-muted-foreground mt-3" data-testid="tala-description">
+                    <div className="p-4 bg-muted rounded-lg mt-4">
+                      <p className="text-sm font-medium mb-1">{selectedTala.label} ({selectedTala.beats})</p>
+                      <p className="text-sm text-muted-foreground" data-testid="tala-description">
                     {selectedTala.description}
                   </p>
+                    </div>
                 )}
               </CardContent>
             </Card>
+            )}
 
-            <Card data-testid="card-instrument-selection" className={generationMode === "voice_only" ? "opacity-60" : ""}>
+            {/* Step: Instruments */}
+            {currentStepData?.id === "instruments" && (
+              <Card data-testid="card-instrument-selection">
               <CardHeader>
-                <CardTitle>Select Instruments {generationMode === "voice_only" ? "(Disabled)" : "(Required)"}</CardTitle>
+                  <CardTitle>Step {currentStep + 1} of {totalSteps}: Select Instruments</CardTitle>
                 <CardDescription>
-                  {generationMode === "voice_only" 
-                    ? "Instrument selection is not available for Voice Only mode."
-                    : "Choose one or more instruments for your composition"}
+                    Choose one or more instruments for your composition
                 </CardDescription>
               </CardHeader>
               <CardContent>
-                {generationMode === "voice_only" ? (
-                  <p className="text-xs text-muted-foreground mb-3">
-                    Instrument selection is disabled for Voice Only mode
-                  </p>
-                ) : !tradition && (
+                  {!tradition && (
                   <p className="text-xs text-muted-foreground mb-3">
                     Select a tradition to see filtered instruments, or choose from all instruments below
                   </p>
                 )}
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-3 max-h-[500px] overflow-y-auto p-2">
                   {filteredInstruments.map((instrument) => (
                     <Button
                       key={instrument.value}
@@ -1209,7 +1458,6 @@ export default function Generator() {
                       onClick={() => toggleInstrument(instrument.value)}
                       className="justify-start h-auto py-3 px-4"
                       data-testid={`button-instrument-${instrument.value}`}
-                      disabled={generationMode === "voice_only"}
                     >
                       <div className="text-left">
                         <div className="font-medium text-sm">{instrument.label}</div>
@@ -1218,20 +1466,40 @@ export default function Generator() {
                     </Button>
                   ))}
                 </div>
+                  {selectedInstruments.length > 0 && (
+                    <div className="mt-4 p-3 bg-muted rounded-lg">
+                      <p className="text-sm font-medium mb-2">Selected ({selectedInstruments.length}):</p>
+                      <div className="flex flex-wrap gap-2">
+                        {selectedInstruments.map((inst) => {
+                          const instObj = INSTRUMENTS.find(i => i.value === inst);
+                          return (
+                            <Badge key={inst} variant="secondary">
+                              {instObj?.label || inst}
+                            </Badge>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
               </CardContent>
             </Card>
+            )}
 
-            <Card data-testid="card-tempo-selection" className={generationMode === "voice_only" ? "opacity-60" : ""}>
+            {/* Step: Tempo */}
+            {currentStepData?.id === "tempo" && (
+              <Card data-testid="card-tempo-selection">
               <CardHeader>
-                <CardTitle>Tempo {generationMode === "voice_only" ? "(Disabled)" : "(Required)"}</CardTitle>
+                  <CardTitle>Step {currentStep + 1} of {totalSteps}: Tempo</CardTitle>
                 <CardDescription>
-                  {generationMode === "voice_only" 
-                    ? "Tempo selection is not available for Voice Only mode."
-                    : "Adjust the speed of your composition (40-200 BPM)"}
+                    Adjust the speed of your composition (40-200 BPM)
                 </CardDescription>
               </CardHeader>
               <CardContent>
-                <div className="space-y-4">
+                  <div className="space-y-6 py-4">
+                    <div className="text-center">
+                      <div className="text-5xl font-bold mb-2" data-testid="tempo-value">{tempo[0]}</div>
+                      <div className="text-lg text-muted-foreground">BPM</div>
+                    </div>
                   <Slider
                     value={tempo}
                     onValueChange={setTempo}
@@ -1240,95 +1508,153 @@ export default function Generator() {
                     step={5}
                     className="w-full"
                     data-testid="slider-tempo"
-                    disabled={generationMode === "voice_only"}
                   />
-                  <div className="flex justify-between text-sm">
-                    <span className="text-muted-foreground">Slow (40 BPM)</span>
-                    <span className="font-semibold" data-testid="tempo-value">{tempo[0]} BPM</span>
-                    <span className="text-muted-foreground">Fast (200 BPM)</span>
+                    <div className="flex justify-between text-sm text-muted-foreground">
+                      <span>Slow (40 BPM)</span>
+                      <span>Fast (200 BPM)</span>
                   </div>
                 </div>
               </CardContent>
             </Card>
+            )}
 
-            <Card data-testid="card-mood-selection" className={generationMode === "voice_only" ? "opacity-60" : ""}>
+            {/* Step: Mood */}
+            {currentStepData?.id === "mood" && (
+              <Card data-testid="card-mood-selection">
               <CardHeader>
-                <CardTitle>Mood {generationMode === "voice_only" ? "(Disabled)" : "(Required)"}</CardTitle>
+                  <CardTitle>Step {currentStep + 1} of {totalSteps}: Mood</CardTitle>
                 <CardDescription>
-                  {generationMode === "voice_only" 
-                    ? "Mood selection is not available for Voice Only mode."
-                    : "Select the emotional character of your composition"}
+                    Select the emotional character of your composition
                 </CardDescription>
               </CardHeader>
               <CardContent>
-                <div className="flex flex-wrap gap-2">
+                  <div className="flex flex-wrap gap-2 max-h-[500px] overflow-y-auto p-2">
                   {MOODS.map((m) => (
                     <Badge
                       key={m}
                       variant={mood === m ? "default" : "outline"}
-                      className={`cursor-pointer px-4 py-2 text-sm hover-elevate active-elevate-2 ${generationMode === "voice_only" ? "cursor-not-allowed opacity-50" : ""}`}
-                      onClick={() => generationMode !== "voice_only" && setMood(m)}
+                        className="cursor-pointer px-4 py-2 text-sm hover:scale-105 transition-transform"
+                        onClick={() => setMood(m)}
                       data-testid={`badge-mood-${m.toLowerCase()}`}
                     >
                       {m}
                     </Badge>
                   ))}
                 </div>
+                  {mood && (
+                    <div className="mt-4 p-3 bg-muted rounded-lg">
+                      <p className="text-sm font-medium">Selected: <span className="font-semibold">{mood}</span></p>
+                    </div>
+                  )}
               </CardContent>
             </Card>
+            )}
 
-            <Card data-testid="card-voice-gender" className={generationMode === "instrumental_only" ? "opacity-60" : ""}>
+            {/* Step: Voice Gender */}
+            {currentStepData?.id === "gender" && (
+              <Card data-testid="card-voice-gender">
               <CardHeader>
-                <CardTitle>Voice Gender {generationMode === "instrumental_only" ? "(Disabled)" : "(Optional)"}</CardTitle>
+                  <CardTitle>Step {currentStep + 1} of {totalSteps}: Voice Gender</CardTitle>
                 <CardDescription>
-                  {generationMode === "instrumental_only" 
-                    ? "Voice gender is not available for Instrumental Only mode."
-                    : "Select Male or Female voice preference"}
+                    Select Male or Female voice preference (optional)
                 </CardDescription>
               </CardHeader>
               <CardContent>
-                <RadioGroup value={gender} onValueChange={setGender} className="grid grid-cols-2 gap-4" disabled={generationMode === "instrumental_only"}>
-                  <div className="flex items-center space-x-2">
-                    <RadioGroupItem id="gender-male" value="male" disabled={generationMode === "instrumental_only"} />
-                    <Label htmlFor="gender-male" className={`cursor-pointer ${generationMode === "instrumental_only" ? "cursor-not-allowed opacity-50" : ""}`}>Male</Label>
+                  <RadioGroup value={gender} onValueChange={setGender} className="grid grid-cols-2 gap-4">
+                    <div className="flex items-center space-x-3 p-6 border rounded-lg hover:bg-accent cursor-pointer">
+                      <RadioGroupItem id="gender-male" value="male" />
+                      <Label htmlFor="gender-male" className="cursor-pointer text-lg font-medium">Male</Label>
                   </div>
-                  <div className="flex items-center space-x-2">
-                    <RadioGroupItem id="gender-female" value="female" disabled={generationMode === "instrumental_only"} />
-                    <Label htmlFor="gender-female" className={`cursor-pointer ${generationMode === "instrumental_only" ? "cursor-not-allowed opacity-50" : ""}`}>Female</Label>
+                    <div className="flex items-center space-x-3 p-6 border rounded-lg hover:bg-accent cursor-pointer">
+                      <RadioGroupItem id="gender-female" value="female" />
+                      <Label htmlFor="gender-female" className="cursor-pointer text-lg font-medium">Female</Label>
                   </div>
                 </RadioGroup>
               </CardContent>
             </Card>
+            )}
 
-            <Card data-testid="card-language-selection" className={generationMode === "instrumental_only" ? "opacity-60" : ""}>
+            {/* Step: Language */}
+            {currentStepData?.id === "language" && (
+              <Card data-testid="card-language-selection">
               <CardHeader>
-                <CardTitle>Language {generationMode === "instrumental_only" ? "(Disabled)" : "(Optional)"}</CardTitle>
+                  <CardTitle>Step {currentStep + 1} of {totalSteps}: Language</CardTitle>
                 <CardDescription>
-                  {generationMode === "instrumental_only" 
-                    ? "Language selection is not available for Instrumental Only mode."
-                    : "Select the language for lyrics/vocals"}
+                    Select the language for lyrics/vocals (optional)
                 </CardDescription>
               </CardHeader>
               <CardContent>
-                <Select value={language} onValueChange={setLanguage} disabled={generationMode === "instrumental_only"}>
-                  <SelectTrigger data-testid="select-language">
-                    <SelectValue placeholder={generationMode === "instrumental_only" ? "Not available in Instrumental Only mode" : "Choose a language (optional)"} />
+                  <Select value={language} onValueChange={setLanguage}>
+                    <SelectTrigger data-testid="select-language" className="h-14">
+                      <SelectValue placeholder="Choose a language (optional)" />
                   </SelectTrigger>
                   <SelectContent>
                     {LANGUAGES.filter(l => l.value !== "instrumental").map((lang) => (
-                      <SelectItem key={lang.value} value={lang.value}>
-                        {lang.label}
+                        <SelectItem key={lang.value} value={lang.value} className="py-3">
+                          <div>
+                            <div className="font-medium">{lang.label}</div>
+                            <div className="text-xs text-muted-foreground">{lang.description}</div>
+                          </div>
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
                 {language && (
-                  <p className="text-sm text-muted-foreground mt-3" data-testid="language-description">
+                    <div className="p-4 bg-muted rounded-lg mt-4">
+                      <p className="text-sm font-medium mb-1">{LANGUAGES.find((l) => l.value === language)?.label}</p>
+                      <p className="text-sm text-muted-foreground" data-testid="language-description">
                     {LANGUAGES.find((l) => l.value === language)?.description}
                   </p>
+                    </div>
                 )}
               </CardContent>
             </Card>
+            )}
+
+            {/* Navigation Buttons */}
+            {currentStepData && (
+              <div className="flex justify-between gap-4 pt-4">
+                <Button
+                  variant="outline"
+                  onClick={handleBack}
+                  disabled={currentStep === 0}
+                  className="gap-2"
+                >
+                  <ChevronLeft className="w-4 h-4" />
+                  Back
+                </Button>
+                {currentStep < totalSteps - 1 ? (
+                  <Button
+                    onClick={handleNext}
+                    disabled={!canGoNext()}
+                    className="gap-2"
+                  >
+                    Next
+                    <ChevronRight className="w-4 h-4" />
+                  </Button>
+                ) : (
+                  <Button
+                    onClick={handleGenerate}
+                    disabled={isGenerating || !canGoNext()}
+                    className="gap-2"
+                    size="lg"
+                    data-testid="button-generate"
+                  >
+                    {isGenerating ? (
+                      <>
+                        <Loader2 className="w-5 h-5 animate-spin" />
+                        Generating...
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles className="w-5 h-5" />
+                        Generate Music
+                      </>
+                    )}
+                  </Button>
+                )}
+              </div>
+            )}
           </div>
 
           <div className="space-y-6">
@@ -1336,13 +1662,13 @@ export default function Generator() {
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
                   <Music className="w-5 h-5" />
-                  Generate Composition
+                  Summary
                 </CardTitle>
               </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="space-y-2 text-sm">
-                  <div className="flex justify-between pb-2 border-b">
-                    <span className="text-muted-foreground font-semibold">Generation Mode:</span>
+              <CardContent className="space-y-3 text-sm">
+                <div className="space-y-2">
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Mode:</span>
                     <span className="font-medium" data-testid="summary-generation-mode">
                       {generationMode === "voice_only" 
                         ? "Voice Only" 
@@ -1350,19 +1676,25 @@ export default function Generator() {
                         ? "Instrumental Only"
                         : generationMode === "full_music"
                         ? "Full Music"
-                        : "Not selected"}
+                        : "-"}
                     </span>
+                  </div>
+                  {generationMode !== "voice_only" && (
+                    <>
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Tradition:</span>
+                        <span className="font-medium">{tradition || "-"}</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">Raga:</span>
                     <span className="font-medium" data-testid="summary-raga">
-                      {raga || "Not selected"}
+                          {selectedRaga?.label || "-"}
                     </span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">Tala:</span>
                     <span className="font-medium" data-testid="summary-tala">
-                      {tala || "Not selected"}
+                          {selectedTala?.label || "-"}
                     </span>
                   </div>
                   <div className="flex justify-between">
@@ -1380,52 +1712,38 @@ export default function Generator() {
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">Mood:</span>
                     <span className="font-medium" data-testid="summary-mood">
-                      {mood || "Not selected"}
+                          {mood || "-"}
                     </span>
                   </div>
+                    </>
+                  )}
+                  {(generationMode === "voice_only" || generationMode === "full_music") && (
+                    <>
                   <div className="flex justify-between">
-                    <span className="text-muted-foreground">Voice Gender:</span>
+                        <span className="text-muted-foreground">Gender:</span>
                     <span className="font-medium" data-testid="summary-gender">
-                      {gender ? gender.charAt(0).toUpperCase() + gender.slice(1) : "Not selected"}
+                          {gender ? gender.charAt(0).toUpperCase() + gender.slice(1) : "-"}
                     </span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">Language:</span>
                     <span className="font-medium" data-testid="summary-language">
-                      {language ? LANGUAGES.find((l) => l.value === language)?.label || language : "Not selected"}
+                          {language ? LANGUAGES.find((l) => l.value === language)?.label || language : "-"}
                     </span>
                   </div>
                   {customPrompt.trim() && (
                     <div className="pt-2 border-t">
                       <div className="space-y-1">
-                        <span className="text-muted-foreground text-xs">Custom Prompt:</span>
-                        <p className="text-xs font-medium text-foreground line-clamp-2" data-testid="summary-prompt">
+                            <span className="text-muted-foreground text-xs">Prompt:</span>
+                            <p className="text-xs font-medium text-foreground line-clamp-3" data-testid="summary-prompt">
                           {customPrompt}
                         </p>
                       </div>
                     </div>
                   )}
-                </div>
-
-                <Button
-                  onClick={handleGenerate}
-                  disabled={isGenerating || !generationMode}
-                  className="w-full"
-                  size="lg"
-                  data-testid="button-generate"
-                >
-                  {isGenerating ? (
-                    <>
-                      <Loader2 className="w-5 h-5 mr-2 animate-spin" />
-                      Generating...
-                    </>
-                  ) : (
-                    <>
-                      <Sparkles className="w-5 h-5 mr-2" />
-                      Generate Music
                     </>
                   )}
-                </Button>
+                </div>
 
                 {isGenerating && (
                   <div className="pt-4 border-t space-y-3">
@@ -1561,6 +1879,31 @@ export default function Generator() {
           </div>
         </div>
       </div>
+
+      {/* AI Chat Floating Button */}
+      {!isChatOpen && (
+        <div 
+          style={{ 
+            position: 'fixed',
+            left: '1.5rem',
+            right: 'auto',
+            bottom: '1.5rem',
+            zIndex: 40
+          }}
+        >
+          <Button
+            onClick={() => setIsChatOpen(true)}
+            size="lg"
+            className="h-14 w-14 rounded-full shadow-lg hover:scale-110 transition-transform"
+            aria-label="Open AI Chat Assistant"
+          >
+            <MessageCircle className="h-6 w-6" />
+          </Button>
+        </div>
+      )}
+
+      {/* AI Chat Panel */}
+      <AIChatPanel isOpen={isChatOpen} onClose={() => setIsChatOpen(false)} />
     </div>
   );
 }

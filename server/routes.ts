@@ -16,10 +16,11 @@ import {
   isEmailVerified,
   getResendCooldown,
   removeVerifiedOTP,
-} from "./otp-service.js";
+  } from "./otp-service.js";
+import { sendChatMessage, sendChatMessageStream, type ChatMessage } from "./groq.js";
 
 // Admin session storage (in-memory, use Redis in production)
-const adminSessions = new Map<string, { username: string; expiresAt: number }>();
+const adminSessions = new Map<string, { username: string; userId?: string; expiresAt: number }>();
 
 // Admin authentication middleware
 function requireAdmin(req: Request, res: Response, next: NextFunction) {
@@ -269,6 +270,70 @@ export async function registerRoutes(app: Express): Promise<Server> {
         error: error.message || "Failed to generate music composition",
         code: error.code || "GENERATION_ERROR",
       });
+    }
+  });
+
+  // AI Chat endpoint (Groq) with streaming support
+  app.post("/api/chat", async (req, res) => {
+    console.log("[Chat API] Request received:", { path: req.path, method: req.method });
+    try {
+      const { messages, stream } = req.body;
+
+      if (!messages || !Array.isArray(messages)) {
+        return res.status(400).json({ error: "Messages array is required" });
+      }
+
+      // Validate message format
+      const validMessages: ChatMessage[] = messages.map((msg: any) => ({
+        role: msg.role || "user",
+        content: msg.content || "",
+      }));
+
+      // Add system message if not present
+      const systemMessage: ChatMessage = {
+        role: "system",
+        content: "You are a helpful AI assistant specialized in Indian classical music. You can help users understand ragas, talas, instruments, and provide guidance on music generation. Be concise, friendly, and knowledgeable. Focus on helping users make decisions about their music generation preferences.",
+      };
+
+      const allMessages = [systemMessage, ...validMessages];
+
+      // If streaming is requested, use Server-Sent Events
+      if (stream) {
+        res.setHeader("Content-Type", "text/event-stream");
+        res.setHeader("Cache-Control", "no-cache");
+        res.setHeader("Connection", "keep-alive");
+
+        try {
+          await sendChatMessageStream(
+            allMessages,
+            (chunk) => {
+              res.write(`data: ${JSON.stringify({ content: chunk })}\n\n`);
+            },
+            (error) => {
+              res.write(`data: ${JSON.stringify({ error: error })}\n\n`);
+              res.end();
+            }
+          );
+          res.write(`data: [DONE]\n\n`);
+          res.end();
+        } catch (error: any) {
+          res.write(`data: ${JSON.stringify({ error: error.message })}\n\n`);
+          res.end();
+        }
+        return;
+      }
+
+      // Non-streaming response (backwards compatibility)
+      const result = await sendChatMessage(allMessages);
+
+      if (result.error) {
+        return res.status(500).json({ error: result.error });
+      }
+
+      res.json({ message: result.message });
+    } catch (error: any) {
+      console.error("Chat API error:", error);
+      res.status(500).json({ error: error.message || "Failed to process chat message" });
     }
   });
 
@@ -773,6 +838,43 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error: any) {
       console.error("Error updating API key:", error);
       res.status(500).json({ error: "Failed to update API key" });
+    }
+  });
+
+  // Get Groq API key (masked)
+  app.get("/api/admin/settings/groq-api-key", requireAdmin, async (req, res) => {
+    try {
+      const apiKey = process.env.GROQ_API_KEY || "";
+      const masked = apiKey ? `${apiKey.substring(0, 8)}...${apiKey.substring(apiKey.length - 4)}` : "";
+      res.json({ apiKey: masked, hasKey: !!apiKey });
+    } catch (error: any) {
+      console.error("Error getting Groq API key:", error);
+      res.status(500).json({ error: "Failed to get Groq API key" });
+    }
+  });
+
+  // Update Groq API key
+  app.put("/api/admin/settings/groq-api-key", requireAdmin, async (req, res) => {
+    try {
+      const { apiKey } = req.body;
+      if (!apiKey || typeof apiKey !== "string") {
+        return res.status(400).json({ error: "API key is required" });
+      }
+
+      // Read current .env
+      const env = readEnvFile();
+      env.GROQ_API_KEY = apiKey.trim();
+      
+      // Write back to .env
+      writeEnvFile(env);
+      
+      // Update process.env (for current session)
+      process.env.GROQ_API_KEY = apiKey.trim();
+
+      res.json({ success: true, message: "Groq API key updated successfully" });
+    } catch (error: any) {
+      console.error("Error updating Groq API key:", error);
+      res.status(500).json({ error: "Failed to update Groq API key" });
     }
   });
 

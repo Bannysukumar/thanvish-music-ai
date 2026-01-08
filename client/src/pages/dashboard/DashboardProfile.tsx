@@ -6,6 +6,10 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Slider } from "@/components/ui/slider";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { 
   User, 
   Mail, 
@@ -17,7 +21,9 @@ import {
   Download, 
   Settings,
   Music,
-  TrendingUp
+  TrendingUp,
+  Sparkles,
+  Loader2
 } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useTheme } from "@/hooks/use-theme";
@@ -25,6 +31,98 @@ import { useToast } from "@/hooks/use-toast";
 import { useLocation } from "wouter";
 import { getSavedCompositions } from "@/lib/compositionStorage";
 import { ChangePasswordModal } from "@/components/auth/ChangePasswordModal";
+import { db } from "@/lib/firebase";
+import { doc, getDoc, setDoc, serverTimestamp } from "firebase/firestore";
+
+// Music generation constants (matching Onboarding and Generator)
+const RAGAS = [
+  { value: "yaman", label: "Yaman", description: "Evening raga, peaceful and devotional", tradition: "Hindustani" },
+  { value: "bhairav", label: "Bhairav", description: "Morning raga, serious and contemplative", tradition: "Hindustani" },
+  { value: "bhairavi", label: "Bhairavi", description: "All-time raga, expressive and emotional", tradition: "Hindustani" },
+  { value: "bilawal", label: "Bilawal", description: "Morning raga, bright and optimistic", tradition: "Hindustani" },
+  { value: "kafi", label: "Kafi", description: "Evening raga, romantic and lyrical", tradition: "Hindustani" },
+  { value: "asavari", label: "Asavari", description: "Morning raga, devotional and serene", tradition: "Hindustani" },
+  { value: "kalyani_hindustani", label: "Kalyani", description: "Evening raga, majestic and uplifting", tradition: "Hindustani" },
+  { value: "darbari", label: "Darbari", description: "Night raga, deep and meditative", tradition: "Hindustani" },
+  { value: "malkauns", label: "Malkauns", description: "Night raga, serious and profound", tradition: "Hindustani" },
+  { value: "todi_hindustani", label: "Todi", description: "Morning raga, devotional and contemplative", tradition: "Hindustani" },
+  { value: "purvi", label: "Purvi", description: "Evening raga, complex and introspective", tradition: "Hindustani" },
+  { value: "marwa", label: "Marwa", description: "Evening raga, serene and spiritual", tradition: "Hindustani" },
+  { value: "bageshri", label: "Bageshri", description: "Night raga, romantic and melancholic", tradition: "Hindustani" },
+  { value: "shuddh_sarang", label: "Shuddh Sarang", description: "Afternoon raga, bright and cheerful", tradition: "Hindustani" },
+  { value: "bihag", label: "Bihag", description: "Night raga, romantic and graceful", tradition: "Hindustani" },
+  { value: "shankarabharanam", label: "Shankarabharanam", description: "Evening raga, majestic and uplifting", tradition: "Carnatic" },
+  { value: "kalyani_carnatic", label: "Kalyani", description: "Evening raga, bright and joyful", tradition: "Carnatic" },
+  { value: "thodi", label: "Thodi", description: "Morning raga, devotional and contemplative", tradition: "Carnatic" },
+  { value: "bhairavi_carnatic", label: "Bhairavi", description: "Morning raga, devotional and serene", tradition: "Carnatic" },
+  { value: "kharaharapriya", label: "Kharaharapriya", description: "Evening raga, expressive and emotional", tradition: "Carnatic" },
+  { value: "harikambhoji", label: "Harikambhoji", description: "Evening raga, joyful and uplifting", tradition: "Carnatic" },
+  { value: "natabhairavi", label: "Natabhairavi", description: "Morning raga, devotional and peaceful", tradition: "Carnatic" },
+  { value: "mayamalavagowla", label: "Mayamalavagowla", description: "Morning raga, foundational and serene", tradition: "Carnatic" },
+  { value: "mohanam", label: "Mohanam", description: "Evening raga, romantic and melodious", tradition: "Carnatic" },
+  { value: "hindolam", label: "Hindolam", description: "Evening raga, bright and cheerful", tradition: "Carnatic" },
+  { value: "shubhapantuvarali", label: "Shubhapantuvarali", description: "Evening raga, melancholic and expressive", tradition: "Carnatic" },
+  { value: "madhyamavati", label: "Madhyamavati", description: "Evening raga, devotional and peaceful", tradition: "Carnatic" },
+  { value: "abheri", label: "Abheri", description: "Evening raga, romantic and lyrical", tradition: "Carnatic" },
+  { value: "sahana", label: "Sahana", description: "Evening raga, romantic and expressive", tradition: "Carnatic" },
+];
+
+const TALAS = [
+  { value: "teental", label: "Teental", beats: "16 beats", description: "Most common tala in Hindustani music", tradition: "Hindustani" },
+  { value: "jhaptal", label: "Jhaptal", beats: "10 beats", description: "Popular medium-tempo tala", tradition: "Hindustani" },
+  { value: "rupak", label: "Rupak", beats: "7 beats", description: "Asymmetric tala with unique feel", tradition: "Hindustani" },
+  { value: "ektaal", label: "Ektaal", beats: "12 beats", description: "Slow, majestic compositions", tradition: "Hindustani" },
+  { value: "dadra", label: "Dadra", beats: "6 beats", description: "Light classical and semi-classical compositions", tradition: "Hindustani" },
+  { value: "keherwa", label: "Keherwa", beats: "8 beats", description: "Common in light music and folk", tradition: "Hindustani" },
+  { value: "jhumra", label: "Jhumra", beats: "14 beats", description: "Slow, meditative compositions", tradition: "Hindustani" },
+  { value: "tilwada", label: "Tilwada", beats: "16 beats", description: "Slow tempo, devotional compositions", tradition: "Hindustani" },
+  { value: "chautal", label: "Chautal", beats: "12 beats", description: "Traditional dhrupad tala", tradition: "Hindustani" },
+  { value: "sultal", label: "Sultal", beats: "10 beats", description: "Used in dhrupad style", tradition: "Hindustani" },
+  { value: "adi", label: "Adi Tala", beats: "8 beats", description: "Most common Carnatic tala", tradition: "Carnatic" },
+  { value: "rupaka", label: "Rupaka Tala", beats: "3 beats", description: "Short, rhythmic tala", tradition: "Carnatic" },
+  { value: "misra_chapu", label: "Misra Chapu", beats: "7 beats", description: "Asymmetric, expressive tala", tradition: "Carnatic" },
+  { value: "khanda_chapu", label: "Khanda Chapu", beats: "5 beats", description: "Fast-paced, energetic tala", tradition: "Carnatic" },
+  { value: "tishra", label: "Tishra Tala", beats: "3 beats", description: "Simple three-beat cycle", tradition: "Carnatic" },
+  { value: "jhampe", label: "Jhampe Tala", beats: "10 beats", description: "Medium tempo compositions", tradition: "Carnatic" },
+  { value: "ata", label: "Ata Tala", beats: "14 beats", description: "Complex, slow compositions", tradition: "Carnatic" },
+  { value: "eka", label: "Eka Tala", beats: "4 beats", description: "Simple four-beat cycle", tradition: "Carnatic" },
+];
+
+const INSTRUMENTS = [
+  { value: "sitar", label: "Sitar", tradition: "Hindustani" },
+  { value: "tabla", label: "Tabla", tradition: "Hindustani" },
+  { value: "bansuri", label: "Bansuri (Flute)", tradition: "Hindustani" },
+  { value: "sarod", label: "Sarod", tradition: "Hindustani" },
+  { value: "santoor", label: "Santoor", tradition: "Hindustani" },
+  { value: "shehnai", label: "Shehnai", tradition: "Hindustani" },
+  { value: "harmonium", label: "Harmonium", tradition: "Hindustani" },
+  { value: "pakhavaj", label: "Pakhavaj", tradition: "Hindustani" },
+  { value: "dholak", label: "Dholak", tradition: "Hindustani" },
+  { value: "sarangi", label: "Sarangi", tradition: "Hindustani" },
+  { value: "veena", label: "Veena", tradition: "Carnatic" },
+  { value: "mridangam", label: "Mridangam", tradition: "Carnatic" },
+  { value: "ghatam", label: "Ghatam", tradition: "Carnatic" },
+  { value: "kanjira", label: "Kanjira", tradition: "Carnatic" },
+  { value: "morsing", label: "Morsing (Jaw Harp)", tradition: "Carnatic" },
+  { value: "nadaswaram", label: "Nadaswaram", tradition: "Carnatic" },
+  { value: "venu", label: "Venu (Carnatic Flute)", tradition: "Carnatic" },
+  { value: "violin", label: "Violin", tradition: "Both" },
+  { value: "tanpura", label: "Tanpura", tradition: "Both" },
+  { value: "flute", label: "Flute (Generic)", tradition: "Both" },
+];
+
+const MOODS = [
+  "Devotional", "Romantic", "Serene", "Energetic", "Contemplative", "Joyful",
+  "Melancholic", "Peaceful", "Meditative", "Mystical", "Celebratory", "Spiritual",
+];
+
+const LANGUAGES = [
+  { value: "hindi", label: "Hindi", description: "Most common language for Indian classical music" },
+  { value: "sanskrit", label: "Sanskrit", description: "Traditional language for classical compositions" },
+  { value: "english", label: "English", description: "English lyrics" },
+  { value: "tamil", label: "Tamil", description: "South Indian classical tradition" },
+  { value: "telugu", label: "Telugu", description: "Carnatic music tradition" },
+];
 
 /**
  * DashboardProfile component - user profile page with enhanced features
@@ -41,12 +139,83 @@ export default function DashboardProfile() {
   const [autoSave, setAutoSave] = useState(true);
   const [compositionsCount, setCompositionsCount] = useState(0);
   const [changePasswordOpen, setChangePasswordOpen] = useState(false);
+  
+  // Music generation preferences state
+  const [generationMode, setGenerationMode] = useState<"voice_only" | "instrumental_only" | "full_music" | "">("");
+  const [tradition, setTradition] = useState<string>("");
+  const [raga, setRaga] = useState("");
+  const [tala, setTala] = useState("");
+  const [selectedInstruments, setSelectedInstruments] = useState<string[]>([]);
+  const [tempo, setTempo] = useState([100]);
+  const [mood, setMood] = useState("");
+  const [gender, setGender] = useState<string>("");
+  const [language, setLanguage] = useState<string>("");
+  const [isLoadingPreferences, setIsLoadingPreferences] = useState(true);
+  const [isSavingPreferences, setIsSavingPreferences] = useState(false);
 
   // Load user stats
   useEffect(() => {
     const compositions = getSavedCompositions();
     setCompositionsCount(compositions.length);
   }, []);
+
+  // Load music generation preferences
+  useEffect(() => {
+    const loadPreferences = async () => {
+      if (!user || user.isGuest) {
+        setIsLoadingPreferences(false);
+        return;
+      }
+
+      try {
+        const userDocRef = doc(db, "users", user.id);
+        const userDocSnap = await getDoc(userDocRef);
+        
+        if (userDocSnap.exists()) {
+          const userData = userDocSnap.data();
+          
+          if (userData.generationMode) {
+            setGenerationMode(userData.generationMode as "voice_only" | "instrumental_only" | "full_music" | "");
+          }
+          if (userData.tradition) {
+            setTradition(userData.tradition);
+          }
+          if (userData.raga) {
+            setRaga(userData.raga);
+          }
+          if (userData.tala) {
+            setTala(userData.tala);
+          }
+          if (userData.instruments && Array.isArray(userData.instruments)) {
+            setSelectedInstruments(userData.instruments);
+          }
+          if (userData.tempo && typeof userData.tempo === 'number') {
+            setTempo([userData.tempo]);
+          }
+          if (userData.mood) {
+            setMood(userData.mood);
+          }
+          if (userData.gender) {
+            setGender(userData.gender);
+          }
+          if (userData.language) {
+            setLanguage(userData.language);
+          }
+        }
+      } catch (error) {
+        console.error("Error loading preferences:", error);
+        toast({
+          title: "Error",
+          description: "Failed to load preferences. Please try again.",
+          variant: "destructive",
+        });
+      } finally {
+        setIsLoadingPreferences(false);
+      }
+    };
+
+    loadPreferences();
+  }, [user, toast]);
 
   /**
    * Handle profile update
@@ -64,6 +233,74 @@ export default function DashboardProfile() {
    */
   const handleUpgrade = () => {
     setLocation("/dashboard/upgrade");
+  };
+
+  // Filter helpers
+  const filteredRagas = tradition ? RAGAS.filter((r) => r.tradition === tradition) : [];
+  const filteredTalas = tradition ? TALAS.filter((t) => t.tradition === tradition) : [];
+  const filteredInstruments = tradition
+    ? INSTRUMENTS.filter((i) => i.tradition === tradition || i.tradition === "Both")
+    : INSTRUMENTS;
+
+  const handleTraditionChange = (value: string) => {
+    setTradition(value);
+    // Clear raga and tala when tradition changes
+    setRaga("");
+    setTala("");
+  };
+
+  const toggleInstrument = (instrument: string) => {
+    setSelectedInstruments((prev) =>
+      prev.includes(instrument)
+        ? prev.filter((i) => i !== instrument)
+        : [...prev, instrument]
+    );
+  };
+
+  /**
+   * Handle saving music generation preferences
+   */
+  const handleSavePreferences = async () => {
+    if (!user || user.isGuest) {
+      toast({
+        title: "Error",
+        description: "You must be logged in to save preferences",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setIsSavingPreferences(true);
+    try {
+      const preferences = {
+        generationMode,
+        tradition,
+        raga,
+        tala,
+        instruments: selectedInstruments,
+        tempo: tempo[0],
+        mood,
+        gender: gender || null,
+        language: language || null,
+        updatedAt: serverTimestamp(),
+      };
+
+      await setDoc(doc(db, "users", user.id), preferences, { merge: true });
+
+      toast({
+        title: "Preferences Saved!",
+        description: "Your music generation preferences have been updated successfully.",
+      });
+    } catch (error) {
+      console.error("Error saving preferences:", error);
+      toast({
+        title: "Error",
+        description: "Failed to save preferences. Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsSavingPreferences(false);
+    }
   };
 
   /**
@@ -98,7 +335,7 @@ export default function DashboardProfile() {
         </p>
       </div>
 
-      {/* Account Statistics */}
+      {/* Account Statistics - Quick Overview */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
@@ -138,8 +375,19 @@ export default function DashboardProfile() {
         </Card>
       </div>
 
-      {/* Profile Information */}
-      <Card>
+      {/* Main Content with Tabs */}
+      <Tabs defaultValue="account" className="space-y-4">
+        <TabsList className="grid w-full grid-cols-4">
+          <TabsTrigger value="account">Account</TabsTrigger>
+          <TabsTrigger value="preferences">Preferences</TabsTrigger>
+          <TabsTrigger value="music">Music Settings</TabsTrigger>
+          <TabsTrigger value="security">Security</TabsTrigger>
+        </TabsList>
+
+        {/* Account Tab */}
+        <TabsContent value="account" className="space-y-4">
+          {/* Profile Information */}
+          <Card>
         <CardHeader>
           <CardTitle>Account Information</CardTitle>
           <CardDescription>
@@ -196,8 +444,8 @@ export default function DashboardProfile() {
         </CardContent>
       </Card>
 
-      {/* Account Status & Upgrade */}
-      <Card>
+          {/* Account Status & Upgrade */}
+          <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Crown className="h-5 w-5" />
@@ -259,19 +507,22 @@ export default function DashboardProfile() {
           </div>
         </CardContent>
       </Card>
+        </TabsContent>
 
-      {/* Appearance Settings */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            {theme === "light" ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
-            Appearance
-          </CardTitle>
-          <CardDescription>
-            Customize the look and feel of your dashboard
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
+        {/* Preferences Tab */}
+        <TabsContent value="preferences" className="space-y-4">
+          {/* Appearance Settings */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                {theme === "light" ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
+                Appearance
+              </CardTitle>
+              <CardDescription>
+                Customize the look and feel of your dashboard
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
           <div className="flex items-center justify-between">
             <div className="space-y-0.5">
               <Label htmlFor="theme-toggle">Theme</Label>
@@ -301,18 +552,18 @@ export default function DashboardProfile() {
         </CardContent>
       </Card>
 
-      {/* Preferences */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Settings className="h-5 w-5" />
-            Preferences
-          </CardTitle>
-          <CardDescription>
-            Configure your application preferences
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-6">
+          {/* App Preferences */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Settings className="h-5 w-5" />
+                Preferences
+              </CardTitle>
+              <CardDescription>
+                Configure your application preferences
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-6">
           <div className="flex items-center justify-between">
             <div className="space-y-0.5">
               <Label htmlFor="notifications">Push Notifications</Label>
@@ -361,19 +612,245 @@ export default function DashboardProfile() {
           </div>
         </CardContent>
       </Card>
+        </TabsContent>
 
-      {/* Security & Privacy */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Shield className="h-5 w-5" />
-            Security & Privacy
-          </CardTitle>
-          <CardDescription>
-            Manage your account security settings
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
+        {/* Music Settings Tab */}
+        <TabsContent value="music" className="space-y-4">
+          {/* Music Generation Preferences */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Sparkles className="h-5 w-5" />
+                Music Generation Preferences
+              </CardTitle>
+              <CardDescription>
+                Update your default music generation settings. These will be pre-filled in the generator page.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-6">
+          {isLoadingPreferences ? (
+            <div className="flex items-center justify-center py-8">
+              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+            </div>
+          ) : (
+            <>
+              {/* Generation Mode */}
+              <div className="space-y-3">
+                <Label>Generation Mode</Label>
+                <RadioGroup
+                  value={generationMode}
+                  onValueChange={(value) => setGenerationMode(value as "voice_only" | "instrumental_only" | "full_music" | "")}
+                  className="grid grid-cols-1 md:grid-cols-3 gap-3"
+                >
+                  <div className="flex items-center space-x-2 p-3 border rounded-lg hover:bg-accent cursor-pointer">
+                    <RadioGroupItem value="voice_only" id="pref-mode-voice" />
+                    <Label htmlFor="pref-mode-voice" className="cursor-pointer flex-1">
+                      <div className="font-medium text-sm">Voice Only</div>
+                    </Label>
+                  </div>
+                  <div className="flex items-center space-x-2 p-3 border rounded-lg hover:bg-accent cursor-pointer">
+                    <RadioGroupItem value="instrumental_only" id="pref-mode-instrumental" />
+                    <Label htmlFor="pref-mode-instrumental" className="cursor-pointer flex-1">
+                      <div className="font-medium text-sm">Instrumental Only</div>
+                    </Label>
+                  </div>
+                  <div className="flex items-center space-x-2 p-3 border rounded-lg hover:bg-accent cursor-pointer">
+                    <RadioGroupItem value="full_music" id="pref-mode-full" />
+                    <Label htmlFor="pref-mode-full" className="cursor-pointer flex-1">
+                      <div className="font-medium text-sm">Full Music</div>
+                    </Label>
+                  </div>
+                </RadioGroup>
+              </div>
+
+              <Separator />
+
+              {/* Tradition */}
+              <div className="space-y-2">
+                <Label>Tradition</Label>
+                <Select value={tradition} onValueChange={handleTraditionChange}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select Hindustani or Carnatic" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="Hindustani">Hindustani</SelectItem>
+                    <SelectItem value="Carnatic">Carnatic</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {/* Raga */}
+              <div className="space-y-2">
+                <Label>Raga</Label>
+                <Select value={raga} onValueChange={setRaga} disabled={!tradition}>
+                  <SelectTrigger>
+                    <SelectValue placeholder={tradition ? "Choose a raga" : "First select a tradition"} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {filteredRagas.map((r) => (
+                      <SelectItem key={r.value} value={r.value}>
+                        {r.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {/* Tala */}
+              <div className="space-y-2">
+                <Label>Tala</Label>
+                <Select value={tala} onValueChange={setTala} disabled={!tradition}>
+                  <SelectTrigger>
+                    <SelectValue placeholder={tradition ? "Choose a tala" : "First select a tradition"} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {filteredTalas.map((t) => (
+                      <SelectItem key={t.value} value={t.value}>
+                        {t.label} ({t.beats})
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {/* Instruments */}
+              <div className="space-y-3">
+                <Label>Instruments</Label>
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-2 max-h-[200px] overflow-y-auto p-2 border rounded-lg">
+                  {filteredInstruments.map((instrument) => (
+                    <Button
+                      key={instrument.value}
+                      variant={selectedInstruments.includes(instrument.value) ? "default" : "outline"}
+                      size="sm"
+                      onClick={() => toggleInstrument(instrument.value)}
+                      className="justify-start h-auto py-2 px-3"
+                    >
+                      <div className="text-left">
+                        <div className="font-medium text-xs">{instrument.label}</div>
+                      </div>
+                    </Button>
+                  ))}
+                </div>
+                {selectedInstruments.length > 0 && (
+                  <div className="flex flex-wrap gap-2">
+                    {selectedInstruments.map((inst) => {
+                      const instObj = INSTRUMENTS.find((i) => i.value === inst);
+                      return (
+                        <Badge key={inst} variant="secondary">
+                          {instObj?.label || inst}
+                        </Badge>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              {/* Tempo */}
+              <div className="space-y-3">
+                <div className="flex justify-between items-center">
+                  <Label>Tempo</Label>
+                  <span className="text-sm font-semibold">{tempo[0]} BPM</span>
+                </div>
+                <Slider
+                  value={tempo}
+                  onValueChange={setTempo}
+                  min={40}
+                  max={200}
+                  step={5}
+                  className="w-full"
+                />
+                <div className="flex justify-between text-xs text-muted-foreground">
+                  <span>Slow (40 BPM)</span>
+                  <span>Fast (200 BPM)</span>
+                </div>
+              </div>
+
+              {/* Mood */}
+              <div className="space-y-3">
+                <Label>Mood</Label>
+                <div className="flex flex-wrap gap-2">
+                  {MOODS.map((m) => (
+                    <Badge
+                      key={m}
+                      variant={mood === m ? "default" : "outline"}
+                      className="cursor-pointer px-3 py-1 text-sm"
+                      onClick={() => setMood(m)}
+                    >
+                      {m}
+                    </Badge>
+                  ))}
+                </div>
+              </div>
+
+              {/* Voice Gender */}
+              <div className="space-y-3">
+                <Label>Voice Gender (Optional)</Label>
+                <RadioGroup value={gender} onValueChange={setGender} className="grid grid-cols-2 gap-3">
+                  <div className="flex items-center space-x-2 p-3 border rounded-lg hover:bg-accent cursor-pointer">
+                    <RadioGroupItem id="pref-gender-male" value="male" />
+                    <Label htmlFor="pref-gender-male" className="cursor-pointer">Male</Label>
+                  </div>
+                  <div className="flex items-center space-x-2 p-3 border rounded-lg hover:bg-accent cursor-pointer">
+                    <RadioGroupItem id="pref-gender-female" value="female" />
+                    <Label htmlFor="pref-gender-female" className="cursor-pointer">Female</Label>
+                  </div>
+                </RadioGroup>
+              </div>
+
+              {/* Language */}
+              <div className="space-y-2">
+                <Label>Language (Optional)</Label>
+                <Select value={language} onValueChange={setLanguage}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Choose a language (optional)" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {LANGUAGES.map((lang) => (
+                      <SelectItem key={lang.value} value={lang.value}>
+                        {lang.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <Separator />
+
+              <div className="flex justify-end">
+                <Button onClick={handleSavePreferences} disabled={isSavingPreferences || user?.isGuest}>
+                  {isSavingPreferences ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      Saving...
+                    </>
+                  ) : (
+                    <>
+                      <Save className="mr-2 h-4 w-4" />
+                      Save Preferences
+                    </>
+                  )}
+                </Button>
+              </div>
+            </>
+          )}
+        </CardContent>
+      </Card>
+        </TabsContent>
+
+        {/* Security Tab */}
+        <TabsContent value="security" className="space-y-4">
+          {/* Security & Privacy */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Shield className="h-5 w-5" />
+                Security & Privacy
+              </CardTitle>
+              <CardDescription>
+                Manage your account security settings
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
           <div className="flex items-center justify-between p-4 border rounded-lg">
             <div>
               <p className="font-medium">Password</p>
@@ -405,18 +882,18 @@ export default function DashboardProfile() {
         </CardContent>
       </Card>
 
-      {/* Data Management */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Download className="h-5 w-5" />
-            Data Management
-          </CardTitle>
-          <CardDescription>
-            Export or manage your data
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
+          {/* Data Management */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Download className="h-5 w-5" />
+                Data Management
+              </CardTitle>
+              <CardDescription>
+                Export or manage your data
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
           <div className="flex items-center justify-between p-4 border rounded-lg">
             <div>
               <p className="font-medium">Export Library Data</p>
@@ -443,6 +920,8 @@ export default function DashboardProfile() {
           </div>
         </CardContent>
       </Card>
+        </TabsContent>
+      </Tabs>
 
       {/* Change Password Modal */}
       <ChangePasswordModal
