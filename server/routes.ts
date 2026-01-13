@@ -1437,6 +1437,57 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  /**
+   * Calculate Vedic Astrology (Sidereal with Lahiri Ayanamsa)
+   * POST /api/calculate-vedic-astrology
+   * 
+   * This endpoint calculates accurate Vedic astrology details using:
+   * - Vedic/Sidereal Astrology
+   * - Lahiri Ayanamsa
+   * - Actual planetary positions (Swiss Ephemeris)
+   * 
+   * Required inputs:
+   * - dateOfBirth: DD-MM-YYYY or YYYY-MM-DD format
+   * - timeOfBirth: HH:MM format (24-hour) or HH:MM AM/PM
+   * - placeOfBirth: City, State, Country (for geo-resolution and timezone)
+   */
+  app.post("/api/calculate-vedic-astrology", async (req, res) => {
+    try {
+      const { dateOfBirth, timeOfBirth, placeOfBirth } = req.body;
+
+      // Validation
+      if (!dateOfBirth || !timeOfBirth || !placeOfBirth) {
+        return res.status(400).json({
+          error: "All fields are required: dateOfBirth, timeOfBirth, and placeOfBirth",
+          code: "MISSING_FIELDS",
+        });
+      }
+
+      // Import the calculation function
+      const { calculateVedicAstrology } = await import("./vedic-astrology.js");
+
+      // Perform the calculation
+      const result = await calculateVedicAstrology(dateOfBirth, timeOfBirth, placeOfBirth);
+
+      // Return the result
+      res.json({
+        zodiacSign: result.zodiacSign,
+        rasi: result.rasi,
+        calculationMethod: result.calculationMethod,
+        confidence: result.confidence,
+        message: result.message,
+        sunLongitude: result.sunLongitude,
+        moonLongitude: result.moonLongitude,
+      });
+    } catch (error: any) {
+      console.error("Vedic astrology calculation error:", error);
+      res.status(500).json({
+        error: error.message || "Failed to calculate Vedic astrology",
+        code: "CALCULATION_ERROR",
+      });
+    }
+  });
+
   const httpServer = createServer(app);
 
   return httpServer;

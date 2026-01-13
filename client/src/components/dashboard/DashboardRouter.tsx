@@ -7,6 +7,8 @@ import Generator from "@/pages/Generator";
 import DashboardLibrary from "@/pages/dashboard/DashboardLibrary";
 import DashboardProfile from "@/pages/dashboard/DashboardProfile";
 import DashboardUpgrade from "@/pages/dashboard/DashboardUpgrade";
+import HoroscopeProfile from "@/pages/dashboard/HoroscopeProfile";
+import MusicTherapyDashboard from "@/pages/dashboard/MusicTherapyDashboard";
 import NotFound from "@/pages/not-found";
 import { useAuth } from "@/contexts/AuthContext";
 import { db } from "@/lib/firebase";
@@ -80,6 +82,8 @@ export function DashboardRouter() {
             <Route path="/dashboard" component={DashboardHome} />
             <Route path="/dashboard/generate" component={Generator} />
             <Route path="/dashboard/library" component={DashboardLibrary} />
+            <Route path="/dashboard/horoscope" component={HoroscopeProfile} />
+            <Route path="/dashboard/music-therapy" component={MusicTherapyDashboard} />
             <Route path="/dashboard/profile" component={DashboardProfile} />
             <Route path="/dashboard/upgrade" component={DashboardUpgrade} />
             <Route component={NotFound} />

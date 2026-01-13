@@ -105,8 +105,16 @@ export async function generateMusicComposition(
       throw new Error("Instrumental Only mode requires raga, tala, instruments, tempo, and mood");
     }
 
-    const tradition = "classical"; // Default tradition - could be determined from raga if needed
-    prompt = `Create an instrumental ${tradition} classical composition in Raga ${raga} using Tala ${tala}, featuring ${instruments.join(", ")}. Tempo is ${tempo} BPM with a ${mood} mood.`;
+    // Use custom prompt if provided (from Music Therapy with horoscope data), otherwise build default
+    if (customPrompt && customPrompt.trim()) {
+      // Use the personalized prompt from client (includes horoscope data)
+      prompt = customPrompt.trim();
+    } else {
+      // Fallback to default prompt if no custom prompt provided
+      const tradition = "classical"; // Default tradition - could be determined from raga if needed
+      prompt = `Create an instrumental ${tradition} classical composition in Raga ${raga} using Tala ${tala}, featuring ${instruments.join(", ")}. Tempo is ${tempo} BPM with a ${mood} mood.`;
+    }
+    
     instrumental = true;
 
     apiBody = {

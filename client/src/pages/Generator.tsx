@@ -75,51 +75,107 @@ const TALAS = [
   { value: "eka", label: "Eka Tala", beats: "4 beats", description: "Simple four-beat cycle", tradition: "Carnatic" },
 ];
 
+// Helper function to get preview URL - replace with actual audio file URLs
+// For now, using placeholder structure. In production, replace with actual hosted audio files
+function getInstrumentPreviewUrl(instrumentValue: string): string | null {
+  // Map instrument values to preview URLs
+  // TODO: Replace these with actual hosted audio file URLs
+  const previewMap: Record<string, string> = {
+    // Hindustani Instruments
+    sitar: "/audio-previews/sitar.mp3",
+    tabla: "/audio-previews/tabla.mp3",
+    bansuri: "/audio-previews/bansuri.mp3",
+    sarod: "/audio-previews/sarod.mp3",
+    santoor: "/audio-previews/santoor.mp3",
+    shehnai: "/audio-previews/shehnai.mp3",
+    harmonium: "/audio-previews/harmonium.mp3",
+    pakhavaj: "/audio-previews/pakhavaj.mp3",
+    dholak: "/audio-previews/dholak.mp3",
+    sarangi: "/audio-previews/sarangi.mp3",
+    esraj: "/audio-previews/esraj.mp3",
+    dilruba: "/audio-previews/dilruba.mp3",
+    surmandal: "/audio-previews/surmandal.mp3",
+    swarmandal: "/audio-previews/swarmandal.mp3",
+    rudra_veena: "/audio-previews/rudra_veena.mp3",
+    vichitra_veena: "/audio-previews/vichitra_veena.mp3",
+    surbahar: "/audio-previews/surbahar.mp3",
+    surbahar_sitar: "/audio-previews/surbahar_sitar.mp3",
+    // Carnatic Instruments
+    veena: "/audio-previews/veena.mp3",
+    mridangam: "/audio-previews/mridangam.mp3",
+    ghatam: "/audio-previews/ghatam.mp3",
+    kanjira: "/audio-previews/kanjira.mp3",
+    morsing: "/audio-previews/morsing.mp3",
+    nadaswaram: "/audio-previews/nadaswaram.mp3",
+    thavil: "/audio-previews/thavil.mp3",
+    gottuvadhyam: "/audio-previews/gottuvadhyam.mp3",
+    venu: "/audio-previews/venu.mp3",
+    nagaswaram: "/audio-previews/nagaswaram.mp3",
+    tavil: "/audio-previews/tavil.mp3",
+    udukkai: "/audio-previews/udukkai.mp3",
+    pambai: "/audio-previews/pambai.mp3",
+    // Both Traditions
+    violin: "/audio-previews/violin.mp3",
+    tanpura: "/audio-previews/tanpura.mp3",
+    flute: "/audio-previews/flute.mp3",
+    harmonium_both: "/audio-previews/harmonium.mp3",
+    santoor_both: "/audio-previews/santoor.mp3",
+    // Fusion/Modern
+    guitar: "/audio-previews/guitar.mp3",
+    piano: "/audio-previews/piano.mp3",
+    keyboard: "/audio-previews/keyboard.mp3",
+    cello: "/audio-previews/cello.mp3",
+    double_bass: "/audio-previews/double_bass.mp3",
+  };
+  return previewMap[instrumentValue] || null;
+}
+
 const INSTRUMENTS = [
   // Hindustani Instruments
-  { value: "sitar", label: "Sitar", tradition: "Hindustani" },
-  { value: "tabla", label: "Tabla", tradition: "Hindustani" },
-  { value: "bansuri", label: "Bansuri (Flute)", tradition: "Hindustani" },
-  { value: "sarod", label: "Sarod", tradition: "Hindustani" },
-  { value: "santoor", label: "Santoor", tradition: "Hindustani" },
-  { value: "shehnai", label: "Shehnai", tradition: "Hindustani" },
-  { value: "harmonium", label: "Harmonium", tradition: "Hindustani" },
-  { value: "pakhavaj", label: "Pakhavaj", tradition: "Hindustani" },
-  { value: "dholak", label: "Dholak", tradition: "Hindustani" },
-  { value: "sarangi", label: "Sarangi", tradition: "Hindustani" },
-  { value: "esraj", label: "Esraj", tradition: "Hindustani" },
-  { value: "dilruba", label: "Dilruba", tradition: "Hindustani" },
-  { value: "surmandal", label: "Surmandal", tradition: "Hindustani" },
-  { value: "swarmandal", label: "Swarmandal", tradition: "Hindustani" },
-  { value: "rudra_veena", label: "Rudra Veena", tradition: "Hindustani" },
-  { value: "vichitra_veena", label: "Vichitra Veena", tradition: "Hindustani" },
-  { value: "surbahar", label: "Surbahar", tradition: "Hindustani" },
-  { value: "surbahar_sitar", label: "Surbahar Sitar", tradition: "Hindustani" },
-  // Carnatic Instruments
-  { value: "veena", label: "Veena", tradition: "Carnatic" },
-  { value: "mridangam", label: "Mridangam", tradition: "Carnatic" },
-  { value: "ghatam", label: "Ghatam", tradition: "Carnatic" },
-  { value: "kanjira", label: "Kanjira", tradition: "Carnatic" },
-  { value: "morsing", label: "Morsing (Jaw Harp)", tradition: "Carnatic" },
-  { value: "nadaswaram", label: "Nadaswaram", tradition: "Carnatic" },
-  { value: "thavil", label: "Thavil", tradition: "Carnatic" },
-  { value: "gottuvadhyam", label: "Gottuvadhyam (Chitravina)", tradition: "Carnatic" },
-  { value: "venu", label: "Venu (Carnatic Flute)", tradition: "Carnatic" },
-  { value: "nagaswaram", label: "Nagaswaram", tradition: "Carnatic" },
-  { value: "tavil", label: "Tavil", tradition: "Carnatic" },
-  { value: "udukkai", label: "Udukkai", tradition: "Carnatic" },
-  { value: "pambai", label: "Pambai", tradition: "Carnatic" },
+  { value: "sitar", label: "Sitar", tradition: "Hindustani", category: "Hindustani", previewDuration: 7 },
+  { value: "tabla", label: "Tabla", tradition: "Hindustani", category: "Hindustani", previewDuration: 6 },
+  { value: "bansuri", label: "Bansuri (Flute)", tradition: "Hindustani", category: "Hindustani", previewDuration: 8 },
+  { value: "sarod", label: "Sarod", tradition: "Hindustani", category: "Hindustani", previewDuration: 7 },
+  { value: "santoor", label: "Santoor", tradition: "Hindustani", category: "Hindustani", previewDuration: 8 },
+  { value: "shehnai", label: "Shehnai", tradition: "Hindustani", category: "Hindustani", previewDuration: 6 },
+  { value: "harmonium", label: "Harmonium", tradition: "Hindustani", category: "Hindustani", previewDuration: 7 },
+  { value: "pakhavaj", label: "Pakhavaj", tradition: "Hindustani", category: "Hindustani", previewDuration: 6 },
+  { value: "dholak", label: "Dholak", tradition: "Hindustani", category: "Hindustani", previewDuration: 6 },
+  { value: "sarangi", label: "Sarangi", tradition: "Hindustani", category: "Hindustani", previewDuration: 8 },
+  { value: "esraj", label: "Esraj", tradition: "Hindustani", category: "Hindustani", previewDuration: 7 },
+  { value: "dilruba", label: "Dilruba", tradition: "Hindustani", category: "Hindustani", previewDuration: 7 },
+  { value: "surmandal", label: "Surmandal", tradition: "Hindustani", category: "Hindustani", previewDuration: 6 },
+  { value: "swarmandal", label: "Swarmandal", tradition: "Hindustani", category: "Hindustani", previewDuration: 6 },
+  { value: "rudra_veena", label: "Rudra Veena", tradition: "Hindustani", category: "Hindustani", previewDuration: 8 },
+  { value: "vichitra_veena", label: "Vichitra Veena", tradition: "Hindustani", category: "Hindustani", previewDuration: 8 },
+  { value: "surbahar", label: "Surbahar", tradition: "Hindustani", category: "Hindustani", previewDuration: 8 },
+  { value: "surbahar_sitar", label: "Surbahar Sitar", tradition: "Hindustani", category: "Hindustani", previewDuration: 8 },
+  // Carnatic Instruments (no previews specified, but keeping structure)
+  { value: "veena", label: "Veena", tradition: "Carnatic", category: "Carnatic", previewDuration: 8 },
+  { value: "mridangam", label: "Mridangam", tradition: "Carnatic", category: "Carnatic", previewDuration: 6 },
+  { value: "ghatam", label: "Ghatam", tradition: "Carnatic", category: "Carnatic", previewDuration: 6 },
+  { value: "kanjira", label: "Kanjira", tradition: "Carnatic", category: "Carnatic", previewDuration: 6 },
+  { value: "morsing", label: "Morsing (Jaw Harp)", tradition: "Carnatic", category: "Carnatic", previewDuration: 6 },
+  { value: "nadaswaram", label: "Nadaswaram", tradition: "Carnatic", category: "Carnatic", previewDuration: 6 },
+  { value: "thavil", label: "Thavil", tradition: "Carnatic", category: "Carnatic", previewDuration: 6 },
+  { value: "gottuvadhyam", label: "Gottuvadhyam (Chitravina)", tradition: "Carnatic", category: "Carnatic", previewDuration: 8 },
+  { value: "venu", label: "Venu (Carnatic Flute)", tradition: "Carnatic", category: "Carnatic", previewDuration: 6 },
+  { value: "nagaswaram", label: "Nagaswaram", tradition: "Carnatic", category: "Carnatic", previewDuration: 6 },
+  { value: "tavil", label: "Tavil", tradition: "Carnatic", category: "Carnatic", previewDuration: 6 },
+  { value: "udukkai", label: "Udukkai", tradition: "Carnatic", category: "Carnatic", previewDuration: 6 },
+  { value: "pambai", label: "Pambai", tradition: "Carnatic", category: "Carnatic", previewDuration: 6 },
   // Instruments Used in Both Traditions
-  { value: "violin", label: "Violin", tradition: "Both" },
-  { value: "tanpura", label: "Tanpura", tradition: "Both" },
-  { value: "flute", label: "Flute (Generic)", tradition: "Both" },
-  { value: "harmonium_both", label: "Harmonium (Both)", tradition: "Both" },
-  { value: "santoor_both", label: "Santoor (Both)", tradition: "Both" },
-  { value: "guitar", label: "Guitar (Fusion)", tradition: "Both" },
-  { value: "piano", label: "Piano (Fusion)", tradition: "Both" },
-  { value: "keyboard", label: "Keyboard (Fusion)", tradition: "Both" },
-  { value: "cello", label: "Cello (Fusion)", tradition: "Both" },
-  { value: "double_bass", label: "Double Bass (Fusion)", tradition: "Both" },
+  { value: "violin", label: "Violin", tradition: "Both", category: "Both", previewDuration: 6 },
+  { value: "tanpura", label: "Tanpura", tradition: "Both", category: "Both", previewDuration: 10 },
+  { value: "flute", label: "Flute (Generic)", tradition: "Both", category: "Both", previewDuration: 6 },
+  { value: "harmonium_both", label: "Harmonium (Both)", tradition: "Both", category: "Both", previewDuration: 7 },
+  { value: "santoor_both", label: "Santoor (Both)", tradition: "Both", category: "Both", previewDuration: 8 },
+  // Fusion/Modern Instruments
+  { value: "guitar", label: "Guitar", tradition: "Both", category: "Fusion", previewDuration: 6 },
+  { value: "piano", label: "Piano", tradition: "Both", category: "Fusion", previewDuration: 7 },
+  { value: "keyboard", label: "Keyboard", tradition: "Both", category: "Fusion", previewDuration: 6 },
+  { value: "cello", label: "Cello", tradition: "Both", category: "Fusion", previewDuration: 8 },
+  { value: "double_bass", label: "Double Bass", tradition: "Both", category: "Fusion", previewDuration: 7 },
 ];
 
 const MOODS = [
@@ -222,6 +278,11 @@ export default function Generator() {
   const [currentStep, setCurrentStep] = useState<number>(0);
   const [preferencesLoaded, setPreferencesLoaded] = useState<boolean>(false);
   const [isChatOpen, setIsChatOpen] = useState<boolean>(false);
+  
+  // Instrument preview state
+  const [previewingInstrument, setPreviewingInstrument] = useState<string | null>(null);
+  const previewAudioRef = useRef<HTMLAudioElement | null>(null);
+  const previewTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // Load user preferences from Firebase on mount
   useEffect(() => {
@@ -763,12 +824,215 @@ export default function Generator() {
   });
 
   const toggleInstrument = (instrument: string) => {
+    const wasSelected = selectedInstruments.includes(instrument);
     setSelectedInstruments((prev) =>
-      prev.includes(instrument)
+      wasSelected
         ? prev.filter((i) => i !== instrument)
         : [...prev, instrument]
     );
+    
+    // Auto-play preview when instrument is selected (not when deselected)
+    if (!wasSelected) {
+      const previewUrl = getInstrumentPreviewUrl(instrument);
+      if (previewUrl) {
+        // Small delay to ensure state update completes
+        setTimeout(() => {
+          playInstrumentPreview(instrument);
+        }, 100);
+      }
+    }
   };
+
+  // Play instrument preview
+  const playInstrumentPreview = (instrumentValue: string) => {
+    console.log(`[Preview] Attempting to play preview for: ${instrumentValue}`);
+    
+    // Stop any currently playing preview gracefully
+    if (previewAudioRef.current) {
+      try {
+        // Remove all event listeners to prevent errors
+        previewAudioRef.current.onended = null;
+        previewAudioRef.current.onerror = null;
+        previewAudioRef.current.onabort = null;
+        previewAudioRef.current.onloadstart = null;
+        previewAudioRef.current.onstalled = null;
+        previewAudioRef.current.onloadeddata = null;
+        previewAudioRef.current.oncanplay = null;
+        
+        // Pause and reset
+        if (!previewAudioRef.current.paused) {
+          previewAudioRef.current.pause();
+        }
+        previewAudioRef.current.currentTime = 0;
+        previewAudioRef.current.src = ""; // Clear source to allow new audio
+        previewAudioRef.current.load(); // Reset the audio element
+      } catch (error) {
+        console.warn(`[Preview] Error cleaning up previous audio:`, error);
+      }
+    }
+    
+    // Clear any existing timeout
+    if (previewTimeoutRef.current) {
+      clearTimeout(previewTimeoutRef.current);
+      previewTimeoutRef.current = null;
+    }
+
+    const previewUrl = getInstrumentPreviewUrl(instrumentValue);
+    if (!previewUrl) {
+      console.warn(`[Preview] No preview URL found for: ${instrumentValue}`);
+      toast({
+        title: "Preview Not Available",
+        description: `No preview available for ${instrumentValue}`,
+        variant: "info",
+      });
+      return;
+    }
+
+    console.log(`[Preview] Preview URL: ${previewUrl}`);
+
+    const instrument = INSTRUMENTS.find((i) => i.value === instrumentValue);
+    const previewDuration = (instrument?.previewDuration || 7) * 1000; // Convert to milliseconds
+
+    // Set the previewing instrument
+    setPreviewingInstrument(instrumentValue);
+
+    // Create new audio element for each preview to avoid conflicts
+    const audio = new Audio();
+    previewAudioRef.current = audio;
+    
+    audio.src = previewUrl;
+    audio.volume = 0.7; // Set volume to 70%
+    audio.preload = "auto"; // Preload the audio
+
+    // Handle audio loaded
+    audio.onloadeddata = () => {
+      console.log(`[Preview] Audio loaded for: ${instrumentValue}`);
+    };
+
+    // Handle audio can play
+    audio.oncanplay = () => {
+      console.log(`[Preview] Audio can play for: ${instrumentValue}`);
+    };
+
+    // Play the preview
+    const playPromise = audio.play();
+    
+    if (playPromise !== undefined) {
+      playPromise
+        .then(() => {
+          console.log(`[Preview] Successfully started playing: ${instrumentValue}`);
+          // Show brief success feedback (optional - can be removed if too intrusive)
+          // toast({
+          //   title: "Playing Preview",
+          //   description: `Playing ${instrument.label || instrumentValue} preview...`,
+          //   duration: 2000,
+          // });
+          
+          // Auto-stop after preview duration
+          previewTimeoutRef.current = setTimeout(() => {
+            if (audio && !audio.paused) {
+              audio.pause();
+              audio.currentTime = 0;
+            }
+            setPreviewingInstrument(null);
+            console.log(`[Preview] Auto-stopped after duration: ${instrumentValue}`);
+          }, previewDuration);
+        })
+        .catch((error) => {
+          console.error(`[Preview] Could not play preview for ${instrumentValue}:`, error);
+          console.error(`[Preview] Error details:`, {
+            name: error.name,
+            message: error.message,
+            stack: error.stack,
+          });
+          setPreviewingInstrument(null);
+          
+          // Provide helpful error message based on error type
+          let errorMessage = "Please try again.";
+          if (error.name === "NotAllowedError") {
+            errorMessage = "Browser blocked autoplay. Please interact with the page first, then try again.";
+          } else if (error.name === "NotSupportedError") {
+            errorMessage = "Audio format not supported by your browser.";
+          } else if (error.message?.includes("404") || error.message?.includes("Failed to load")) {
+            errorMessage = "Audio file not found. The preview may be missing.";
+          }
+          
+          toast({
+            title: "Preview Playback Failed",
+            description: `Could not play preview for ${instrument.label || instrumentValue}. ${errorMessage}`,
+            variant: "destructive",
+          });
+        });
+    } else {
+      // Fallback for browsers that don't return a promise
+      console.log(`[Preview] Playing (no promise returned) for: ${instrumentValue}`);
+      
+      // Auto-stop after preview duration
+      previewTimeoutRef.current = setTimeout(() => {
+        if (audio && !audio.paused) {
+          audio.pause();
+          audio.currentTime = 0;
+        }
+        setPreviewingInstrument(null);
+        console.log(`[Preview] Auto-stopped after duration: ${instrumentValue}`);
+      }, previewDuration);
+    }
+
+    // Handle audio end event
+    audio.onended = () => {
+      console.log(`[Preview] Audio ended for: ${instrumentValue}`);
+      setPreviewingInstrument(null);
+      if (previewTimeoutRef.current) {
+        clearTimeout(previewTimeoutRef.current);
+      }
+    };
+
+    // Handle audio errors
+    audio.onerror = (error) => {
+      console.error(`[Preview] Audio error for ${instrumentValue}:`, error);
+      console.error(`[Preview] Audio error details:`, {
+        code: audio.error?.code,
+        message: audio.error?.message,
+        src: audio.src,
+      });
+      setPreviewingInstrument(null);
+      if (previewTimeoutRef.current) {
+        clearTimeout(previewTimeoutRef.current);
+      }
+      toast({
+        title: "Preview Error",
+        description: `Failed to load preview for ${instrument.label || instrumentValue}. The audio file may be missing or corrupted.`,
+        variant: "destructive",
+      });
+    };
+
+    // Handle loading errors
+    audio.onloadstart = () => {
+      console.log(`[Preview] Loading started for: ${instrumentValue}`);
+    };
+
+    audio.onstalled = () => {
+      console.warn(`[Preview] Audio stalled for: ${instrumentValue}`);
+    };
+
+    audio.onabort = () => {
+      console.warn(`[Preview] Audio aborted for: ${instrumentValue}`);
+      setPreviewingInstrument(null);
+    };
+  };
+
+  // Cleanup preview on unmount
+  useEffect(() => {
+    return () => {
+      if (previewAudioRef.current) {
+        previewAudioRef.current.pause();
+        previewAudioRef.current = null;
+      }
+      if (previewTimeoutRef.current) {
+        clearTimeout(previewTimeoutRef.current);
+      }
+    };
+  }, []);
 
   const handleGenerate = () => {
     // Validate generation mode is selected
@@ -1450,22 +1714,45 @@ export default function Generator() {
                   </p>
                 )}
                   <div className="grid grid-cols-2 md:grid-cols-3 gap-3 max-h-[500px] overflow-y-auto p-2">
-                  {filteredInstruments.map((instrument) => (
-                    <Button
-                      key={instrument.value}
-                      variant={selectedInstruments.includes(instrument.value) ? "default" : "outline"}
-                      size="sm"
-                      onClick={() => toggleInstrument(instrument.value)}
-                      className="justify-start h-auto py-3 px-4"
-                      data-testid={`button-instrument-${instrument.value}`}
-                    >
-                      <div className="text-left">
-                        <div className="font-medium text-sm">{instrument.label}</div>
-                        <div className="text-xs opacity-80">{instrument.tradition}</div>
+                  {filteredInstruments.map((instrument) => {
+                    const isSelected = selectedInstruments.includes(instrument.value);
+                    const isPreviewing = previewingInstrument === instrument.value;
+                    const hasPreview = getInstrumentPreviewUrl(instrument.value) !== null;
+                    
+                    return (
+                      <div key={instrument.value} className="relative">
+                        <Button
+                          variant={isSelected ? "default" : "outline"}
+                          size="sm"
+                          onClick={() => toggleInstrument(instrument.value)}
+                          className="justify-start h-auto py-3 px-4 w-full relative"
+                          data-testid={`button-instrument-${instrument.value}`}
+                        >
+                          <div className="text-left flex-1">
+                            <div className="font-medium text-sm flex items-center gap-2">
+                              {instrument.label}
+                              {hasPreview && isPreviewing && (
+                                <Loader2 className="w-3 h-3 animate-spin ml-auto" />
+                              )}
+                            </div>
+                            <div className="text-xs opacity-80">{instrument.tradition}</div>
+                          </div>
+                        </Button>
+                        {isPreviewing && (
+                          <div className="absolute inset-0 bg-primary/10 rounded-md pointer-events-none flex items-center justify-center border-2 border-primary/30">
+                            <div className="flex items-center gap-2 text-xs text-primary font-medium bg-background/90 px-2 py-1 rounded">
+                              <Loader2 className="w-3 h-3 animate-spin" />
+                              <span>Playing preview...</span>
+                            </div>
+                          </div>
+                        )}
                       </div>
-                    </Button>
-                  ))}
+                    );
+                  })}
                 </div>
+                <p className="text-xs text-muted-foreground mt-3 text-center">
+                  💡 Preview plays automatically when you select an instrument (5-10 seconds)
+                </p>
                   {selectedInstruments.length > 0 && (
                     <div className="mt-4 p-3 bg-muted rounded-lg">
                       <p className="text-sm font-medium mb-2">Selected ({selectedInstruments.length}):</p>

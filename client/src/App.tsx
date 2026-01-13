@@ -7,6 +7,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { Layout } from "@/components/Layout";
 import { SplashScreen } from "@/components/SplashScreen";
 import { AuthProvider } from "@/contexts/AuthContext";
+import { HoroscopeProvider } from "@/contexts/HoroscopeContext";
 import { DashboardRouter } from "@/components/dashboard/DashboardRouter";
 import { AdminRouter } from "@/components/admin/AdminRouter";
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
@@ -66,6 +67,8 @@ function Router() {
       <Route path="/dashboard" component={DashboardRouter} />
       <Route path="/dashboard/generate" component={DashboardRouter} />
       <Route path="/dashboard/library" component={DashboardRouter} />
+      <Route path="/dashboard/horoscope" component={DashboardRouter} />
+      <Route path="/dashboard/music-therapy" component={DashboardRouter} />
       <Route path="/dashboard/profile" component={DashboardRouter} />
       <Route path="/dashboard/upgrade" component={DashboardRouter} />
 
@@ -81,14 +84,16 @@ function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <AuthProvider>
-      <TooltipProvider>
-        {showSplash ? (
-          <SplashScreen onComplete={() => setShowSplash(false)} />
-        ) : (
-            <Router />
-        )}
-        <Toaster />
-      </TooltipProvider>
+        <HoroscopeProvider>
+          <TooltipProvider>
+            {showSplash ? (
+              <SplashScreen onComplete={() => setShowSplash(false)} />
+            ) : (
+                <Router />
+            )}
+            <Toaster />
+          </TooltipProvider>
+        </HoroscopeProvider>
       </AuthProvider>
     </QueryClientProvider>
   );
