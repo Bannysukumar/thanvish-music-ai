@@ -1,23 +1,76 @@
+import { useEffect, useState } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Crown, Check, Sparkles, Zap, Shield } from "lucide-react";
+import { Crown, Check, Sparkles, Zap, Shield, Loader2 } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
 
-/**
- * Feature list for upgrade plans
- */
-const features = [
-  "Unlimited music generation",
-  "High-quality audio exports",
-  "Advanced raga and tala options",
-  "Priority support",
-  "Cloud storage for compositions",
-  "Commercial usage rights",
-];
+interface UpgradePlan {
+  id: string;
+  name: string;
+  price: number;
+  duration: number;
+  features: string[];
+  role: string;
+}
 
 /**
  * DashboardUpgrade component - upgrade/subscription page
  */
 export default function DashboardUpgrade() {
+  const { toast } = useToast();
+  const [plans, setPlans] = useState<UpgradePlan[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    fetchUpgradePlans();
+  }, []);
+
+  const fetchUpgradePlans = async () => {
+    try {
+      const response = await fetch("/api/upgrade-plans");
+      
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ error: "Failed to fetch plans" }));
+        throw new Error(errorData.error || errorData.details || "Failed to fetch plans");
+      }
+      
+      const data = await response.json();
+      setPlans(data.plans || []);
+    } catch (error: any) {
+      console.error("Error fetching upgrade plans:", error);
+      toast({
+        title: "Error",
+        description: error.message || "Failed to load upgrade plans",
+        variant: "destructive",
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const formatPrice = (price: number) => {
+    if (price === 0) return "Free";
+    return `$${price.toFixed(2)}`;
+  };
+
+  const formatDuration = (days: number) => {
+    if (days === 30) return "month";
+    if (days === 365) return "year";
+    if (days % 30 === 0) return `${days / 30} months`;
+    return `${days} days`;
+  };
+
+  const getRoleLabel = (role: string) => {
+    const roleMap: Record<string, string> = {
+      music_teacher: "Music Teacher",
+      artist: "Artist",
+      music_director: "Music Director",
+      doctor: "Doctor",
+      astrologer: "Astrologer",
+    };
+    return roleMap[role] || role;
+  };
+
   return (
     <div className="space-y-6">
       {/* Page title */}
@@ -29,108 +82,85 @@ export default function DashboardUpgrade() {
       </div>
 
       {/* Pricing plans */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {/* Free Plan */}
+      {isLoading ? (
+        <div className="flex justify-center items-center py-12">
+          <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+        </div>
+      ) : plans.length === 0 ? (
         <Card>
-          <CardHeader>
-            <CardTitle>Free</CardTitle>
-            <CardDescription>Perfect for getting started</CardDescription>
-            <div className="mt-4">
-              <span className="text-3xl font-bold">$0</span>
-              <span className="text-muted-foreground">/month</span>
-            </div>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <ul className="space-y-2">
-              <li className="flex items-center gap-2 text-sm">
-                <Check className="h-4 w-4 text-green-600" />
-                <span>5 compositions per month</span>
-              </li>
-              <li className="flex items-center gap-2 text-sm">
-                <Check className="h-4 w-4 text-green-600" />
-                <span>Standard quality audio</span>
-              </li>
-              <li className="flex items-center gap-2 text-sm">
-                <Check className="h-4 w-4 text-green-600" />
-                <span>Basic raga and tala options</span>
-              </li>
-            </ul>
-            <Button variant="outline" className="w-full" disabled>
-              Current Plan
-            </Button>
+          <CardContent className="py-12 text-center text-muted-foreground">
+            <p>No upgrade plans available at the moment.</p>
           </CardContent>
         </Card>
-
-        {/* Pro Plan */}
-        <Card className="border-primary border-2 relative">
-          <div className="absolute -top-3 left-1/2 transform -translate-x-1/2">
-            <span className="bg-primary text-primary-foreground px-3 py-1 rounded-full text-xs font-semibold">
-              POPULAR
-            </span>
-          </div>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Crown className="h-5 w-5 text-primary" />
-              Pro
-            </CardTitle>
-            <CardDescription>For serious musicians</CardDescription>
-            <div className="mt-4">
-              <span className="text-3xl font-bold">$9.99</span>
-              <span className="text-muted-foreground">/month</span>
-            </div>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <ul className="space-y-2">
-              {features.map((feature, index) => (
-                <li key={index} className="flex items-center gap-2 text-sm">
-                  <Check className="h-4 w-4 text-green-600" />
-                  <span>{feature}</span>
-                </li>
-              ))}
-            </ul>
-            <Button className="w-full">
-              <Sparkles className="mr-2 h-4 w-4" />
-              Upgrade to Pro
-            </Button>
-          </CardContent>
-        </Card>
-
-        {/* Enterprise Plan */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Shield className="h-5 w-5" />
-              Enterprise
-            </CardTitle>
-            <CardDescription>For organizations</CardDescription>
-            <div className="mt-4">
-              <span className="text-3xl font-bold">Custom</span>
-            </div>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <ul className="space-y-2">
-              {features.map((feature, index) => (
-                <li key={index} className="flex items-center gap-2 text-sm">
-                  <Check className="h-4 w-4 text-green-600" />
-                  <span>{feature}</span>
-                </li>
-              ))}
-              <li className="flex items-center gap-2 text-sm">
-                <Check className="h-4 w-4 text-green-600" />
-                <span>Custom integrations</span>
-              </li>
-              <li className="flex items-center gap-2 text-sm">
-                <Check className="h-4 w-4 text-green-600" />
-                <span>Dedicated support</span>
-              </li>
-            </ul>
-            <Button variant="outline" className="w-full">
-              <Zap className="mr-2 h-4 w-4" />
-              Contact Sales
-            </Button>
-          </CardContent>
-        </Card>
-      </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {plans.map((plan, index) => (
+            <Card
+              key={plan.id}
+              className={index === 1 ? "border-primary border-2 relative" : ""}
+            >
+              {index === 1 && (
+                <div className="absolute -top-3 left-1/2 transform -translate-x-1/2">
+                  <span className="bg-primary text-primary-foreground px-3 py-1 rounded-full text-xs font-semibold">
+                    POPULAR
+                  </span>
+                </div>
+              )}
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  {index === 1 && <Crown className="h-5 w-5 text-primary" />}
+                  {index === plans.length - 1 && <Shield className="h-5 w-5" />}
+                  {plan.name}
+                </CardTitle>
+                <CardDescription>
+                  {getRoleLabel(plan.role)} Plan
+                </CardDescription>
+                <div className="mt-4">
+                  <span className="text-3xl font-bold">
+                    {formatPrice(plan.price)}
+                  </span>
+                  {plan.price > 0 && (
+                    <span className="text-muted-foreground">/{formatDuration(plan.duration)}</span>
+                  )}
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <ul className="space-y-2">
+                  {plan.features.length > 0 ? (
+                    plan.features.map((feature, idx) => (
+                      <li key={idx} className="flex items-center gap-2 text-sm">
+                        <Check className="h-4 w-4 text-green-600" />
+                        <span>{feature}</span>
+                      </li>
+                    ))
+                  ) : (
+                    <li className="text-sm text-muted-foreground">No features listed</li>
+                  )}
+                </ul>
+                <Button
+                  className={index === 1 ? "w-full" : "w-full"}
+                  variant={index === 1 ? "default" : "outline"}
+                  onClick={() => {
+                    // Navigate to upgrade page or handle purchase
+                    if (plan.price > 0) {
+                      window.location.href = "/dashboard/upgrade";
+                    }
+                  }}
+                >
+                  {plan.price === 0 ? (
+                    "Current Plan"
+                  ) : (
+                    <>
+                      <Sparkles className="mr-2 h-4 w-4" />
+                      {index === plans.length - 1 ? "Buy Now" : `Upgrade to ${plan.name}`}
+                    </>
+                  )}
+                </Button>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      )}
 
       {/* Feature comparison */}
       <Card>

@@ -455,6 +455,14 @@ service cloud.firestore {
       // Admins can read all student settings
       allow read: if isAdmin();
     }
+
+    // Subscription Plans collection
+    match /subscriptionPlans/{planId} {
+      // Public read access for plans marked for upgrade page
+      allow read: if resource.data.displayOnUpgradePage == true;
+      // Admins can read/write all plans
+      allow read, write: if isAdmin();
+    }
     
     // Default: deny all other collections
     match /{document=**} {

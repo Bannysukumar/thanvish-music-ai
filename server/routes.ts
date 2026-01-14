@@ -1631,30 +1631,50 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       
       const snapshot = await query.get();
-      const plans = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data(),
-        createdAt: doc.data().createdAt?.toDate?.()?.toISOString(),
-        updatedAt: doc.data().updatedAt?.toDate?.()?.toISOString(),
-      }));
+      const plans = snapshot.docs.map(doc => {
+        const data = doc.data();
+        return {
+          id: doc.id,
+          ...data,
+          createdAt: data.createdAt?.toDate?.()?.toISOString(),
+          updatedAt: data.updatedAt?.toDate?.()?.toISOString(),
+        };
+      });
       
       res.json({ plans });
     } catch (error: any) {
       console.error("Error fetching subscription plans:", error);
-      res.status(500).json({ error: "Failed to fetch subscription plans" });
+      console.error("Error details:", {
+        message: error.message,
+        code: error.code,
+        stack: error.stack,
+      });
+      
+      // Check if it's a Firestore index error
+      if (error.code === 9 || error.message?.includes("index")) {
+        return res.status(400).json({ 
+          error: "Firestore index required. Please create the index in Firebase Console.",
+          details: error.message 
+        });
+      }
+      
+      res.status(500).json({ 
+        error: "Failed to fetch subscription plans",
+        details: error.message 
+      });
     }
   });
 
   // Create subscription plan
   app.post("/api/admin/subscription-plans", requireAdmin, async (req, res) => {
     try {
-      const { role, name, price, duration, features, usageLimits } = req.body;
+      const { role, name, price, duration, features, usageLimits, displayOnUpgradePage } = req.body;
       
       if (!role || !name || price === undefined || !duration) {
         return res.status(400).json({ error: "Role, name, price, and duration are required" });
       }
       
-      if (!["music_teacher", "artist", "music_director", "doctor", "astrologer"].includes(role)) {
+      if (!["user", "music_teacher", "artist", "music_director", "doctor", "astrologer"].includes(role)) {
         return res.status(400).json({ error: "Invalid role for subscription plan" });
       }
       
@@ -1665,6 +1685,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         duration: parseInt(duration), // days
         features: Array.isArray(features) ? features : [],
         usageLimits: usageLimits || {},
+        displayOnUpgradePage: displayOnUpgradePage === true,
         createdAt: admin.firestore.FieldValue.serverTimestamp(),
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       };
@@ -1686,7 +1707,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.put("/api/admin/subscription-plans/:planId", requireAdmin, async (req, res) => {
     try {
       const { planId } = req.params;
-      const { name, price, duration, features, usageLimits } = req.body;
+      const { name, price, duration, features, usageLimits, displayOnUpgradePage } = req.body;
       
       const planRef = adminDb.collection("subscriptionPlans").doc(planId);
       const planDoc = await planRef.get();
@@ -1704,6 +1725,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (duration !== undefined) updateData.duration = parseInt(duration);
       if (features !== undefined) updateData.features = Array.isArray(features) ? features : [];
       if (usageLimits !== undefined) updateData.usageLimits = usageLimits;
+      if (displayOnUpgradePage !== undefined) updateData.displayOnUpgradePage = displayOnUpgradePage === true;
       
       await planRef.update(updateData);
       
@@ -1725,6 +1747,59 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error: any) {
       console.error("Error deleting subscription plan:", error);
       res.status(500).json({ error: "Failed to delete subscription plan" });
+    }
+  });
+
+  // Public endpoint to get upgrade page plans
+  app.get("/api/upgrade-plans", async (req, res) => {
+    try {
+      let snapshot;
+      
+      // Try to fetch with filter first
+      try {
+        snapshot = await adminDb
+          .collection("subscriptionPlans")
+          .where("displayOnUpgradePage", "==", true)
+          .get();
+      } catch (filterError: any) {
+        // If filter query fails (e.g., index missing), fetch all and filter in memory
+        console.warn("Filter query failed, fetching all plans:", filterError.message);
+        snapshot = await adminDb
+          .collection("subscriptionPlans")
+          .get();
+      }
+      
+      const allPlans = snapshot.docs.map(doc => {
+        const data = doc.data();
+        return {
+          id: doc.id,
+          ...data,
+          price: data.price || 0,
+          displayOnUpgradePage: data.displayOnUpgradePage || false,
+          createdAt: data.createdAt?.toDate?.()?.toISOString(),
+          updatedAt: data.updatedAt?.toDate?.()?.toISOString(),
+        };
+      });
+      
+      // Filter plans that should be displayed on upgrade page
+      const plans = allPlans.filter(plan => plan.displayOnUpgradePage === true);
+      
+      // Sort by price in memory (ascending)
+      plans.sort((a, b) => (a.price || 0) - (b.price || 0));
+      
+      res.json({ plans });
+    } catch (error: any) {
+      console.error("Error fetching upgrade plans:", error);
+      console.error("Error details:", {
+        message: error.message,
+        code: error.code,
+        details: error.details,
+      });
+      
+      res.status(500).json({ 
+        error: "Failed to fetch upgrade plans",
+        details: error.message || error.details || "Unknown error"
+      });
     }
   });
 

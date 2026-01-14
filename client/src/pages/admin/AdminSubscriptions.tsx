@@ -8,6 +8,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
+import { Checkbox } from "@/components/ui/checkbox";
 import { CreditCard, Plus, Edit, Trash2, CheckCircle, XCircle, Clock, X } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
@@ -18,6 +19,7 @@ interface SubscriptionPlan {
   price: number;
   duration: number; // days
   features: string[];
+  displayOnUpgradePage?: boolean;
   usageLimits?: {
     dailyGenerations?: number;
     monthlyGenerations?: number;
@@ -38,6 +40,7 @@ export default function AdminSubscriptions() {
     duration: "",
     features: [] as string[],
     newFeature: "",
+    displayOnUpgradePage: false,
     usageLimits: {
       dailyGenerations: "",
       monthlyGenerations: "",
@@ -51,7 +54,10 @@ export default function AdminSubscriptions() {
   const fetchPlans = async () => {
     try {
       const sessionId = localStorage.getItem("adminSession");
-      if (!sessionId) return;
+      if (!sessionId) {
+        setIsLoading(false);
+        return;
+      }
 
       const response = await fetch("/api/admin/subscription-plans", {
         headers: {
@@ -59,15 +65,18 @@ export default function AdminSubscriptions() {
         },
       });
 
-      if (!response.ok) throw new Error("Failed to fetch plans");
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ error: "Failed to fetch plans" }));
+        throw new Error(errorData.error || errorData.details || "Failed to fetch plans");
+      }
 
       const data = await response.json();
       setPlans(data.plans || []);
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error fetching plans:", error);
       toast({
         title: "Error",
-        description: "Failed to fetch subscription plans",
+        description: error.message || "Failed to fetch subscription plans",
         variant: "destructive",
       });
     } finally {
@@ -76,6 +85,7 @@ export default function AdminSubscriptions() {
   };
 
   const roles = [
+    { value: "user", label: "User" },
     { value: "music_teacher", label: "Music Teacher" },
     { value: "artist", label: "Artist" },
     { value: "music_director", label: "Music Director" },
@@ -93,6 +103,7 @@ export default function AdminSubscriptions() {
         duration: plan.duration.toString(),
         features: plan.features || [],
         newFeature: "",
+        displayOnUpgradePage: plan.displayOnUpgradePage || false,
         usageLimits: {
           dailyGenerations: plan.usageLimits?.dailyGenerations?.toString() || "",
           monthlyGenerations: plan.usageLimits?.monthlyGenerations?.toString() || "",
@@ -107,6 +118,7 @@ export default function AdminSubscriptions() {
         duration: "",
         features: [],
         newFeature: "",
+        displayOnUpgradePage: false,
         usageLimits: {
           dailyGenerations: "",
           monthlyGenerations: "",
@@ -162,6 +174,7 @@ export default function AdminSubscriptions() {
         price: parseFloat(planFormData.price),
         duration: parseInt(planFormData.duration),
         features: planFormData.features,
+        displayOnUpgradePage: planFormData.displayOnUpgradePage,
         usageLimits: {
           dailyGenerations: planFormData.usageLimits.dailyGenerations ? parseInt(planFormData.usageLimits.dailyGenerations) : undefined,
           monthlyGenerations: planFormData.usageLimits.monthlyGenerations ? parseInt(planFormData.usageLimits.monthlyGenerations) : undefined,
@@ -312,21 +325,28 @@ export default function AdminSubscriptions() {
                               </div>
                             </TableCell>
                             <TableCell>
-                              <div className="flex gap-2">
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  onClick={() => handleOpenPlanModal(plan)}
-                                >
-                                  <Edit className="h-4 w-4" />
-                                </Button>
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  onClick={() => handleDeletePlan(plan.id)}
-                                >
-                                  <Trash2 className="h-4 w-4" />
-                                </Button>
+                              <div className="flex items-center gap-2">
+                                {plan.displayOnUpgradePage && (
+                                  <Badge variant="secondary" className="text-xs">
+                                    On Upgrade Page
+                                  </Badge>
+                                )}
+                                <div className="flex gap-2">
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    onClick={() => handleOpenPlanModal(plan)}
+                                  >
+                                    <Edit className="h-4 w-4" />
+                                  </Button>
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    onClick={() => handleDeletePlan(plan.id)}
+                                  >
+                                    <Trash2 className="h-4 w-4" />
+                                  </Button>
+                                </div>
                               </div>
                             </TableCell>
                           </TableRow>
@@ -475,6 +495,22 @@ export default function AdminSubscriptions() {
                   ))}
                 </div>
               )}
+            </div>
+
+            <div className="flex items-center space-x-2">
+              <Checkbox
+                id="displayOnUpgradePage"
+                checked={planFormData.displayOnUpgradePage}
+                onCheckedChange={(checked) =>
+                  setPlanFormData({
+                    ...planFormData,
+                    displayOnUpgradePage: checked === true,
+                  })
+                }
+              />
+              <Label htmlFor="displayOnUpgradePage" className="cursor-pointer">
+                Display on Upgrade Page
+              </Label>
             </div>
 
             <div className="space-y-2">
