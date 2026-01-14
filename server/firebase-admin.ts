@@ -9,14 +9,27 @@ try {
     console.log("Firebase Admin SDK already initialized");
   } else {
     // Option 1: Try to load from service account JSON file
-    const serviceAccountPath = path.join(process.cwd(), "thanvishmusic-firebase-adminsdk-fbsvc-5fcff680e0.json");
+    // Try multiple possible filenames
+    const possiblePaths = [
+      path.join(process.cwd(), "thanvishmusic-firebase-adminsdk-fbsvc-589edaa25b.json"),
+      path.join(process.cwd(), "thanvishmusic-firebase-adminsdk-fbsvc-5fcff680e0.json"),
+      path.join(process.cwd(), "firebase-adminsdk.json"),
+    ];
     
-    if (fs.existsSync(serviceAccountPath)) {
+    let serviceAccountPath: string | null = null;
+    for (const possiblePath of possiblePaths) {
+      if (fs.existsSync(possiblePath)) {
+        serviceAccountPath = possiblePath;
+        break;
+      }
+    }
+    
+    if (serviceAccountPath) {
       const serviceAccount = JSON.parse(fs.readFileSync(serviceAccountPath, "utf8"));
       admin.initializeApp({
         credential: admin.credential.cert(serviceAccount),
       });
-      console.log("Firebase Admin SDK initialized from service account file");
+      console.log(`Firebase Admin SDK initialized from service account file: ${path.basename(serviceAccountPath)}`);
     } else {
       // Option 2: Use service account JSON from environment variable
       const serviceAccountJson = process.env.FIREBASE_SERVICE_ACCOUNT;

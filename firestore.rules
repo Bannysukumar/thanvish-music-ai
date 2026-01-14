@@ -1,0 +1,465 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+    
+    function getUserData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+    
+    function isAdmin() {
+      return isAuthenticated() && 
+             exists(/databases/$(database)/documents/admins/$(request.auth.uid)) &&
+             get(/databases/$(database)/documents/admins/$(request.auth.uid)).data.isAdmin == true;
+    }
+    
+    function isMusicTeacher() {
+      return isAuthenticated() && 
+             getUserData().role == 'music_teacher';
+    }
+    
+    function isArtist() {
+      return isAuthenticated() && 
+             getUserData().role == 'artist';
+    }
+    
+    function isMusicDirector() {
+      return isAuthenticated() && 
+             getUserData().role == 'music_director';
+    }
+    
+    function isDoctor() {
+      return isAuthenticated() && 
+             getUserData().role == 'doctor';
+    }
+    
+    function isAstrologer() {
+      return isAuthenticated() && 
+             getUserData().role == 'astrologer';
+    }
+    
+    function hasActiveSubscription() {
+      let userData = getUserData();
+      return userData.subscriptionStatus == 'active' || 
+             userData.subscriptionStatus == 'trial';
+    }
+    
+    function isTeacherWithAccess() {
+      return isMusicTeacher() && 
+             (!getUserData().teacherSubscriptionRequired || hasActiveSubscription());
+    }
+    
+    function isArtistWithAccess() {
+      return isArtist() && hasActiveSubscription();
+    }
+    
+    function isDirectorWithAccess() {
+      return isMusicDirector() && hasActiveSubscription();
+    }
+    
+    function isDoctorWithAccess() {
+      return isDoctor() && hasActiveSubscription();
+    }
+    
+    function isAstrologerWithAccess() {
+      return isAstrologer() && hasActiveSubscription();
+    }
+    
+    function isStudent() {
+      return isAuthenticated() && 
+             getUserData().role == 'student';
+    }
+    
+    // Users collection
+    match /users/{userId} {
+      // Users can read their own profile
+      allow read: if isOwner(userId);
+      
+      // Directors can read artist profiles (for discovery) - allow if role is artist
+      allow read: if isMusicDirector() && resource.data.role == 'artist';
+      // Doctors can read artist profiles (for discovery)
+      allow read: if isDoctor() && resource.data.role == 'artist';
+      // Astrologers can read artist profiles (for discovery)
+      allow read: if isAstrologer() && resource.data.role == 'artist';
+      // Students can read teacher profiles (for course enrollment)
+      allow read: if isStudent() && resource.data.role == 'music_teacher';
+      
+      // Users can update their own profile (limited fields)
+      // Prevent users from changing role or subscriptionStatus (admin only)
+      allow update: if isOwner(userId) && 
+        request.resource.data.role == resource.data.role &&
+        request.resource.data.subscriptionStatus == resource.data.subscriptionStatus;
+      
+      // Admins can read all users
+      allow read: if isAdmin();
+      
+      // Only server (via Admin SDK) can create/update role and subscription
+      // This is handled server-side, so we deny client-side writes to these fields
+    }
+    
+    // Courses collection
+    match /courses/{courseId} {
+      // Teachers can read their own courses
+      // Students can read live courses
+      allow read: if isAuthenticated() && 
+        (resource.data.teacherId == request.auth.uid || 
+         resource.data.status == 'live' ||
+         isStudent());
+      
+      // Teachers can create courses (if they have subscription access)
+      allow create: if isTeacherWithAccess() && 
+        request.resource.data.teacherId == request.auth.uid;
+      
+      // Teachers can update their own courses
+      allow update: if isTeacherWithAccess() && 
+        resource.data.teacherId == request.auth.uid &&
+        request.resource.data.teacherId == resource.data.teacherId;
+      
+      // Teachers can delete their own courses
+      allow delete: if isTeacherWithAccess() && 
+        resource.data.teacherId == request.auth.uid;
+      
+      // Admins can read all courses
+      allow read: if isAdmin();
+    }
+    
+    // Enrollments collection
+    match /enrollments/{enrollmentId} {
+      // Students can read their own enrollments
+      allow read: if isAuthenticated() && 
+        resource.data.studentId == request.auth.uid;
+      
+      // Teachers can read enrollments for their courses
+      allow read: if isMusicTeacher();
+      
+      // Students can create their own enrollments
+      allow create: if isAuthenticated() && 
+        request.resource.data.studentId == request.auth.uid;
+      
+      // Students can update their own enrollment progress
+      allow update: if isAuthenticated() && 
+        resource.data.studentId == request.auth.uid &&
+        request.resource.data.studentId == resource.data.studentId;
+      
+      // Teachers can update enrollments for their courses (for notes, etc.)
+      allow update: if isMusicTeacher();
+      
+      // Admins can read all enrollments
+      allow read: if isAdmin();
+    }
+    
+    // Teacher Settings collection
+    match /teacherSettings/{teacherId} {
+      // Teachers can read/write their own settings
+      allow read, write: if isOwner(teacherId) && isMusicTeacher();
+      
+      // Admins can read all teacher settings
+      allow read: if isAdmin();
+    }
+    
+    // Admins collection (admin only)
+    match /admins/{adminId} {
+      allow read, write: if isAdmin() && request.auth.uid == adminId;
+      allow read: if isAdmin();
+    }
+    
+    // Artist tracks collection
+    match /tracks/{trackId} {
+      // Artists can read their own tracks
+      allow read: if isAuthenticated() && 
+        (resource.data.artistId == request.auth.uid || 
+         resource.data.visibility == 'public');
+      
+      // Directors can read public tracks (for discovery)
+      allow read: if isMusicDirector() && resource.data.visibility == 'public';
+      
+      // Artists can create tracks (if they have subscription access)
+      allow create: if isArtistWithAccess() && 
+        request.resource.data.artistId == request.auth.uid;
+      
+      // Artists can update their own tracks
+      allow update: if isArtistWithAccess() && 
+        resource.data.artistId == request.auth.uid &&
+        request.resource.data.artistId == resource.data.artistId;
+      
+      // Artists can delete their own tracks
+      allow delete: if isArtistWithAccess() && 
+        resource.data.artistId == request.auth.uid;
+      
+      // Admins can read all tracks
+      allow read: if isAdmin();
+    }
+    
+    // Artist albums collection
+    match /albums/{albumId} {
+      // Artists can read their own albums
+      allow read: if isAuthenticated() && 
+        (resource.data.artistId == request.auth.uid || 
+         resource.data.visibility == 'public');
+      
+      // Artists can create albums (if they have subscription access)
+      allow create: if isArtistWithAccess() && 
+        request.resource.data.artistId == request.auth.uid;
+      
+      // Artists can update their own albums
+      allow update: if isArtistWithAccess() && 
+        resource.data.artistId == request.auth.uid &&
+        request.resource.data.artistId == resource.data.artistId;
+      
+      // Artists can delete their own albums
+      allow delete: if isArtistWithAccess() && 
+        resource.data.artistId == request.auth.uid;
+      
+      // Admins can read all albums
+      allow read: if isAdmin();
+    }
+    
+    // Collaboration requests collection
+    match /collaborationRequests/{requestId} {
+      // Artists can read/update requests sent to them
+      allow read, update: if isArtist() && 
+        resource.data.artistId == request.auth.uid;
+      
+      // Directors can read their own requests (even without subscription)
+      allow read: if isMusicDirector() && 
+        resource.data.directorId == request.auth.uid;
+      
+      // Directors can update/create their own requests (if they have subscription access)
+      allow update: if isMusicDirector() && 
+        resource.data.directorId == request.auth.uid && isDirectorWithAccess();
+      allow create: if isMusicDirector() && 
+        request.resource.data.directorId == request.auth.uid && isDirectorWithAccess();
+      
+      // Admins can read all requests
+      allow read: if isAdmin();
+    }
+    
+    // Licensing requests collection
+    match /licensingRequests/{requestId} {
+      // Artists can read/update requests sent to them
+      allow read, update: if isArtist() && 
+        resource.data.artistId == request.auth.uid;
+      
+      // Directors can read their own requests (even without subscription)
+      allow read: if isMusicDirector() && 
+        resource.data.directorId == request.auth.uid;
+      
+      // Directors can update/create their own requests (if they have subscription access)
+      allow update: if isMusicDirector() && 
+        resource.data.directorId == request.auth.uid && isDirectorWithAccess();
+      allow create: if isMusicDirector() && 
+        request.resource.data.directorId == request.auth.uid && isDirectorWithAccess();
+      
+      // Admins can read all requests
+      allow read: if isAdmin();
+    }
+    
+    // Artist settings collection
+    match /artistSettings/{artistId} {
+      // Artists can read/write their own settings
+      allow read, write: if isOwner(artistId) && isArtist();
+      
+      // Admins can read all artist settings
+      allow read: if isAdmin();
+    }
+    
+    // Role change audit (admin only)
+    match /roleChangeAudit/{auditId} {
+      allow read: if isAdmin();
+      // Only server can write (via Admin SDK)
+      allow write: if false;
+    }
+    
+    // User compositions (existing)
+    match /users/{userId}/compositions/{compositionId} {
+      allow read, write: if isOwner(userId);
+    }
+    
+    // Guest users (existing)
+    match /guestUsers/{guestId} {
+      allow read, write: if isAuthenticated();
+    }
+    
+    // Generation logs (admin only)
+    match /generationLogs/{logId} {
+      allow read: if isAdmin();
+      // Only server can write (via Admin SDK)
+      allow write: if false;
+    }
+
+    // Director Projects collection
+    match /directorProjects/{projectId} {
+      // Directors can read their own projects (even without subscription)
+      allow read: if isMusicDirector() && resource.data.directorId == request.auth.uid;
+      // Directors can create their own projects (if they have subscription access)
+      allow create: if isMusicDirector() && request.resource.data.directorId == request.auth.uid && isDirectorWithAccess();
+      // Directors can update/delete their own projects (if they have subscription access)
+      allow update, delete: if isMusicDirector() && resource.data.directorId == request.auth.uid && isDirectorWithAccess();
+      // Admins can read all projects
+      allow read: if isAdmin();
+    }
+
+    // Shortlists collection
+    match /shortlists/{shortlistId} {
+      // Directors can read their own shortlists (even without subscription)
+      allow read: if isMusicDirector() && resource.data.directorId == request.auth.uid;
+      // Directors can create their own shortlists (if they have subscription access)
+      allow create: if isMusicDirector() && request.resource.data.directorId == request.auth.uid && isDirectorWithAccess();
+      // Directors can update/delete their own shortlists (if they have subscription access)
+      allow update, delete: if isMusicDirector() && resource.data.directorId == request.auth.uid && isDirectorWithAccess();
+      // Admins can read all shortlists
+      allow read: if isAdmin();
+    }
+
+    // Deliveries collection
+    match /deliveries/{deliveryId} {
+      // Directors can read their own deliveries
+      allow read: if isMusicDirector() && resource.data.directorId == request.auth.uid;
+      // Directors can update their own deliveries
+      allow update: if isMusicDirector() && resource.data.directorId == request.auth.uid;
+      // Artists can create deliveries for their projects
+      allow create: if isAuthenticated();
+      // Admins can read all deliveries
+      allow read: if isAdmin();
+    }
+
+    // Director Settings collection
+    match /directorSettings/{directorId} {
+      // Directors can read/write their own settings
+      allow read, write: if isOwner(directorId) && isMusicDirector();
+      // Admins can read all director settings
+      allow read: if isAdmin();
+    }
+
+    // Collaboration Requests - update to support directorId
+    match /collaborationRequests/{requestId} {
+      // Artists can read/update their own requests
+      allow read, update: if isOwner(resource.data.artistId) && isArtist();
+      // Directors can read/update their own requests
+      allow read, update: if isOwner(resource.data.directorId) && isMusicDirector();
+      // Directors can create requests (if they have subscription access)
+      allow create: if isDirectorWithAccess();
+      // Any authenticated user can create a request
+      allow create: if isAuthenticated();
+      // Admins can read all requests
+      allow read: if isAdmin();
+    }
+
+    // Licensing Requests - update to support directorId
+    match /licensingRequests/{requestId} {
+      // Artists can read/update their own requests
+      allow read, update: if isOwner(resource.data.artistId) && isArtist();
+      // Directors can read/update their own requests
+      allow read, update: if isOwner(resource.data.directorId) && isMusicDirector();
+      // Directors can create requests (if they have subscription access)
+      allow create: if isDirectorWithAccess();
+      // Any authenticated user can create a request
+      allow create: if isAuthenticated();
+      // Admins can read all requests
+      allow read: if isAdmin();
+    }
+
+    // Therapy Programs collection
+    match /therapyPrograms/{programId} {
+      // Doctors can read their own programs (even without subscription)
+      allow read: if isDoctor() && resource.data.doctorId == request.auth.uid;
+      // Doctors can create/update/delete their own programs (if they have subscription access)
+      allow create: if isDoctor() && request.resource.data.doctorId == request.auth.uid && isDoctorWithAccess();
+      allow update, delete: if isDoctor() && resource.data.doctorId == request.auth.uid && isDoctorWithAccess();
+      // Admins can read all programs
+      allow read: if isAdmin();
+    }
+
+    // Session Templates collection
+    match /sessionTemplates/{templateId} {
+      // Doctors can read their own templates (even without subscription)
+      allow read: if isDoctor() && resource.data.doctorId == request.auth.uid;
+      // Doctors can create/update/delete their own templates (if they have subscription access)
+      allow create: if isDoctor() && request.resource.data.doctorId == request.auth.uid && isDoctorWithAccess();
+      allow update, delete: if isDoctor() && resource.data.doctorId == request.auth.uid && isDoctorWithAccess();
+      // Admins can read all templates
+      allow read: if isAdmin();
+    }
+
+    // Guidance Articles collection
+    match /guidanceArticles/{articleId} {
+      // Doctors can read their own articles (even without subscription)
+      allow read: if isDoctor() && resource.data.doctorId == request.auth.uid;
+      // Doctors can create/update/delete their own articles (if they have subscription access)
+      allow create: if isDoctor() && request.resource.data.doctorId == request.auth.uid && isDoctorWithAccess();
+      allow update, delete: if isDoctor() && resource.data.doctorId == request.auth.uid && isDoctorWithAccess();
+      // Public articles can be read by anyone
+      allow read: if resource.data.status == 'published';
+      // Admins can read all articles
+      allow read: if isAdmin();
+    }
+
+    // Doctor Settings collection
+    match /doctorSettings/{doctorId} {
+      // Doctors can read/write their own settings
+      allow read, write: if isOwner(doctorId) && isDoctor();
+      // Admins can read all doctor settings
+      allow read: if isAdmin();
+    }
+
+    // Astro Music Templates collection
+    match /astroMusicTemplates/{templateId} {
+      // Astrologers can read their own templates (even without subscription)
+      allow read: if isAstrologer() && resource.data.astrologerId == request.auth.uid;
+      // Astrologers can create/update/delete their own templates (if they have subscription access)
+      allow create, update, delete: if isOwner(request.resource.data.astrologerId) && isAstrologerWithAccess();
+      // Admins can read all templates
+      allow read: if isAdmin();
+    }
+
+    // Rasi Recommendations collection
+    match /rasiRecommendations/{recommendationId} {
+      // Astrologers can read their own recommendations (even without subscription)
+      allow read: if isAstrologer() && resource.data.astrologerId == request.auth.uid;
+      // Astrologers can create/update/delete their own recommendations (if they have subscription access)
+      allow create, update, delete: if isOwner(request.resource.data.astrologerId) && isAstrologerWithAccess();
+      // Admins can read all recommendations
+      allow read: if isAdmin();
+    }
+
+    // Horoscope Content Posts collection
+    match /horoscopeContentPosts/{postId} {
+      // Astrologers can read their own posts (even without subscription)
+      allow read: if isAstrologer() && resource.data.astrologerId == request.auth.uid;
+      // Astrologers can create/update/delete their own posts (if they have subscription access)
+      allow create, update, delete: if isOwner(request.resource.data.astrologerId) && isAstrologerWithAccess();
+      // Admins can read all posts
+      allow read: if isAdmin();
+    }
+
+    // Astrologer Settings collection
+    match /astrologerSettings/{astrologerId} {
+      // Astrologers can read/write their own settings
+      allow read, write: if isOwner(astrologerId) && isAstrologer();
+      // Admins can read all astrologer settings
+      allow read: if isAdmin();
+    }
+
+    // Student Settings collection
+    match /studentSettings/{studentId} {
+      // Students can read/write their own settings
+      allow read, write: if isOwner(studentId) && isStudent();
+      // Admins can read all student settings
+      allow read: if isAdmin();
+    }
+    
+    // Default: deny all other collections
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
+

@@ -19,6 +19,9 @@ export interface User {
   name: string;
   mobileNumber?: string;
   isGuest: boolean;
+  role?: string; // "user" | "music_teacher" | "artist" | "music_director" | "doctor" | "astrologer" | "student" | "admin" | "moderator"
+  subscriptionStatus?: "active" | "inactive" | "trial" | "expired";
+  subscriptionExpiresAt?: string;
 }
 
 /**
@@ -52,6 +55,9 @@ async function mapFirebaseUser(firebaseUser: FirebaseUser | null): Promise<User 
     
     let mobileNumber: string | undefined;
     let name = firebaseUser.displayName || firebaseUser.email?.split("@")[0] || "User";
+    let role: string | undefined = "user"; // Default role
+    let subscriptionStatus: "active" | "inactive" | "trial" | "expired" | undefined;
+    let subscriptionExpiresAt: string | undefined;
     
     if (userProfileSnap.exists()) {
       const profileData = userProfileSnap.data();
@@ -60,6 +66,11 @@ async function mapFirebaseUser(firebaseUser: FirebaseUser | null): Promise<User 
       if (profileData.name) {
         name = profileData.name;
       }
+      // Get role from Firestore (default to "user")
+      role = profileData.role || "user";
+      // Get subscription status
+      subscriptionStatus = profileData.subscriptionStatus;
+      subscriptionExpiresAt = profileData.subscriptionExpiresAt;
     }
 
     return {
@@ -68,15 +79,19 @@ async function mapFirebaseUser(firebaseUser: FirebaseUser | null): Promise<User 
       name,
       mobileNumber,
       isGuest: false,
+      role,
+      subscriptionStatus,
+      subscriptionExpiresAt,
     };
   } catch (error) {
     console.error("Error fetching user profile from Firestore:", error);
-    // Return user without mobile number if Firestore fetch fails
+    // Return user without additional data if Firestore fetch fails
     return {
       id: firebaseUser.uid,
       email: firebaseUser.email || "",
       name: firebaseUser.displayName || firebaseUser.email?.split("@")[0] || "User",
       isGuest: false,
+      role: "user",
     };
   }
 }
@@ -194,11 +209,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         });
         
         // Store user profile with mobile number in Firestore
+        // IMPORTANT: New signups always get role = "user" (default)
         const userProfileRef = doc(db, "users", userCredential.user.uid);
         await setDoc(userProfileRef, {
           name: name.trim(),
           email: email.trim(),
           mobileNumber: mobileNumber.trim(),
+          role: "user", // Default role - only admin can change this
           emailVerified: true, // Mark as verified since OTP was verified
           onboardingCompleted: false, // New users need to complete onboarding
           createdAt: serverTimestamp(),

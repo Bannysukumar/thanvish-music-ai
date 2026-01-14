@@ -9,20 +9,49 @@ import {
   Menu,
   X,
   LogOut,
-  FileText
+  FileText,
+  CreditCard,
+  Shield,
+  Music,
+  BookOpen,
+  Sparkles,
+  Heart,
+  GraduationCap,
+  BarChart3,
+  AlertTriangle,
+  Bell,
+  Database,
+  Wrench,
+  FileCheck,
+  TrendingUp
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 
 /**
- * Admin side menu navigation items
+ * Admin side menu navigation items - Master Admin Panel
  */
 const menuItems = [
   { path: "/admin/dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { path: "/admin/users", label: "Users", icon: Users },
-  { path: "/admin/logs", label: "Logs", icon: FileText },
+  { path: "/admin/users", label: "User & Role Management", icon: Users },
+  { path: "/admin/subscriptions", label: "Subscriptions & Payments", icon: CreditCard },
+  { path: "/admin/content", label: "Content Management", icon: FileCheck },
+  { path: "/admin/instruments", label: "Instrument Management", icon: Music },
+  { path: "/admin/generation", label: "AI Generation Control", icon: Sparkles },
+  { path: "/admin/horoscope", label: "Horoscope Control", icon: Sparkles },
+  { path: "/admin/therapy", label: "Therapy & Doctor Control", icon: Heart },
+  { path: "/admin/artists", label: "Artist & Director Control", icon: Music },
+  { path: "/admin/ebooks", label: "E-Book Control", icon: BookOpen },
+  { path: "/admin/reports", label: "Reports & Safety", icon: AlertTriangle },
+  { path: "/admin/analytics", label: "Analytics & Insights", icon: BarChart3 },
+  { path: "/admin/system", label: "System Settings", icon: Wrench },
+  { path: "/admin/access-control", label: "Dashboard Access Control", icon: Shield },
+  { path: "/admin/notifications", label: "Notifications", icon: Bell },
+  { path: "/admin/security", label: "Security & Logging", icon: Shield },
+  { path: "/admin/logs", label: "Generation Logs", icon: FileText },
+  { path: "/admin/audit-logs", label: "Role Audit Logs", icon: FileText },
   { path: "/admin/credits", label: "Credits", icon: Coins },
-  { path: "/admin/settings", label: "Settings", icon: Settings },
+  { path: "/admin/settings", label: "API Settings", icon: Settings },
 ];
 
 /**

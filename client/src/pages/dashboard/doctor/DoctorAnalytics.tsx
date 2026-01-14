@@ -1,0 +1,221 @@
+import { useState, useEffect } from "react";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { BarChart3, TrendingUp, Users, CheckCircle, Lock } from "lucide-react";
+import { useAuth } from "@/contexts/AuthContext";
+import { useToast } from "@/hooks/use-toast";
+import { SafetyDisclaimer } from "@/components/doctor/SafetyDisclaimer";
+import { db } from "@/lib/firebase";
+import { collection, query, where, getDocs } from "firebase/firestore";
+
+export default function DoctorAnalytics() {
+  const { user } = useAuth();
+  const { toast } = useToast();
+  const [timeRange, setTimeRange] = useState("30");
+  const [isLoading, setIsLoading] = useState(true);
+  const [stats, setStats] = useState({
+    sessionStarts: 0,
+    sessionCompletions: 0,
+    averageSessionDuration: 0,
+    positiveFeedbackRate: 0,
+    mostEffectiveGoal: "N/A",
+  });
+
+  const isLocked = user?.subscriptionStatus !== "active" && user?.subscriptionStatus !== "trial";
+
+  useEffect(() => {
+    if (user && user.role === "doctor") {
+      fetchAnalytics();
+    }
+  }, [user, timeRange]);
+
+  const fetchAnalytics = async () => {
+    if (!user) return;
+
+    try {
+      setIsLoading(true);
+      
+      // Fetch programs to calculate stats
+      const programsQuery = query(
+        collection(db, "therapyPrograms"),
+        where("doctorId", "==", user.id)
+      );
+      const programsSnapshot = await getDocs(programsQuery);
+      
+      // Placeholder stats (would need to aggregate from user session data)
+      const sessionStarts = 0;
+      const sessionCompletions = 0;
+      const averageSessionDuration = 0;
+      const positiveFeedbackRate = 0;
+      const mostEffectiveGoal = "N/A";
+
+      setStats({
+        sessionStarts,
+        sessionCompletions,
+        averageSessionDuration,
+        positiveFeedbackRate,
+        mostEffectiveGoal,
+      });
+    } catch (error) {
+      console.error("Error fetching analytics:", error);
+      toast({
+        title: "Error",
+        description: "Failed to load analytics",
+        variant: "destructive",
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center min-h-[400px]">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto"></div>
+          <p className="mt-4 text-muted-foreground">Loading analytics...</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      <SafetyDisclaimer />
+      
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="font-serif text-3xl md:text-4xl font-bold">Outcomes Analytics</h1>
+          <p className="text-muted-foreground mt-2">
+            Track wellness outcomes and program effectiveness (wellness-only metrics)
+          </p>
+        </div>
+        <Select value={timeRange} onValueChange={setTimeRange}>
+          <SelectTrigger className="w-[180px]">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="7">Last 7 days</SelectItem>
+            <SelectItem value="30">Last 30 days</SelectItem>
+            <SelectItem value="90">Last 90 days</SelectItem>
+            <SelectItem value="all">All Time</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+
+      {isLocked && (
+        <Card className="border-amber-200 bg-amber-50 dark:bg-amber-950/20">
+          <CardContent className="pt-6">
+            <div className="flex items-start gap-4">
+              <Lock className="h-5 w-5 text-amber-600 mt-0.5" />
+              <div className="flex-1">
+                <h3 className="font-semibold text-amber-900 dark:text-amber-100">
+                  Full Analytics Unlocked
+                </h3>
+                <p className="text-sm text-amber-800 dark:text-amber-200 mt-1">
+                  Upgrade to access detailed analytics and insights.
+                </p>
+                <Button
+                  variant="outline"
+                  className="mt-3"
+                  onClick={() => window.location.href = "/dashboard/upgrade"}
+                >
+                  Upgrade Now
+                </Button>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Overview Stats */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Session Starts</CardTitle>
+            <Users className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{stats.sessionStarts}</div>
+            <p className="text-xs text-muted-foreground">
+              Total sessions started
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Completions</CardTitle>
+            <CheckCircle className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{stats.sessionCompletions}</div>
+            <p className="text-xs text-muted-foreground">
+              Sessions completed
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Avg Duration</CardTitle>
+            <BarChart3 className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{stats.averageSessionDuration} min</div>
+            <p className="text-xs text-muted-foreground">
+              Average session length
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Positive Feedback</CardTitle>
+            <TrendingUp className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{stats.positiveFeedbackRate}%</div>
+            <p className="text-xs text-muted-foreground">
+              "Felt better" responses
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Most Effective</CardTitle>
+            <TrendingUp className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold text-sm">{stats.mostEffectiveGoal}</div>
+            <p className="text-xs text-muted-foreground">
+              Wellness goal
+            </p>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Charts Placeholder */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Wellness Outcomes Overview</CardTitle>
+          <CardDescription>
+            Track program effectiveness (aggregate, non-sensitive data only)
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="h-[300px] flex items-center justify-center text-muted-foreground">
+            <div className="text-center">
+              <BarChart3 className="h-12 w-12 mx-auto mb-4 opacity-50" />
+              <p>Analytics charts will appear here</p>
+              <p className="text-sm mt-2">Detailed wellness metrics coming soon</p>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+

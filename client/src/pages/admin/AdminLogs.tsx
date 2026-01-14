@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
-import { Loader2, RefreshCw, FileText, Copy, Music2, CheckCircle2, XCircle, Clock } from "lucide-react";
+import { Loader2, RefreshCw, FileText, Copy, Music2, CheckCircle2, XCircle, Clock, Download } from "lucide-react";
 import {
   Table,
   TableBody,
@@ -80,6 +80,39 @@ export default function AdminLogs() {
     });
   };
 
+  const exportLogs = () => {
+    const csvHeaders = ["Time", "Type", "Model", "Prompt", "Status", "Credits", "Composition ID"];
+    const csvRows = logs.map(log => [
+      formatTime(log.time),
+      log.type,
+      log.model,
+      log.prompt,
+      log.status,
+      log.creditsConsumed?.toString() || "",
+      log.compositionId || "",
+    ]);
+
+    const csvContent = [
+      csvHeaders.join(","),
+      ...csvRows.map(row => row.map(cell => `"${cell}"`).join(","))
+    ].join("\n");
+
+    const blob = new Blob([csvContent], { type: "text/csv" });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `generation-logs-${new Date().toISOString().split("T")[0]}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    window.URL.revokeObjectURL(url);
+
+    toast({
+      title: "Exported",
+      description: "Logs exported to CSV",
+    });
+  };
+
   const formatPrompt = (prompt: string, callbackUrl: string) => {
     return `prompt: ${prompt}\ncallBackUrl: ${callbackUrl}`;
   };
@@ -111,19 +144,30 @@ export default function AdminLogs() {
             An overview of your latest requests
           </p>
         </div>
-        <Button
-          onClick={fetchLogs}
-          disabled={isLoading}
-          variant="outline"
-          size="sm"
-        >
-          {isLoading ? (
-            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-          ) : (
-            <RefreshCw className="h-4 w-4 mr-2" />
-          )}
-          Refresh
-        </Button>
+        <div className="flex gap-2">
+          <Button
+            onClick={exportLogs}
+            variant="outline"
+            size="sm"
+            disabled={logs.length === 0}
+          >
+            <Download className="h-4 w-4 mr-2" />
+            Export CSV
+          </Button>
+          <Button
+            onClick={fetchLogs}
+            disabled={isLoading}
+            variant="outline"
+            size="sm"
+          >
+            {isLoading ? (
+              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+            ) : (
+              <RefreshCw className="h-4 w-4 mr-2" />
+            )}
+            Refresh
+          </Button>
+        </div>
       </div>
 
       {/* Logs Table */}

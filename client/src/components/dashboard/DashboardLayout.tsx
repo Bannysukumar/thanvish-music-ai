@@ -13,24 +13,124 @@ import {
   Star as HoroscopeIcon,
   Music as MusicTherapyIcon,
   ChevronLeft,
-  ChevronRight
+  ChevronRight,
+  BookOpen,
+  GraduationCap,
+  Users as UsersIcon,
+  DollarSign,
+  Settings as SettingsIcon,
+  Music2,
+  Disc,
+  Upload,
+  FileText,
+  BarChart3,
+  FolderOpen,
+  Search,
+  Star,
+  CheckCircle,
+  Film,
+  Heart,
+  FileEdit,
+  Stethoscope,
+  Sparkles as AstrologyIcon,
+  Play
 } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 
 /**
- * Side menu navigation items
+ * Get menu items based on user role
  */
-const menuItems = [
-  { path: "/dashboard", label: "Home", icon: HomeIcon },
-  { path: "/dashboard/generate", label: "Generate", icon: Sparkles },
-  { path: "/dashboard/library", label: "My Library", icon: Library },
-  { path: "/dashboard/horoscope", label: "Horoscope Profile", icon: HoroscopeIcon, emoji: "🔮" },
-  { path: "/dashboard/music-therapy", label: "Music Therapy", icon: MusicTherapyIcon, emoji: "🎵" },
-  { path: "/dashboard/profile", label: "Profile", icon: User },
-  { path: "/dashboard/upgrade", label: "Upgrade", icon: Crown },
-];
+function getMenuItems(userRole?: string) {
+  const baseItems = [
+    { path: "/dashboard", label: "Home", icon: HomeIcon },
+    { path: "/dashboard/generate", label: "Generate", icon: Sparkles },
+    { path: "/dashboard/library", label: "My Library", icon: Library },
+    { path: "/dashboard/horoscope", label: "Horoscope Profile", icon: HoroscopeIcon, emoji: "🔮" },
+    { path: "/dashboard/music-therapy", label: "Music Therapy", icon: MusicTherapyIcon, emoji: "🎵" },
+    { path: "/dashboard/profile", label: "Profile", icon: User },
+    { path: "/dashboard/upgrade", label: "Upgrade", icon: Crown },
+  ];
+
+  // Add teacher-specific items if user is music_teacher
+  if (userRole === "music_teacher") {
+    const teacherItems = [
+      { path: "/dashboard/teacher", label: "Teacher Dashboard", icon: GraduationCap },
+      { path: "/dashboard/teacher/courses", label: "Course Builder", icon: BookOpen },
+      { path: "/dashboard/teacher/lessons", label: "My Lessons", icon: Library },
+      { path: "/dashboard/teacher/students", label: "My Students", icon: UsersIcon },
+      { path: "/dashboard/teacher/earnings", label: "Earnings", icon: DollarSign },
+      { path: "/dashboard/teacher/settings", label: "Teacher Settings", icon: SettingsIcon },
+    ];
+    // Insert teacher items after Home, before other items
+    return [
+      baseItems[0], // Home
+      ...teacherItems,
+      ...baseItems.slice(1), // Rest of base items
+    ];
+  }
+
+  // Add artist-specific items if user is artist
+  if (userRole === "artist") {
+    const artistItems = [
+      { path: "/dashboard/artist", label: "Artist Dashboard", icon: Music2 },
+      { path: "/dashboard/artist/library", label: "My Library", icon: Library },
+      { path: "/dashboard/artist/upload", label: "Upload Track", icon: Upload },
+      { path: "/dashboard/artist/albums", label: "Albums", icon: Disc },
+      { path: "/dashboard/artist/requests", label: "Collaboration Requests", icon: FileText },
+      { path: "/dashboard/artist/licensing", label: "Licensing Requests", icon: FileText },
+      { path: "/dashboard/artist/analytics", label: "Analytics", icon: BarChart3 },
+      { path: "/dashboard/artist/settings", label: "Artist Settings", icon: SettingsIcon },
+    ];
+    // Insert artist items after Home, before other items
+    return [
+      baseItems[0], // Home
+      ...artistItems,
+      ...baseItems.slice(1), // Rest of base items
+    ];
+  }
+
+  // Add director-specific items if user is music_director
+  if (userRole === "music_director") {
+    const directorItems = [
+      { path: "/dashboard/director", label: "Director Dashboard", icon: Film },
+      { path: "/dashboard/director/projects", label: "Projects", icon: FolderOpen },
+      { path: "/dashboard/director/discovery", label: "Artist Discovery", icon: Search },
+      { path: "/dashboard/director/shortlists", label: "Shortlists", icon: Star },
+      { path: "/dashboard/director/requests", label: "Requests", icon: FileText },
+      { path: "/dashboard/director/approvals", label: "Deliveries / Approvals", icon: CheckCircle },
+      { path: "/dashboard/director/settings", label: "Director Settings", icon: SettingsIcon },
+      { path: "/dashboard/director/analytics", label: "Analytics", icon: BarChart3 },
+    ];
+    // Insert director items after Home, before other items
+    return [
+      baseItems[0], // Home
+      ...directorItems,
+      ...baseItems.slice(1), // Rest of base items
+    ];
+  }
+
+  // Add doctor-specific items if user is doctor
+  if (userRole === "doctor") {
+    const doctorItems = [
+      { path: "/dashboard/doctor", label: "Doctor Dashboard", icon: Stethoscope },
+      { path: "/dashboard/doctor/programs", label: "Therapy Programs", icon: Heart },
+      { path: "/dashboard/doctor/templates", label: "Session Templates", icon: FileEdit },
+      { path: "/dashboard/doctor/articles", label: "Guidance Articles", icon: BookOpen },
+      { path: "/dashboard/doctor/analytics", label: "Outcomes Analytics", icon: BarChart3 },
+      { path: "/dashboard/doctor/settings", label: "Doctor Settings", icon: SettingsIcon },
+    ];
+    // Insert doctor items after Home, before other items
+    return [
+      baseItems[0], // Home
+      ...doctorItems,
+      ...baseItems.slice(1), // Rest of base items
+    ];
+  }
+
+  return baseItems;
+}
 
 /**
  * Props for DashboardLayout component
@@ -156,7 +256,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
             "flex-1 p-4 space-y-2 transition-all duration-300",
             isCollapsed && "px-2"
           )}>
-            {menuItems.map((item) => {
+            {getMenuItems(user?.role).map((item) => {
               const Icon = item.icon;
               const active = isActive(item.path);
               return (
@@ -234,7 +334,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
               </div>
 
               <nav className="flex-1 p-4 space-y-2 overflow-y-auto">
-                {menuItems.map((item) => {
+                {getMenuItems(user?.role).map((item) => {
                   const Icon = item.icon;
                   const active = isActive(item.path);
                   return (

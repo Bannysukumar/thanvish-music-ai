@@ -1121,6 +1121,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
               emailVerified: profileData?.emailVerified !== undefined ? profileData.emailVerified : firebaseUser.emailVerified,
               createdAt: firebaseUser.metadata.creationTime,
               lastSignIn: firebaseUser.metadata.lastSignInTime,
+              subscriptionStatus: profileData?.subscriptionStatus,
+              subscriptionExpiresAt: profileData?.subscriptionExpiresAt,
+              teacherSubscriptionRequired: profileData?.teacherSubscriptionRequired,
+              verifiedArtist: profileData?.verifiedArtist || false,
+              verifiedDirector: profileData?.verifiedDirector || false,
+              verifiedDoctor: profileData?.verifiedDoctor || false,
               profileData: profileData ? {
                 createdAt: profileData.createdAt,
                 updatedAt: profileData.updatedAt,
@@ -1220,27 +1226,53 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.put("/api/admin/users/:userId/role", requireAdmin, async (req, res) => {
     try {
       const { userId } = req.params;
-      const { role } = req.body;
+      const { role, requiresSubscription } = req.body;
+      const sessionId = req.headers.authorization?.replace("Bearer ", "") || (req as any).cookies?.adminSession;
+      const session = sessionId ? adminSessions.get(sessionId) : null;
+      const adminUserId = session?.userId || "unknown";
 
-      if (!role || !["user", "admin", "moderator"].includes(role)) {
-        return res.status(400).json({ error: "Invalid role. Must be 'user', 'admin', or 'moderator'" });
+      if (!role || !["user", "admin", "moderator", "music_teacher", "artist", "music_director", "doctor", "astrologer", "student"].includes(role)) {
+        return res.status(400).json({ error: "Invalid role. Must be 'user', 'admin', 'moderator', 'music_teacher', 'artist', 'music_director', 'doctor', 'astrologer', or 'student'" });
       }
 
-      // Update role in Firestore users collection
+      // Get current user data to track role change
       const userRef = adminDb.collection("users").doc(userId);
       const userDoc = await userRef.get();
+      const previousRole = userDoc.exists ? (userDoc.data()?.role || "user") : "user";
+      
+      // Update role in Firestore users collection
+      const updateData: any = {
+        role: role,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      };
+
+      // For music_teacher, artist, music_director, doctor, and astrologer roles, handle subscription requirement
+      if (role === "music_teacher" || role === "artist" || role === "music_director" || role === "doctor" || role === "astrologer") {
+        // If requiresSubscription is explicitly set, use it; otherwise default to true
+        const subscriptionRequired = requiresSubscription !== false;
+        updateData.subscriptionRequired = subscriptionRequired;
+        
+        // If subscription is required and not already set, set status to inactive
+        if (subscriptionRequired && !userDoc.data()?.subscriptionStatus) {
+          updateData.subscriptionStatus = "inactive";
+        }
+      } else if (role === "student") {
+        // Student role is FREE - no subscription required
+        updateData.subscriptionRequired = admin.firestore.FieldValue.delete();
+        updateData.subscriptionStatus = admin.firestore.FieldValue.delete();
+        updateData.subscriptionExpiresAt = admin.firestore.FieldValue.delete();
+      } else {
+        // Clear role-specific fields when changing to a role that doesn't require subscription
+        updateData.subscriptionRequired = admin.firestore.FieldValue.delete();
+        updateData.subscriptionStatus = admin.firestore.FieldValue.delete();
+        updateData.subscriptionExpiresAt = admin.firestore.FieldValue.delete();
+      }
       
       if (userDoc.exists) {
-        await userRef.update({
-          role: role,
-          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        });
+        await userRef.update(updateData);
       } else {
         // If user profile doesn't exist, create it
-        await userRef.set({
-          role: role,
-          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        }, { merge: true });
+        await userRef.set(updateData, { merge: true });
       }
 
       // If role is admin, also update admins collection
@@ -1256,11 +1288,33 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
+      // Log role change audit
+      try {
+        const auditData: any = {
+          userId,
+          previousRole,
+          newRole: role,
+          changedBy: adminUserId,
+          changedAt: admin.firestore.FieldValue.serverTimestamp(),
+        };
+        
+        // Only add requiresSubscription if it's defined
+        if (role === "music_teacher" || role === "artist" || role === "music_director" || role === "doctor" || role === "astrologer") {
+          auditData.requiresSubscription = requiresSubscription !== false;
+        }
+        
+        await adminDb.collection("roleChangeAudit").add(auditData);
+      } catch (auditError) {
+        console.error("Error logging role change audit:", auditError);
+        // Don't fail the request if audit logging fails
+      }
+
       res.json({ 
         success: true, 
         message: `User role updated to ${role}`,
         userId,
         role,
+        requiresSubscription: (role === "music_teacher" || role === "artist" || role === "music_director" || role === "doctor" || role === "astrologer") ? (requiresSubscription !== false) : undefined,
       });
     } catch (error: any) {
       console.error("Error updating user role:", error);
@@ -1270,6 +1324,105 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       
       res.status(500).json({ error: "Failed to update user role: " + (error.message || "Unknown error") });
+    }
+  });
+
+  // Update artist verification status
+  app.put("/api/admin/users/:userId/verify", requireAdmin, async (req, res) => {
+    try {
+      const { userId } = req.params;
+      const { verifiedArtist } = req.body;
+
+      const userRef = adminDb.collection("users").doc(userId);
+      const userDoc = await userRef.get();
+      
+      if (!userDoc.exists) {
+        return res.status(404).json({ error: "User not found" });
+      }
+
+      const userData = userDoc.data();
+      if (userData?.role !== "artist") {
+        return res.status(400).json({ error: "User must have artist role to manage verification" });
+      }
+
+      await userRef.update({
+        verifiedArtist: verifiedArtist === true,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+
+      res.json({ 
+        success: true, 
+        message: `Artist verification ${verifiedArtist ? "enabled" : "disabled"}`,
+        userId,
+        verifiedArtist: verifiedArtist === true,
+      });
+    } catch (error: any) {
+      console.error("Error updating verification status:", error);
+      res.status(500).json({ error: "Failed to update verification status: " + (error.message || "Unknown error") });
+    }
+  });
+
+  // Update user subscription status (for music teachers and artists)
+  app.put("/api/admin/users/:userId/subscription", requireAdmin, async (req, res) => {
+    try {
+      const { userId } = req.params;
+      const { subscriptionStatus, subscriptionExpiresAt, trialDays } = req.body;
+
+      if (!subscriptionStatus || !["active", "inactive", "trial", "expired"].includes(subscriptionStatus)) {
+        console.error("Invalid subscription status received:", subscriptionStatus);
+        console.error("Request body:", req.body);
+        return res.status(400).json({ 
+          error: `Invalid subscription status: ${subscriptionStatus || "undefined"}. Must be 'active', 'inactive', 'trial', or 'expired'` 
+        });
+      }
+
+      // Verify user has a role that requires subscription
+      const userRef = adminDb.collection("users").doc(userId);
+      const userDoc = await userRef.get();
+      
+      if (!userDoc.exists) {
+        return res.status(404).json({ error: "User not found" });
+      }
+
+      const userData = userDoc.data();
+      const userRole = userData?.role || "user";
+      if (userRole !== "music_teacher" && userRole !== "artist" && userRole !== "music_director" && userRole !== "doctor" && userRole !== "astrologer") {
+        return res.status(400).json({ 
+          error: `User must have music_teacher, artist, music_director, doctor, or astrologer role to manage subscription. Current role: ${userRole}` 
+        });
+      }
+
+      // Calculate expiration date
+      let expiresAt = subscriptionExpiresAt;
+      if (subscriptionStatus === "trial" && trialDays) {
+        const trialExpiry = new Date();
+        trialExpiry.setDate(trialExpiry.getDate() + trialDays);
+        expiresAt = trialExpiry.toISOString();
+      } else if (subscriptionStatus === "active" && !expiresAt) {
+        // Default to 1 year if not specified
+        const oneYear = new Date();
+        oneYear.setFullYear(oneYear.getFullYear() + 1);
+        expiresAt = oneYear.toISOString();
+      }
+
+      await userRef.update({
+        subscriptionStatus,
+        subscriptionExpiresAt: expiresAt || admin.firestore.FieldValue.delete(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+
+      res.json({ 
+        success: true, 
+        message: `Subscription status updated to ${subscriptionStatus}`,
+        userId,
+        subscriptionStatus,
+        subscriptionExpiresAt: expiresAt,
+      });
+    } catch (error: any) {
+      console.error("Error updating subscription status:", error);
+      console.error("Request body:", req.body);
+      console.error("User ID:", userId);
+      res.status(500).json({ error: "Failed to update subscription status: " + (error.message || "Unknown error") });
     }
   });
 
@@ -1434,6 +1587,627 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error: any) {
       console.error("Error removing OTP:", error);
       res.status(500).json({ error: "Failed to remove OTP" });
+    }
+  });
+
+  // ========== MASTER ADMIN PANEL - ADDITIONAL ENDPOINTS ==========
+
+  // Get role audit logs
+  app.get("/api/admin/audit-logs", requireAdmin, async (req, res) => {
+    try {
+      const limit = parseInt(req.query.limit as string) || 100;
+      const roleFilter = req.query.role as string | undefined;
+      
+      let query: any = adminDb.collection("roleChangeAudit").orderBy("changedAt", "desc").limit(limit);
+      
+      if (roleFilter) {
+        query = query.where("newRole", "==", roleFilter);
+      }
+      
+      const snapshot = await query.get();
+      const logs = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data(),
+        changedAt: doc.data().changedAt?.toDate?.()?.toISOString() || doc.data().changedAt,
+      }));
+      
+      res.json({ logs });
+    } catch (error: any) {
+      console.error("Error fetching audit logs:", error);
+      res.status(500).json({ error: "Failed to fetch audit logs" });
+    }
+  });
+
+  // ========== SUBSCRIPTION PLANS MANAGEMENT ==========
+  
+  // Get all subscription plans
+  app.get("/api/admin/subscription-plans", requireAdmin, async (req, res) => {
+    try {
+      const role = req.query.role as string | undefined;
+      
+      let query: any = adminDb.collection("subscriptionPlans");
+      if (role) {
+        query = query.where("role", "==", role);
+      }
+      
+      const snapshot = await query.get();
+      const plans = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data(),
+        createdAt: doc.data().createdAt?.toDate?.()?.toISOString(),
+        updatedAt: doc.data().updatedAt?.toDate?.()?.toISOString(),
+      }));
+      
+      res.json({ plans });
+    } catch (error: any) {
+      console.error("Error fetching subscription plans:", error);
+      res.status(500).json({ error: "Failed to fetch subscription plans" });
+    }
+  });
+
+  // Create subscription plan
+  app.post("/api/admin/subscription-plans", requireAdmin, async (req, res) => {
+    try {
+      const { role, name, price, duration, features, usageLimits } = req.body;
+      
+      if (!role || !name || price === undefined || !duration) {
+        return res.status(400).json({ error: "Role, name, price, and duration are required" });
+      }
+      
+      if (!["music_teacher", "artist", "music_director", "doctor", "astrologer"].includes(role)) {
+        return res.status(400).json({ error: "Invalid role for subscription plan" });
+      }
+      
+      const planData = {
+        role,
+        name,
+        price: parseFloat(price),
+        duration: parseInt(duration), // days
+        features: Array.isArray(features) ? features : [],
+        usageLimits: usageLimits || {},
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      };
+      
+      const docRef = await adminDb.collection("subscriptionPlans").add(planData);
+      
+      res.json({
+        success: true,
+        id: docRef.id,
+        message: "Subscription plan created successfully",
+      });
+    } catch (error: any) {
+      console.error("Error creating subscription plan:", error);
+      res.status(500).json({ error: "Failed to create subscription plan" });
+    }
+  });
+
+  // Update subscription plan
+  app.put("/api/admin/subscription-plans/:planId", requireAdmin, async (req, res) => {
+    try {
+      const { planId } = req.params;
+      const { name, price, duration, features, usageLimits } = req.body;
+      
+      const planRef = adminDb.collection("subscriptionPlans").doc(planId);
+      const planDoc = await planRef.get();
+      
+      if (!planDoc.exists) {
+        return res.status(404).json({ error: "Subscription plan not found" });
+      }
+      
+      const updateData: any = {
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      };
+      
+      if (name !== undefined) updateData.name = name;
+      if (price !== undefined) updateData.price = parseFloat(price);
+      if (duration !== undefined) updateData.duration = parseInt(duration);
+      if (features !== undefined) updateData.features = Array.isArray(features) ? features : [];
+      if (usageLimits !== undefined) updateData.usageLimits = usageLimits;
+      
+      await planRef.update(updateData);
+      
+      res.json({ success: true, message: "Subscription plan updated successfully" });
+    } catch (error: any) {
+      console.error("Error updating subscription plan:", error);
+      res.status(500).json({ error: "Failed to update subscription plan" });
+    }
+  });
+
+  // Delete subscription plan
+  app.delete("/api/admin/subscription-plans/:planId", requireAdmin, async (req, res) => {
+    try {
+      const { planId } = req.params;
+      
+      await adminDb.collection("subscriptionPlans").doc(planId).delete();
+      
+      res.json({ success: true, message: "Subscription plan deleted successfully" });
+    } catch (error: any) {
+      console.error("Error deleting subscription plan:", error);
+      res.status(500).json({ error: "Failed to delete subscription plan" });
+    }
+  });
+
+  // ========== INSTRUMENT MANAGEMENT ==========
+  
+  // Get all instruments
+  app.get("/api/admin/instruments", requireAdmin, async (req, res) => {
+    try {
+      const snapshot = await adminDb.collection("instruments").orderBy("name").get();
+      const instruments = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data(),
+        createdAt: doc.data().createdAt?.toDate?.()?.toISOString(),
+        updatedAt: doc.data().updatedAt?.toDate?.()?.toISOString(),
+      }));
+      
+      res.json({ instruments });
+    } catch (error: any) {
+      console.error("Error fetching instruments:", error);
+      res.status(500).json({ error: "Failed to fetch instruments" });
+    }
+  });
+
+  // Create instrument
+  app.post("/api/admin/instruments", requireAdmin, async (req, res) => {
+    try {
+      const { name, category, previewAudioUrl, previewDuration, isEnabled, autoPreviewEnabled } = req.body;
+      
+      if (!name || !category) {
+        return res.status(400).json({ error: "Name and category are required" });
+      }
+      
+      if (!["hindustani", "carnatic", "both", "fusion"].includes(category)) {
+        return res.status(400).json({ error: "Invalid category. Must be hindustani, carnatic, both, or fusion" });
+      }
+      
+      if (previewDuration && (previewDuration < 5 || previewDuration > 10)) {
+        return res.status(400).json({ error: "Preview duration must be between 5-10 seconds" });
+      }
+      
+      const instrumentData = {
+        name,
+        category,
+        previewAudioUrl: previewAudioUrl || null,
+        previewDuration: previewDuration ? parseInt(previewDuration) : 5,
+        isEnabled: isEnabled !== false,
+        autoPreviewEnabled: autoPreviewEnabled === true,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      };
+      
+      const docRef = await adminDb.collection("instruments").add(instrumentData);
+      
+      res.json({
+        success: true,
+        id: docRef.id,
+        message: "Instrument created successfully",
+      });
+    } catch (error: any) {
+      console.error("Error creating instrument:", error);
+      res.status(500).json({ error: "Failed to create instrument" });
+    }
+  });
+
+  // Update instrument
+  app.put("/api/admin/instruments/:instrumentId", requireAdmin, async (req, res) => {
+    try {
+      const { instrumentId } = req.params;
+      const { name, category, previewAudioUrl, previewDuration, isEnabled, autoPreviewEnabled } = req.body;
+      
+      const instrumentRef = adminDb.collection("instruments").doc(instrumentId);
+      const instrumentDoc = await instrumentRef.get();
+      
+      if (!instrumentDoc.exists) {
+        return res.status(404).json({ error: "Instrument not found" });
+      }
+      
+      const updateData: any = {
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      };
+      
+      if (name !== undefined) updateData.name = name;
+      if (category !== undefined) {
+        if (!["hindustani", "carnatic", "both", "fusion"].includes(category)) {
+          return res.status(400).json({ error: "Invalid category" });
+        }
+        updateData.category = category;
+      }
+      if (previewAudioUrl !== undefined) updateData.previewAudioUrl = previewAudioUrl || null;
+      if (previewDuration !== undefined) {
+        if (previewDuration < 5 || previewDuration > 10) {
+          return res.status(400).json({ error: "Preview duration must be between 5-10 seconds" });
+        }
+        updateData.previewDuration = parseInt(previewDuration);
+      }
+      if (isEnabled !== undefined) updateData.isEnabled = isEnabled;
+      if (autoPreviewEnabled !== undefined) updateData.autoPreviewEnabled = autoPreviewEnabled;
+      
+      await instrumentRef.update(updateData);
+      
+      res.json({ success: true, message: "Instrument updated successfully" });
+    } catch (error: any) {
+      console.error("Error updating instrument:", error);
+      res.status(500).json({ error: "Failed to update instrument" });
+    }
+  });
+
+  // Delete instrument
+  app.delete("/api/admin/instruments/:instrumentId", requireAdmin, async (req, res) => {
+    try {
+      const { instrumentId } = req.params;
+      
+      await adminDb.collection("instruments").doc(instrumentId).delete();
+      
+      res.json({ success: true, message: "Instrument deleted successfully" });
+    } catch (error: any) {
+      console.error("Error deleting instrument:", error);
+      res.status(500).json({ error: "Failed to delete instrument" });
+    }
+  });
+
+  // ========== ANALYTICS & INSIGHTS ==========
+  
+  // Get platform analytics
+  app.get("/api/admin/analytics", requireAdmin, async (req, res) => {
+    try {
+      // Get user counts by role
+      const usersSnapshot = await adminDb.collection("users").get();
+      const users = usersSnapshot.docs.map(doc => doc.data());
+      
+      const roleCounts: Record<string, number> = {};
+      let totalSubscriptions = 0;
+      let activeSubscriptions = 0;
+      
+      users.forEach(user => {
+        const role = user.role || "user";
+        roleCounts[role] = (roleCounts[role] || 0) + 1;
+        
+        if (user.subscriptionStatus) {
+          totalSubscriptions++;
+          if (user.subscriptionStatus === "active" || user.subscriptionStatus === "trial") {
+            activeSubscriptions++;
+          }
+        }
+      });
+      
+      // Get generation stats
+      const generationSnapshot = await adminDb.collection("generationLogs")
+        .where("status", "==", "completed")
+        .get();
+      const totalGenerations = generationSnapshot.size;
+      
+      // Get most used instruments (from generation logs)
+      const instrumentUsage: Record<string, number> = {};
+      generationSnapshot.docs.forEach(doc => {
+        const data = doc.data();
+        if (data.instrument) {
+          instrumentUsage[data.instrument] = (instrumentUsage[data.instrument] || 0) + 1;
+        }
+      });
+      
+      const mostUsedInstruments = Object.entries(instrumentUsage)
+        .sort(([, a], [, b]) => b - a)
+        .slice(0, 10)
+        .map(([name, count]) => ({ name, count }));
+      
+      // Get module usage (from generation logs)
+      const moduleUsage: Record<string, number> = {
+        general: 0,
+        horoscope: 0,
+        therapy: 0,
+      };
+      
+      generationSnapshot.docs.forEach(doc => {
+        const data = doc.data();
+        if (data.module) {
+          moduleUsage[data.module] = (moduleUsage[data.module] || 0) + 1;
+        } else {
+          moduleUsage.general = (moduleUsage.general || 0) + 1;
+        }
+      });
+      
+      res.json({
+        users: {
+          total: users.length,
+          byRole: roleCounts,
+        },
+        subscriptions: {
+          total: totalSubscriptions,
+          active: activeSubscriptions,
+        },
+        generations: {
+          total: totalGenerations,
+          mostUsedInstruments: mostUsedInstruments,
+          byModule: moduleUsage,
+        },
+      });
+    } catch (error: any) {
+      console.error("Error fetching analytics:", error);
+      res.status(500).json({ error: "Failed to fetch analytics" });
+    }
+  });
+
+  // ========== SYSTEM SETTINGS ==========
+  
+  // Get system settings
+  app.get("/api/admin/system-settings", requireAdmin, async (req, res) => {
+    try {
+      const settingsDoc = await adminDb.collection("systemSettings").doc("global").get();
+      
+      if (!settingsDoc.exists) {
+        // Return defaults
+        return res.json({
+          modules: {
+            educationalMusic: true,
+            instrumentalEducation: true,
+            musicGeneration: true,
+            musicHoroscope: true,
+            musicTherapy: true,
+            artistLibrary: true,
+            musicEBooks: true,
+          },
+          maintenanceMode: false,
+          aiGenerationEnabled: true,
+        });
+      }
+      
+      res.json(settingsDoc.data());
+    } catch (error: any) {
+      console.error("Error fetching system settings:", error);
+      res.status(500).json({ error: "Failed to fetch system settings" });
+    }
+  });
+
+  // Update system settings
+  app.put("/api/admin/system-settings", requireAdmin, async (req, res) => {
+    try {
+      const { modules, maintenanceMode, aiGenerationEnabled } = req.body;
+      
+      const updateData: any = {
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      };
+      
+      if (modules !== undefined) updateData.modules = modules;
+      if (maintenanceMode !== undefined) updateData.maintenanceMode = maintenanceMode;
+      if (aiGenerationEnabled !== undefined) updateData.aiGenerationEnabled = aiGenerationEnabled;
+      
+      await adminDb.collection("systemSettings").doc("global").set(updateData, { merge: true });
+      
+      res.json({ success: true, message: "System settings updated successfully" });
+    } catch (error: any) {
+      console.error("Error updating system settings:", error);
+      res.status(500).json({ error: "Failed to update system settings" });
+    }
+  });
+
+  // ========== NOTIFICATIONS ==========
+  
+  // Get all notifications
+  app.get("/api/admin/notifications", requireAdmin, async (req, res) => {
+    try {
+      const limit = parseInt(req.query.limit as string) || 50;
+      const snapshot = await adminDb.collection("notifications")
+        .orderBy("createdAt", "desc")
+        .limit(limit)
+        .get();
+      
+      const notifications = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data(),
+        createdAt: doc.data().createdAt?.toDate?.()?.toISOString(),
+        scheduledFor: doc.data().scheduledFor?.toDate?.()?.toISOString(),
+      }));
+      
+      res.json({ notifications });
+    } catch (error: any) {
+      console.error("Error fetching notifications:", error);
+      res.status(500).json({ error: "Failed to fetch notifications" });
+    }
+  });
+
+  // Create notification
+  app.post("/api/admin/notifications", requireAdmin, async (req, res) => {
+    try {
+      const { title, message, targetType, targetRole, targetUserId, scheduledFor } = req.body;
+      
+      if (!title || !message || !targetType) {
+        return res.status(400).json({ error: "Title, message, and targetType are required" });
+      }
+      
+      if (!["all", "role", "user"].includes(targetType)) {
+        return res.status(400).json({ error: "targetType must be 'all', 'role', or 'user'" });
+      }
+      
+      if (targetType === "role" && !targetRole) {
+        return res.status(400).json({ error: "targetRole is required when targetType is 'role'" });
+      }
+      
+      if (targetType === "user" && !targetUserId) {
+        return res.status(400).json({ error: "targetUserId is required when targetType is 'user'" });
+      }
+      
+      const notificationData = {
+        title,
+        message,
+        targetType,
+        targetRole: targetRole || null,
+        targetUserId: targetUserId || null,
+        scheduledFor: scheduledFor ? admin.firestore.Timestamp.fromDate(new Date(scheduledFor)) : null,
+        sent: false,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      };
+      
+      const docRef = await adminDb.collection("notifications").add(notificationData);
+      
+      res.json({
+        success: true,
+        id: docRef.id,
+        message: "Notification created successfully",
+      });
+    } catch (error: any) {
+      console.error("Error creating notification:", error);
+      res.status(500).json({ error: "Failed to create notification" });
+    }
+  });
+
+  // ========== SECURITY & LOGGING ==========
+  
+  // ========== CONTENT MODERATION ==========
+  
+  // Get pending content for moderation
+  app.get("/api/admin/content/pending", requireAdmin, async (req, res) => {
+    try {
+      const contentType = req.query.type as string | undefined; // "course", "lesson", etc.
+      
+      let query: any = adminDb.collection("courses").where("status", "==", "pending");
+      
+      if (contentType === "lesson") {
+        // For lessons, we need to check courses with pending lessons
+        const coursesSnapshot = await adminDb.collection("courses").get();
+        const pendingLessons: any[] = [];
+        
+        coursesSnapshot.docs.forEach((courseDoc) => {
+          const courseData = courseDoc.data();
+          if (courseData.modules && Array.isArray(courseData.modules)) {
+            courseData.modules.forEach((module: any, moduleIndex: number) => {
+              if (module.lessons && Array.isArray(module.lessons)) {
+                module.lessons.forEach((lesson: any, lessonIndex: number) => {
+                  if (lesson.status === "pending") {
+                    pendingLessons.push({
+                      id: `${courseDoc.id}_${moduleIndex}_${lessonIndex}`,
+                      courseId: courseDoc.id,
+                      courseTitle: courseData.title,
+                      moduleTitle: module.title,
+                      lessonTitle: lesson.title,
+                      ...lesson,
+                    });
+                  }
+                });
+              }
+            });
+          }
+        });
+        
+        return res.json({ items: pendingLessons });
+      }
+      
+      const snapshot = await query.get();
+      const items = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data(),
+        createdAt: doc.data().createdAt?.toDate?.()?.toISOString(),
+        updatedAt: doc.data().updatedAt?.toDate?.()?.toISOString(),
+      }));
+      
+      res.json({ items });
+    } catch (error: any) {
+      console.error("Error fetching pending content:", error);
+      res.status(500).json({ error: "Failed to fetch pending content" });
+    }
+  });
+
+  // Approve content
+  app.post("/api/admin/content/:contentId/approve", requireAdmin, async (req, res) => {
+    try {
+      const { contentId } = req.params;
+      const { contentType } = req.body; // "course" or "lesson"
+      
+      if (contentType === "course") {
+        await adminDb.collection("courses").doc(contentId).update({
+          status: "live",
+          approvedAt: admin.firestore.FieldValue.serverTimestamp(),
+          approvedBy: req.headers.authorization?.replace("Bearer ", "") || "admin",
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+      } else if (contentType === "lesson") {
+        // For lessons, we need to update within the course structure
+        const [courseId, moduleIndex, lessonIndex] = contentId.split("_");
+        const courseRef = adminDb.collection("courses").doc(courseId);
+        const courseDoc = await courseRef.get();
+        const courseData = courseDoc.data();
+        
+        if (courseData?.modules?.[parseInt(moduleIndex)]?.lessons?.[parseInt(lessonIndex)]) {
+          courseData.modules[parseInt(moduleIndex)].lessons[parseInt(lessonIndex)].status = "published";
+          courseData.modules[parseInt(moduleIndex)].lessons[parseInt(lessonIndex)].approvedAt = admin.firestore.FieldValue.serverTimestamp();
+          
+          await courseRef.update({
+            modules: courseData.modules,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          });
+        }
+      }
+      
+      res.json({ success: true, message: "Content approved successfully" });
+    } catch (error: any) {
+      console.error("Error approving content:", error);
+      res.status(500).json({ error: "Failed to approve content" });
+    }
+  });
+
+  // Reject content
+  app.post("/api/admin/content/:contentId/reject", requireAdmin, async (req, res) => {
+    try {
+      const { contentId } = req.params;
+      const { contentType, reason } = req.body;
+      
+      if (contentType === "course") {
+        await adminDb.collection("courses").doc(contentId).update({
+          status: "rejected",
+          rejectionReason: reason || "",
+          rejectedAt: admin.firestore.FieldValue.serverTimestamp(),
+          rejectedBy: req.headers.authorization?.replace("Bearer ", "") || "admin",
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+      } else if (contentType === "lesson") {
+        const [courseId, moduleIndex, lessonIndex] = contentId.split("_");
+        const courseRef = adminDb.collection("courses").doc(courseId);
+        const courseDoc = await courseRef.get();
+        const courseData = courseDoc.data();
+        
+        if (courseData?.modules?.[parseInt(moduleIndex)]?.lessons?.[parseInt(lessonIndex)]) {
+          courseData.modules[parseInt(moduleIndex)].lessons[parseInt(lessonIndex)].status = "rejected";
+          courseData.modules[parseInt(moduleIndex)].lessons[parseInt(lessonIndex)].rejectionReason = reason || "";
+          courseData.modules[parseInt(moduleIndex)].lessons[parseInt(lessonIndex)].rejectedAt = admin.firestore.FieldValue.serverTimestamp();
+          
+          await courseRef.update({
+            modules: courseData.modules,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          });
+        }
+      }
+      
+      res.json({ success: true, message: "Content rejected successfully" });
+    } catch (error: any) {
+      console.error("Error rejecting content:", error);
+      res.status(500).json({ error: "Failed to reject content" });
+    }
+  });
+
+  // Get security logs
+  app.get("/api/admin/security-logs", requireAdmin, async (req, res) => {
+    try {
+      const limit = parseInt(req.query.limit as string) || 100;
+      const actionType = req.query.actionType as string | undefined;
+      
+      let query: any = adminDb.collection("securityLogs").orderBy("timestamp", "desc").limit(limit);
+      
+      if (actionType) {
+        query = query.where("actionType", "==", actionType);
+      }
+      
+      const snapshot = await query.get();
+      const logs = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data(),
+        timestamp: doc.data().timestamp?.toDate?.()?.toISOString(),
+      }));
+      
+      res.json({ logs });
+    } catch (error: any) {
+      console.error("Error fetching security logs:", error);
+      res.status(500).json({ error: "Failed to fetch security logs" });
     }
   });
 

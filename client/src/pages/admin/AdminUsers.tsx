@@ -32,7 +32,8 @@ import {
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
 import { useToast } from "@/hooks/use-toast";
-import { Loader2, Search, Ban, CheckCircle, XCircle, Shield, User as UserIcon, CalendarIcon, Filter, X } from "lucide-react";
+import { Loader2, Search, Ban, CheckCircle, XCircle, Shield, User as UserIcon, CalendarIcon, Filter, X, Sparkles, GraduationCap, History, ExternalLink } from "lucide-react";
+import { useLocation } from "wouter";
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
 
@@ -46,10 +47,18 @@ interface User {
   createdAt?: string;
   lastSignIn?: string;
   emailVerified?: boolean;
+  subscriptionStatus?: "active" | "inactive" | "trial" | "expired";
+  subscriptionExpiresAt?: string;
+  teacherSubscriptionRequired?: boolean;
+  verifiedArtist?: boolean;
+  verifiedDirector?: boolean;
+  verifiedDoctor?: boolean;
+  verifiedAstrologer?: boolean;
 }
 
 export default function AdminUsers() {
   const { toast } = useToast();
+  const [, setLocation] = useLocation();
   const [users, setUsers] = useState<User[]>([]);
   const [filteredUsers, setFilteredUsers] = useState<User[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
@@ -58,6 +67,11 @@ export default function AdminUsers() {
   const [actionType, setActionType] = useState<"block" | "unblock" | "deactivate" | "activate" | null>(null);
   const [isActionLoading, setIsActionLoading] = useState(false);
   const [updatingRole, setUpdatingRole] = useState<string | null>(null);
+  const [selectedUser, setSelectedUser] = useState<User | null>(null);
+  const [showSubscriptionModal, setShowSubscriptionModal] = useState(false);
+  const [subscriptionStatus, setSubscriptionStatus] = useState<"active" | "inactive" | "trial" | "expired">("inactive");
+  const [trialDays, setTrialDays] = useState<number>(7);
+  const [updatingSubscription, setUpdatingSubscription] = useState(false);
 
   // Filter states
   const [roleFilter, setRoleFilter] = useState<string>("all");
@@ -264,7 +278,7 @@ export default function AdminUsers() {
     }
   };
 
-  const handleRoleChange = async (userId: string, newRole: string) => {
+  const handleRoleChange = async (userId: string, newRole: string, requiresSubscription?: boolean) => {
     setUpdatingRole(userId);
     try {
       const sessionId = localStorage.getItem("adminSession");
@@ -276,7 +290,10 @@ export default function AdminUsers() {
           Authorization: `Bearer ${sessionId}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ role: newRole }),
+        body: JSON.stringify({ 
+          role: newRole,
+          requiresSubscription: requiresSubscription !== undefined ? requiresSubscription : (newRole === "music_teacher" || newRole === "artist" || newRole === "music_director" || newRole === "doctor" || newRole === "astrologer" ? true : undefined), // Default to true for music_teacher, artist, music_director, doctor, and astrologer. Student is FREE.
+        }),
       });
 
       if (!response.ok) {
@@ -284,11 +301,18 @@ export default function AdminUsers() {
         throw new Error(data.error || "Failed to update user role");
       }
 
+      const data = await response.json();
+
       // Update local state
       setUsers((prev) =>
         prev.map((user) =>
           user.id === userId
-            ? { ...user, role: newRole }
+            ? { 
+                ...user, 
+                role: newRole,
+                teacherSubscriptionRequired: newRole === "music_teacher" ? (requiresSubscription !== false) : undefined,
+                subscriptionStatus: (newRole === "music_teacher" || newRole === "artist" || newRole === "music_director" || newRole === "doctor" || newRole === "astrologer") && requiresSubscription !== false ? "inactive" : undefined,
+              }
             : user
         )
       );
@@ -297,6 +321,15 @@ export default function AdminUsers() {
         title: "Success",
         description: `User role updated to ${newRole}`,
       });
+
+      // If changing to music_teacher, artist, music_director, doctor, or astrologer and subscription is required, show subscription modal
+      if ((newRole === "music_teacher" || newRole === "artist" || newRole === "music_director" || newRole === "doctor" || newRole === "astrologer") && requiresSubscription !== false) {
+        const user = users.find(u => u.id === userId);
+        if (user) {
+          setSelectedUser({ ...user, role: newRole });
+          setShowSubscriptionModal(true);
+        }
+      }
     } catch (error) {
       toast({
         title: "Error",
@@ -308,10 +341,72 @@ export default function AdminUsers() {
     }
   };
 
+  const handleUpdateSubscription = async () => {
+    if (!selectedUser) return;
+
+    setUpdatingSubscription(true);
+    try {
+      const sessionId = localStorage.getItem("adminSession");
+      if (!sessionId) throw new Error("Not authenticated");
+
+      const response = await fetch(`/api/admin/users/${selectedUser.id}/subscription`, {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${sessionId}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ 
+          subscriptionStatus,
+          trialDays: subscriptionStatus === "trial" ? trialDays : undefined,
+        }),
+      });
+
+      if (!response.ok) {
+        const data = await response.json();
+        const errorMessage = data.error || `Failed to update subscription (${response.status})`;
+        console.error("Subscription update error:", errorMessage, data);
+        throw new Error(errorMessage);
+      }
+
+      const data = await response.json();
+
+      // Update local state
+      setUsers((prev) =>
+        prev.map((user) =>
+          user.id === selectedUser.id
+            ? { ...user, subscriptionStatus, subscriptionExpiresAt: data.subscriptionExpiresAt }
+            : user
+        )
+      );
+
+      toast({
+        title: "Success",
+        description: `Subscription status updated to ${subscriptionStatus}`,
+      });
+
+      setShowSubscriptionModal(false);
+      setSelectedUser(null);
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: error instanceof Error ? error.message : "Failed to update subscription",
+        variant: "destructive",
+      });
+    } finally {
+      setUpdatingSubscription(false);
+    }
+  };
+
   const getRoleBadge = (role: string = "user") => {
     const roleConfig = {
       admin: { label: "Admin", variant: "default" as const, icon: Shield },
       moderator: { label: "Moderator", variant: "secondary" as const, icon: Shield },
+      music_teacher: { label: "Music Teacher", variant: "default" as const, icon: UserIcon },
+      artist: { label: "Artist", variant: "default" as const, icon: UserIcon },
+      music_director: { label: "Music Director", variant: "default" as const, icon: UserIcon },
+      doctor: { label: "Doctor", variant: "default" as const, icon: UserIcon },
+      astrologer: { label: "Astrologer", variant: "default" as const, icon: Sparkles },
+      student: { label: "Student", variant: "default" as const, icon: GraduationCap },
       user: { label: "User", variant: "outline" as const, icon: UserIcon },
     };
 
@@ -404,6 +499,12 @@ export default function AdminUsers() {
                       <SelectItem value="user">User</SelectItem>
                       <SelectItem value="moderator">Moderator</SelectItem>
                       <SelectItem value="admin">Admin</SelectItem>
+                      <SelectItem value="music_teacher">Music Teacher</SelectItem>
+                      <SelectItem value="artist">Artist</SelectItem>
+                      <SelectItem value="music_director">Music Director</SelectItem>
+                      <SelectItem value="doctor">Doctor</SelectItem>
+                      <SelectItem value="astrologer">Astrologer</SelectItem>
+                      <SelectItem value="student">Student</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -568,8 +669,11 @@ export default function AdminUsers() {
                     <TableHead>Role</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead>Created</TableHead>
-                    <TableHead>Last Sign In</TableHead>
-                    <TableHead className="text-right">Actions</TableHead>
+                  <TableHead>Last Sign In</TableHead>
+                  {users.some(u => u.role === "music_teacher" || u.role === "artist" || u.role === "music_director") && (
+                    <TableHead>Subscription</TableHead>
+                  )}
+                  <TableHead className="text-right">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -587,7 +691,20 @@ export default function AdminUsers() {
                       <TableCell>
                         <Select
                           value={user.role || "user"}
-                          onValueChange={(value) => handleRoleChange(user.id, value)}
+                          onValueChange={(value) => {
+                            if (value === "music_teacher" || value === "artist" || value === "music_director" || value === "doctor" || value === "astrologer") {
+                              // Show confirmation dialog for subscription requirement
+                              const roleName = value === "music_teacher" ? "Music Teacher" : value === "artist" ? "Artist" : value === "music_director" ? "Music Director" : value === "doctor" ? "Doctor" : "Astrologer";
+                              const requiresSubscription = window.confirm(
+                                `Enable subscription requirement for ${roleName}? (Default: Yes)\n\n` +
+                                "Click OK to require subscription (default).\n" +
+                                "Click Cancel to allow free access."
+                              );
+                              handleRoleChange(user.id, value, requiresSubscription);
+                            } else {
+                              handleRoleChange(user.id, value);
+                            }
+                          }}
                           disabled={updatingRole === user.id}
                         >
                           <SelectTrigger className="w-[140px]">
@@ -616,8 +733,75 @@ export default function AdminUsers() {
                                 Admin
                               </div>
                             </SelectItem>
+                            <SelectItem value="music_teacher">
+                              <div className="flex items-center gap-2">
+                                <UserIcon className="h-4 w-4" />
+                                Music Teacher
+                              </div>
+                            </SelectItem>
+                            <SelectItem value="artist">
+                              <div className="flex items-center gap-2">
+                                <UserIcon className="h-4 w-4" />
+                                Artist
+                              </div>
+                            </SelectItem>
+                            <SelectItem value="music_director">
+                              <div className="flex items-center gap-2">
+                                <UserIcon className="h-4 w-4" />
+                                Music Director
+                              </div>
+                            </SelectItem>
+                            <SelectItem value="doctor">
+                              <div className="flex items-center gap-2">
+                                <UserIcon className="h-4 w-4" />
+                                Doctor
+                              </div>
+                            </SelectItem>
+                            <SelectItem value="astrologer">
+                              <div className="flex items-center gap-2">
+                                <Sparkles className="h-4 w-4" />
+                                Astrologer
+                              </div>
+                            </SelectItem>
+                            <SelectItem value="student">
+                              <div className="flex items-center gap-2">
+                                <GraduationCap className="h-4 w-4" />
+                                Student
+                              </div>
+                            </SelectItem>
                           </SelectContent>
                         </Select>
+                      </TableCell>
+                      <TableCell>
+                        {(user.role === "music_teacher" || user.role === "artist" || user.role === "music_director" || user.role === "doctor" || user.role === "astrologer") ? (
+                          <div className="flex flex-col gap-1">
+                            <Badge 
+                              variant={user.subscriptionStatus === "active" ? "default" : user.subscriptionStatus === "trial" ? "secondary" : "outline"}
+                              className="w-fit"
+                            >
+                              {user.subscriptionStatus || "inactive"}
+                            </Badge>
+                            {user.subscriptionExpiresAt && (
+                              <span className="text-xs text-muted-foreground">
+                                Expires: {format(new Date(user.subscriptionExpiresAt), "MMM d, yyyy")}
+                              </span>
+                            )}
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => {
+                                setSelectedUser(user);
+                                setSubscriptionStatus(user.subscriptionStatus || "inactive");
+                                setShowSubscriptionModal(true);
+                              }}
+                              className="mt-1"
+                            >
+                              Manage Subscription
+                            </Button>
+                          </div>
+                        ) : (
+                          <span className="text-muted-foreground text-sm">—</span>
+                        )}
                       </TableCell>
                       <TableCell>
                         <div className="flex gap-2 flex-wrap">
@@ -730,6 +914,59 @@ export default function AdminUsers() {
                 </>
               ) : (
                 "Confirm"
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Subscription Management Modal */}
+      <AlertDialog open={showSubscriptionModal} onOpenChange={setShowSubscriptionModal}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Manage Subscription</AlertDialogTitle>
+            <AlertDialogDescription>
+              Update subscription status for {selectedUser?.name} ({selectedUser?.email})
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label>Subscription Status</Label>
+              <Select value={subscriptionStatus} onValueChange={(value: any) => setSubscriptionStatus(value)}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="active">Active</SelectItem>
+                  <SelectItem value="inactive">Inactive</SelectItem>
+                  <SelectItem value="trial">Trial</SelectItem>
+                  <SelectItem value="expired">Expired</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            {subscriptionStatus === "trial" && (
+              <div className="space-y-2">
+                <Label>Trial Duration (days)</Label>
+                <Input
+                  type="number"
+                  min="1"
+                  max="365"
+                  value={trialDays}
+                  onChange={(e) => setTrialDays(parseInt(e.target.value) || 7)}
+                />
+              </div>
+            )}
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={updatingSubscription}>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={handleUpdateSubscription} disabled={updatingSubscription}>
+              {updatingSubscription ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Updating...
+                </>
+              ) : (
+                "Update Subscription"
               )}
             </AlertDialogAction>
           </AlertDialogFooter>
