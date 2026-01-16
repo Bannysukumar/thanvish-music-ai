@@ -1571,6 +1571,101 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   /**
+   * Helper function to normalize mobile number (remove spaces, dashes, parentheses)
+   */
+  function normalizeMobileNumber(mobileNumber: string): string {
+    // Remove all non-digit characters except +
+    return mobileNumber.replace(/[^\d+]/g, "");
+  }
+
+  /**
+   * GET /api/auth/check-email-exists
+   * Check if an email already exists in Firebase Auth
+   */
+  app.get("/api/auth/check-email-exists", async (req, res) => {
+    try {
+      const email = req.query.email as string;
+
+      if (!email || typeof email !== "string") {
+        return res.status(400).json({ error: "Email is required" });
+      }
+
+      try {
+        await adminAuth.getUserByEmail(email);
+        // User exists
+        res.json({ exists: true });
+      } catch (error: any) {
+        // If user not found, email doesn't exist
+        if (error.code === "auth/user-not-found") {
+          res.json({ exists: false });
+        } else {
+          throw error;
+        }
+      }
+    } catch (error: any) {
+      console.error("Error checking email existence:", error);
+      res.status(500).json({ error: "Failed to check email existence" });
+    }
+  });
+
+  /**
+   * GET /api/auth/check-mobile-exists
+   * Check if a mobile number already exists in Firestore users collection
+   */
+  app.get("/api/auth/check-mobile-exists", async (req, res) => {
+    try {
+      const mobileNumber = req.query.mobileNumber as string;
+
+      if (!mobileNumber || typeof mobileNumber !== "string") {
+        return res.status(400).json({ error: "Mobile number is required" });
+      }
+
+      // Normalize the mobile number
+      const normalizedMobile = normalizeMobileNumber(mobileNumber.trim());
+
+      if (normalizedMobile.length < 10) {
+        return res.status(400).json({ error: "Invalid mobile number format" });
+      }
+
+      // Query Firestore for users with this mobile number
+      // Check multiple variations: original, trimmed, normalized
+      const usersRef = adminDb.collection("users");
+      
+      // Check exact match with original (trimmed)
+      const exactMatch = await usersRef.where("mobileNumber", "==", mobileNumber.trim()).limit(1).get();
+      
+      // Check normalized version
+      const normalizedMatch = await usersRef.where("mobileNumber", "==", normalizedMobile).limit(1).get();
+
+      let exists = !exactMatch.empty || !normalizedMatch.empty;
+
+      // If not found with exact match, check all users and normalize their numbers
+      // This handles cases where numbers are stored in different formats
+      if (!exists) {
+        const allUsersSnapshot = await usersRef.limit(1000).get();
+        for (const doc of allUsersSnapshot.docs) {
+          const userData = doc.data();
+          if (userData.mobileNumber) {
+            const userNormalized = normalizeMobileNumber(userData.mobileNumber);
+            const inputNormalized = normalizedMobile;
+            // Compare normalized versions
+            if (userNormalized === inputNormalized || 
+                userData.mobileNumber.trim() === mobileNumber.trim()) {
+              exists = true;
+              break;
+            }
+          }
+        }
+      }
+
+      res.json({ exists });
+    } catch (error: any) {
+      console.error("Error checking mobile number existence:", error);
+      res.status(500).json({ error: "Failed to check mobile number existence" });
+    }
+  });
+
+  /**
    * Remove verified OTP after account creation (cleanup)
    * POST /api/auth/remove-otp
    */

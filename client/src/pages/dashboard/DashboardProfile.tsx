@@ -272,6 +272,13 @@ export default function DashboardProfile() {
 
     setIsSavingPreferences(true);
     try {
+      // First, get the existing user document to preserve role and subscriptionStatus
+      const userDocRef = doc(db, "users", user.id);
+      const userDocSnap = await getDoc(userDocRef);
+      
+      const existingData = userDocSnap.exists() ? userDocSnap.data() : {};
+      
+      // Prepare preferences with existing role and subscriptionStatus to satisfy Firestore rules
       const preferences = {
         generationMode,
         tradition,
@@ -283,9 +290,12 @@ export default function DashboardProfile() {
         gender: gender || null,
         language: language || null,
         updatedAt: serverTimestamp(),
+        // Preserve existing role and subscriptionStatus (required by Firestore rules)
+        role: existingData.role || "user",
+        subscriptionStatus: existingData.subscriptionStatus || null,
       };
 
-      await setDoc(doc(db, "users", user.id), preferences, { merge: true });
+      await setDoc(userDocRef, preferences, { merge: true });
 
       toast({
         title: "Preferences Saved!",
@@ -295,7 +305,7 @@ export default function DashboardProfile() {
       console.error("Error saving preferences:", error);
       toast({
         title: "Error",
-        description: "Failed to save preferences. Please try again.",
+        description: error instanceof Error ? error.message : "Failed to save preferences. Please try again.",
         variant: "destructive",
       });
     } finally {

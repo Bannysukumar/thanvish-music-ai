@@ -199,6 +199,40 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         throw new Error("Email must be verified via OTP before creating an account. Please verify your email first.");
       }
 
+      // Check if email already exists before attempting to create account
+      try {
+        const checkEmailResponse = await fetch(`/api/auth/check-email-exists?email=${encodeURIComponent(email)}`);
+        const checkEmailData = await checkEmailResponse.json();
+        
+        if (checkEmailData.exists) {
+          throw new Error("EMAIL_EXISTS: An account with this email already exists. Please login instead.");
+        }
+      } catch (checkError: any) {
+        // If the error is already our custom EMAIL_EXISTS error, re-throw it
+        if (checkError.message?.includes("EMAIL_EXISTS")) {
+          throw checkError;
+        }
+        // If check fails for other reasons, continue with account creation attempt
+        console.warn("Email existence check failed, proceeding with account creation:", checkError);
+      }
+
+      // Check if mobile number already exists before attempting to create account
+      try {
+        const checkMobileResponse = await fetch(`/api/auth/check-mobile-exists?mobileNumber=${encodeURIComponent(mobileNumber)}`);
+        const checkMobileData = await checkMobileResponse.json();
+        
+        if (checkMobileData.exists) {
+          throw new Error("MOBILE_EXISTS: An account with this mobile number already exists. Please login instead.");
+        }
+      } catch (checkError: any) {
+        // If the error is already our custom MOBILE_EXISTS error, re-throw it
+        if (checkError.message?.includes("MOBILE_EXISTS")) {
+          throw checkError;
+        }
+        // If check fails for other reasons, continue with account creation attempt
+        console.warn("Mobile number existence check failed, proceeding with account creation:", checkError);
+      }
+
       // Create user with Firebase
       const userCredential = await createUserWithEmailAndPassword(auth, email, password);
       
@@ -210,11 +244,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         
         // Store user profile with mobile number in Firestore
         // IMPORTANT: New signups always get role = "user" (default)
+        // Normalize mobile number for consistent storage (remove spaces, dashes, etc., keep +)
+        const normalizeMobile = (mobile: string): string => {
+          return mobile.replace(/[^\d+]/g, "");
+        };
+        
         const userProfileRef = doc(db, "users", userCredential.user.uid);
         await setDoc(userProfileRef, {
           name: name.trim(),
-          email: email.trim(),
-          mobileNumber: mobileNumber.trim(),
+          email: email.trim().toLowerCase(),
+          mobileNumber: normalizeMobile(mobileNumber.trim()),
           role: "user", // Default role - only admin can change this
           emailVerified: true, // Mark as verified since OTP was verified
           onboardingCompleted: false, // New users need to complete onboarding
@@ -240,10 +279,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // Handle Firebase auth errors
       let errorMessage = "Failed to create account. Please try again.";
       
-      if (error.message?.includes("Email must be verified")) {
+      if (error.message?.includes("EMAIL_EXISTS") || error.message?.includes("MOBILE_EXISTS")) {
+        errorMessage = error.message;
+      } else if (error.message?.includes("Email must be verified")) {
         errorMessage = error.message;
       } else if (error.code === "auth/email-already-in-use") {
-        errorMessage = "An account with this email already exists.";
+        errorMessage = "EMAIL_EXISTS: An account with this email already exists. Please login instead.";
       } else if (error.code === "auth/invalid-email") {
         errorMessage = "Invalid email address.";
       } else if (error.code === "auth/weak-password") {

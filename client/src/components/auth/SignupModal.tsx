@@ -103,6 +103,8 @@ export function SignupModal({
   const [isVerifyingOTP, setIsVerifyingOTP] = useState(false);
   const [resendCooldown, setResendCooldown] = useState(0);
   const [emailError, setEmailError] = useState<string | null>(null);
+  const [mobileError, setMobileError] = useState<string | null>(null);
+  const [isCheckingMobile, setIsCheckingMobile] = useState(false);
 
   const {
     register,
@@ -119,6 +121,7 @@ export function SignupModal({
   // Watch password for strength indicator
   const watchedPassword = watch("password", "");
   const watchedEmail = watch("email", "");
+  const watchedMobile = watch("mobileNumber", "");
 
   // Reset state when modal closes
   useEffect(() => {
@@ -130,6 +133,7 @@ export function SignupModal({
       setOtp("");
       setResendCooldown(0);
       setEmailError(null);
+      setMobileError(null);
     }
   }, [open, reset]);
 
@@ -284,11 +288,35 @@ export function SignupModal({
       onOpenChange(false);
       onSuccess?.();
     } catch (error) {
-      toast({
-        title: "Sign up failed",
-        description: error instanceof Error ? error.message : "Failed to create account",
-        variant: "destructive",
-      });
+      const errorMessage = error instanceof Error ? error.message : "Failed to create account";
+      const isEmailExistsError = errorMessage.includes("EMAIL_EXISTS") || (errorMessage.includes("already exists") && errorMessage.includes("email"));
+      const isMobileExistsError = errorMessage.includes("MOBILE_EXISTS") || (errorMessage.includes("already exists") && errorMessage.includes("mobile"));
+      
+      // If email or mobile already exists, reset email verification state and show helpful message
+      if (isEmailExistsError) {
+        setEmailVerified(false);
+        setOtpSent(false);
+        setOtp("");
+        setEmailError("An account with this email already exists. Please login instead.");
+        toast({
+          title: "Account already exists",
+          description: "An account with this email already exists. Please use the login button below to sign in.",
+          variant: "destructive",
+        });
+      } else if (isMobileExistsError) {
+        setMobileError("An account with this mobile number already exists. Please login instead.");
+        toast({
+          title: "Account already exists",
+          description: "An account with this mobile number already exists. Please use the login button below to sign in.",
+          variant: "destructive",
+        });
+      } else {
+        toast({
+          title: "Sign up failed",
+          description: errorMessage,
+          variant: "destructive",
+        });
+      }
     } finally {
       setIsLoading(false);
     }
@@ -454,13 +482,39 @@ export function SignupModal({
               id="mobileNumber"
               type="tel"
               placeholder="+1 234 567 8900"
-              {...register("mobileNumber")}
+              {...register("mobileNumber", {
+                onChange: async (e) => {
+                  const mobileValue = e.target.value;
+                  if (mobileValue && mobileValue.length >= 10 && emailVerified) {
+                    setIsCheckingMobile(true);
+                    setMobileError(null);
+                    try {
+                      const response = await fetch(`/api/auth/check-mobile-exists?mobileNumber=${encodeURIComponent(mobileValue)}`);
+                      const data = await response.json();
+                      if (data.exists) {
+                        setMobileError("An account with this mobile number already exists. Please login instead.");
+                      }
+                    } catch (error) {
+                      // Silently fail - don't block user input
+                      console.warn("Failed to check mobile number:", error);
+                    } finally {
+                      setIsCheckingMobile(false);
+                    }
+                  }
+                },
+              })}
               disabled={isLoading || !emailVerified}
             />
+            {isCheckingMobile && (
+              <p className="text-sm text-muted-foreground">Checking availability...</p>
+            )}
             {errors.mobileNumber && (
               <p className="text-sm text-destructive">
                 {errors.mobileNumber.message}
               </p>
+            )}
+            {mobileError && (
+              <p className="text-sm text-destructive">{mobileError}</p>
             )}
           </div>
 
