@@ -176,9 +176,21 @@ export default function MusicTeacherDashboard() {
         if (response.ok) {
           const data = await response.json();
           setSubscriptionDetails(data);
+        } else {
+          // Even if there's an error, try to get basic info from response
+          try {
+            const errorData = await response.json();
+            console.error("Error fetching subscription details:", errorData);
+            // Set minimal subscription details to show "No plan" message
+            setSubscriptionDetails(null);
+          } catch (parseError) {
+            console.error("Error parsing subscription details error:", parseError);
+            setSubscriptionDetails(null);
+          }
         }
       } catch (error) {
         console.error("Error fetching subscription details:", error);
+        setSubscriptionDetails(null);
       } finally {
         setIsLoadingSubscription(false);
       }

@@ -9,3 +9,6 @@ server/public
 *-firebase-adminsdk-*.json
 firebase-adminsdk-*.json
 
+# Razorpay keys (sensitive)
+rzp-key.csv
+

@@ -3,11 +3,18 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { BookOpen, Search, Play, Heart, Clock, Lock, Loader2, AlertCircle, CheckCircle } from "lucide-react";
+import { BookOpen, Search, Play, Heart, Clock, Lock, Loader2, AlertCircle, CheckCircle, CreditCard } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { db, auth } from "@/lib/firebase";
 import { collection, query, where, getDocs, limit, doc, getDoc } from "firebase/firestore";
 import { useToast } from "@/hooks/use-toast";
+import { useLocation } from "wouter";
+
+declare global {
+  interface Window {
+    Razorpay: any;
+  }
+}
 
 interface Course {
   id: string;
@@ -18,16 +25,23 @@ interface Course {
   thumbnailUrl?: string;
   lessonCount?: number;
   status: string;
+  price?: number;
+  roleUnlockOnPurchase?: string;
+  dashboardRedirectRole?: string;
 }
 
 export default function EducationalMusic() {
   const { user } = useAuth();
   const { toast } = useToast();
+  const [, setLocation] = useLocation();
   const [courses, setCourses] = useState<Course[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   const [enrollingCourseId, setEnrollingCourseId] = useState<string | null>(null);
+  const [purchasingCourseId, setPurchasingCourseId] = useState<string | null>(null);
   const [enrolledCourseIds, setEnrolledCourseIds] = useState<Set<string>>(new Set());
+  const [purchasedCourseIds, setPurchasedCourseIds] = useState<Set<string>>(new Set());
+  const [paymentsEnabled, setPaymentsEnabled] = useState(false);
 
   useEffect(() => {
     if (!user || user.role !== "student") {
@@ -36,7 +50,45 @@ export default function EducationalMusic() {
 
     fetchCourses();
     fetchEnrollments();
+    fetchPurchasedCourses();
+    checkPaymentsEnabled();
   }, [user]);
+
+  const checkPaymentsEnabled = async () => {
+    try {
+      const response = await fetch("/api/payments/razorpay-key");
+      if (response.ok) {
+        const data = await response.json();
+        setPaymentsEnabled(data.enabled === true);
+      }
+    } catch (error) {
+      console.error("Error checking payments status:", error);
+    }
+  };
+
+  const fetchPurchasedCourses = async () => {
+    if (!user?.id) return;
+    
+    try {
+      const currentUser = auth.currentUser;
+      if (!currentUser) return;
+
+      const token = await currentUser.getIdToken();
+      const response = await fetch("/api/user/subscription-details", {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        const purchased = data.purchasedCourses || [];
+        setPurchasedCourseIds(new Set(purchased));
+      }
+    } catch (error) {
+      console.error("Error fetching purchased courses:", error);
+    }
+  };
 
   const fetchEnrollments = async () => {
     if (!user?.id) return;
@@ -78,6 +130,170 @@ export default function EducationalMusic() {
       console.error("Error fetching courses:", error);
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handlePurchaseCourse = async (course: Course) => {
+    if (!user?.id || !auth.currentUser) {
+      toast({
+        title: "Error",
+        description: "Please login to purchase courses",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (purchasedCourseIds.has(course.id) || enrolledCourseIds.has(course.id)) {
+      toast({
+        title: "Already Purchased",
+        description: "You already have access to this course",
+      });
+      return;
+    }
+
+    if (!paymentsEnabled) {
+      toast({
+        title: "Payments Disabled",
+        description: "Payments are currently disabled. Please contact support.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setPurchasingCourseId(course.id);
+
+    try {
+      const token = await auth.currentUser.getIdToken();
+
+      // Create payment order
+      const orderResponse = await fetch("/api/payments/create-course-order", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          courseId: course.id,
+        }),
+      });
+
+      if (!orderResponse.ok) {
+        const errorData = await orderResponse.json();
+        throw new Error(errorData.error || "Failed to create payment order");
+      }
+
+      const orderData = await orderResponse.json();
+
+      // Get Razorpay key
+      const keyResponse = await fetch("/api/payments/razorpay-key");
+      if (!keyResponse.ok) {
+        throw new Error("Failed to get Razorpay key");
+      }
+      const keyData = await keyResponse.json();
+      if (!keyData.keyId) {
+        throw new Error("Razorpay is not configured");
+      }
+
+      // Initialize Razorpay checkout
+      const options = {
+        key: keyData.keyId,
+        amount: orderData.amount,
+        currency: orderData.currency,
+        name: "Thanvish Music AI",
+        description: `Course: ${course.title}`,
+        order_id: orderData.orderId,
+        handler: async function (response: any) {
+          try {
+            // Verify payment on server
+            const verifyResponse = await fetch("/api/payments/verify-course", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${token}`,
+              },
+              body: JSON.stringify({
+                paymentId: orderData.paymentId,
+                razorpayOrderId: response.razorpay_order_id,
+                razorpayPaymentId: response.razorpay_payment_id,
+                signature: response.razorpay_signature,
+              }),
+            });
+
+            if (!verifyResponse.ok) {
+              const errorData = await verifyResponse.json();
+              throw new Error(errorData.error || "Payment verification failed");
+            }
+
+            const verifyData = await verifyResponse.json();
+
+            toast({
+              title: "Success",
+              description: verifyData.message || "Payment successful! Course access activated.",
+            });
+
+            // Update purchased courses
+            setPurchasedCourseIds((prev) => new Set([...prev, course.id]));
+
+            // Handle role unlock and redirect
+            if (verifyData.roleUnlocked && verifyData.dashboardRedirectRole) {
+              setTimeout(() => {
+                // Redirect to the unlocked role's dashboard
+                const roleDashboardMap: Record<string, string> = {
+                  music_teacher: "/dashboard/teacher",
+                  artist: "/dashboard/artist",
+                  music_director: "/dashboard/director",
+                  doctor: "/dashboard/doctor",
+                  astrologer: "/dashboard/astrologer",
+                };
+                const redirectPath = roleDashboardMap[verifyData.dashboardRedirectRole] || "/dashboard";
+                window.location.href = redirectPath;
+              }, 2000);
+            } else {
+              // Refresh to show course access
+              setTimeout(() => {
+                window.location.reload();
+              }, 1500);
+            }
+          } catch (error: any) {
+            console.error("Payment verification error:", error);
+            toast({
+              title: "Payment Verification Failed",
+              description: error.message || "Failed to verify payment. Please contact support.",
+              variant: "destructive",
+            });
+          } finally {
+            setPurchasingCourseId(null);
+          }
+        },
+        prefill: {
+          name: user.name || "",
+          email: user.email || "",
+        },
+        theme: {
+          color: "#6366f1",
+        },
+        modal: {
+          ondismiss: function() {
+            setPurchasingCourseId(null);
+            toast({
+              title: "Payment Cancelled",
+              description: "Payment not completed. No changes were made.",
+              variant: "default",
+            });
+          },
+        },
+      };
+
+      const razorpay = new window.Razorpay(options);
+      razorpay.open();
+    } catch (error: any) {
+      console.error("Payment error:", error);
+      toast({
+        title: "Payment Failed",
+        description: error.message || "Payment failed or cancelled. No changes were made.",
+        variant: "destructive",
+      });
+      setPurchasingCourseId(null);
     }
   };
 
@@ -227,11 +443,40 @@ export default function EducationalMusic() {
                     <span>{course.lessonCount || 0} lessons</span>
                   </div>
                 </div>
+                {course.price !== undefined && course.price > 0 && (
+                  <div className="mb-4">
+                    <div className="text-2xl font-bold">₹{course.price.toFixed(2)}</div>
+                    {course.roleUnlockOnPurchase && (
+                      <p className="text-xs text-muted-foreground mt-1">
+                        Unlocks: {course.roleUnlockOnPurchase}
+                      </p>
+                    )}
+                  </div>
+                )}
                 <div className="flex gap-2">
-                  {enrolledCourseIds.has(course.id) ? (
+                  {enrolledCourseIds.has(course.id) || purchasedCourseIds.has(course.id) ? (
                     <Button className="flex-1" variant="outline" disabled>
                       <CheckCircle className="h-4 w-4 mr-2" />
-                      Enrolled
+                      {purchasedCourseIds.has(course.id) ? "Purchased" : "Enrolled"}
+                    </Button>
+                  ) : course.price !== undefined && course.price > 0 ? (
+                    <Button 
+                      className="flex-1" 
+                      variant="default"
+                      onClick={() => handlePurchaseCourse(course)}
+                      disabled={!paymentsEnabled || purchasingCourseId === course.id}
+                    >
+                      {purchasingCourseId === course.id ? (
+                        <>
+                          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                          Processing...
+                        </>
+                      ) : (
+                        <>
+                          <CreditCard className="h-4 w-4 mr-2" />
+                          Buy Course
+                        </>
+                      )}
                     </Button>
                   ) : (
                     <Button 

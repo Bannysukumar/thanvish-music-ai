@@ -37,6 +37,14 @@ export default function AdminSettings() {
   const [guestModeEnabled, setGuestModeEnabled] = useState(false);
   const [isSavingGuestMode, setIsSavingGuestMode] = useState(false);
 
+  // Razorpay settings state
+  const [razorpayKeyId, setRazorpayKeyId] = useState("");
+  const [razorpayKeySecret, setRazorpayKeySecret] = useState("");
+  const [showRazorpaySecret, setShowRazorpaySecret] = useState(false);
+  const [razorpayEnabled, setRazorpayEnabled] = useState(false);
+  const [isSavingRazorpay, setIsSavingRazorpay] = useState(false);
+  const [hasRazorpayConfig, setHasRazorpayConfig] = useState(false);
+
   useEffect(() => {
     const fetchSettings = async () => {
       try {
@@ -140,6 +148,32 @@ export default function AdminSettings() {
         if (guestModeResponse.ok) {
           const guestModeData = await guestModeResponse.json();
           setGuestModeEnabled(guestModeData.enabled || false);
+        }
+
+        // Fetch Razorpay settings
+        const razorpayResponse = await fetch("/api/admin/settings/razorpay", {
+          headers: {
+            Authorization: `Bearer ${sessionId}`,
+          },
+        });
+
+        if (razorpayResponse.status === 401) {
+          localStorage.removeItem("adminSession");
+          toast({
+            title: "Session Expired",
+            description: "Your session has expired. Please log in again.",
+            variant: "destructive",
+          });
+          window.location.href = "/admin/login";
+          return;
+        }
+
+        if (razorpayResponse.ok) {
+          const razorpayData = await razorpayResponse.json();
+          setRazorpayKeyId(razorpayData.keyId || "");
+          setRazorpayKeySecret(""); // Don't show masked secret, user needs to enter new one or leave blank
+          setRazorpayEnabled(razorpayData.enabled || false);
+          setHasRazorpayConfig(razorpayData.hasKey || false);
         }
       } catch (error) {
         console.error("Error fetching settings:", error);
@@ -304,6 +338,68 @@ export default function AdminSettings() {
       });
     } finally {
       setIsSavingSmtp(false);
+    }
+  };
+
+  const handleSaveRazorpay = async () => {
+    if (!razorpayKeyId.trim()) {
+      toast({
+        title: "Error",
+        description: "Razorpay Key ID is required",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (!razorpayKeySecret.trim()) {
+      toast({
+        title: "Error",
+        description: "Razorpay Key Secret is required",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setIsSavingRazorpay(true);
+    try {
+      const sessionId = localStorage.getItem("adminSession");
+      if (!sessionId) {
+        throw new Error("Not authenticated");
+      }
+
+      const response = await fetch("/api/admin/settings/razorpay", {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${sessionId}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          keyId: razorpayKeyId.trim(),
+          keySecret: razorpayKeySecret.trim(),
+          enabled: razorpayEnabled,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Failed to update Razorpay settings");
+      }
+
+      setHasRazorpayConfig(true);
+      setRazorpayKeySecret(""); // Clear secret field after save
+      toast({
+        title: "Success",
+        description: "Razorpay settings updated successfully",
+      });
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: error instanceof Error ? error.message : "Failed to update Razorpay settings",
+        variant: "destructive",
+      });
+    } finally {
+      setIsSavingRazorpay(false);
     }
   };
 
@@ -712,6 +808,133 @@ export default function AdminSettings() {
               <AlertDescription className="mt-2">
                 These settings are stored in your server's <code className="px-1.5 py-0.5 rounded bg-muted text-xs font-mono">.env</code> file.
                 For Gmail, use an App Password (not your regular password). The settings will be used for sending OTP verification emails to users during account creation.
+              </AlertDescription>
+            </Alert>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Razorpay Payment Settings Card */}
+      <Card>
+        <CardHeader className="pb-4">
+          <div className="flex items-center gap-3">
+            <div className="p-2 rounded-lg bg-primary/10">
+              <Key className="h-5 w-5 text-primary" />
+            </div>
+            <div className="flex-1">
+              <CardTitle className="text-xl">Payment Settings → Razorpay</CardTitle>
+              <CardDescription className="mt-1">
+                Configure Razorpay payment gateway for subscription and course purchases
+              </CardDescription>
+            </div>
+            <div className="flex items-center gap-3">
+              {hasRazorpayConfig && razorpayEnabled ? (
+                <div className="flex items-center gap-2 text-sm text-green-600 dark:text-green-400">
+                  <CheckCircle2 className="h-4 w-4" />
+                  <span className="font-medium">Enabled</span>
+                </div>
+              ) : (
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <AlertCircle className="h-4 w-4" />
+                  <span className="font-medium">Disabled</span>
+                </div>
+              )}
+            </div>
+          </div>
+        </CardHeader>
+        <Separator />
+        <CardContent className="pt-6">
+          <div className="space-y-6">
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="razorpayKeyId">Razorpay Key ID *</Label>
+                <Input
+                  id="razorpayKeyId"
+                  type="text"
+                  value={razorpayKeyId}
+                  onChange={(e) => setRazorpayKeyId(e.target.value)}
+                  placeholder="rzp_live_..."
+                  disabled={isSavingRazorpay}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Your Razorpay Key ID (starts with rzp_live_ or rzp_test_)
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="razorpayKeySecret">Razorpay Key Secret *</Label>
+                <div className="relative">
+                  <Input
+                    id="razorpayKeySecret"
+                    type={showRazorpaySecret ? "text" : "password"}
+                    value={razorpayKeySecret}
+                    onChange={(e) => setRazorpayKeySecret(e.target.value)}
+                    placeholder="Enter key secret (will be encrypted)"
+                    disabled={isSavingRazorpay}
+                  />
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="absolute right-0 top-0 h-full px-3 py-2 hover:bg-transparent"
+                    onClick={() => setShowRazorpaySecret(!showRazorpaySecret)}
+                    disabled={isSavingRazorpay}
+                  >
+                    {showRazorpaySecret ? (
+                      <EyeOff className="h-4 w-4 text-muted-foreground" />
+                    ) : (
+                      <Eye className="h-4 w-4 text-muted-foreground" />
+                    )}
+                  </Button>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Your Razorpay Key Secret (keep this secure, never expose to client)
+                </p>
+              </div>
+
+              <div className="flex items-center justify-between">
+                <div className="space-y-0.5">
+                  <Label htmlFor="razorpay-enabled" className="text-base font-medium">
+                    Enable Payments
+                  </Label>
+                  <p className="text-sm text-muted-foreground">
+                    When enabled, users can purchase plans and courses via Razorpay
+                  </p>
+                </div>
+                <Switch
+                  id="razorpay-enabled"
+                  checked={razorpayEnabled}
+                  onCheckedChange={setRazorpayEnabled}
+                  disabled={isSavingRazorpay}
+                />
+              </div>
+            </div>
+
+            <Button
+              onClick={handleSaveRazorpay}
+              disabled={isSavingRazorpay || !razorpayKeyId.trim() || !razorpayKeySecret.trim()}
+              className="w-full"
+            >
+              {isSavingRazorpay ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Saving...
+                </>
+              ) : (
+                <>
+                  <Save className="mr-2 h-4 w-4" />
+                  Save Razorpay Settings
+                </>
+              )}
+            </Button>
+
+            <Alert>
+              <Info className="h-4 w-4" />
+              <AlertTitle>Razorpay Configuration</AlertTitle>
+              <AlertDescription className="mt-2">
+                These settings are stored securely in Firebase. The Key Secret is never exposed to the client.
+                If payments are disabled, payment buttons will be hidden and users will see a message to contact support.
+                You can also set RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET in .env as a fallback.
               </AlertDescription>
             </Alert>
           </div>

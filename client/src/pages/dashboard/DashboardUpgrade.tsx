@@ -1,8 +1,11 @@
 import { useEffect, useState } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Crown, Check, Sparkles, Zap, Shield, Loader2 } from "lucide-react";
+import { Crown, Check, Sparkles, Zap, Shield, Loader2, CreditCard } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/contexts/AuthContext";
+import { auth } from "@/lib/firebase";
+import { useLocation } from "wouter";
 
 interface UpgradePlan {
   id: string;
@@ -11,19 +14,44 @@ interface UpgradePlan {
   duration: number;
   features: string[];
   role: string;
+  planType?: "free" | "paid" | "free_trial";
+  billingCycle?: "monthly" | "yearly";
+}
+
+declare global {
+  interface Window {
+    Razorpay: any;
+  }
 }
 
 /**
- * DashboardUpgrade component - upgrade/subscription page
+ * DashboardUpgrade component - upgrade/subscription page with Razorpay payments
  */
 export default function DashboardUpgrade() {
   const { toast } = useToast();
+  const { user } = useAuth();
+  const [, setLocation] = useLocation();
   const [plans, setPlans] = useState<UpgradePlan[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [paymentsEnabled, setPaymentsEnabled] = useState(false);
+  const [processingPayment, setProcessingPayment] = useState<string | null>(null);
 
   useEffect(() => {
     fetchUpgradePlans();
+    checkPaymentsEnabled();
   }, []);
+
+  const checkPaymentsEnabled = async () => {
+    try {
+      const response = await fetch("/api/payments/razorpay-key");
+      if (response.ok) {
+        const data = await response.json();
+        setPaymentsEnabled(data.enabled === true);
+      }
+    } catch (error) {
+      console.error("Error checking payments status:", error);
+    }
+  };
 
   const fetchUpgradePlans = async () => {
     try {
@@ -50,7 +78,7 @@ export default function DashboardUpgrade() {
 
   const formatPrice = (price: number) => {
     if (price === 0) return "Free";
-    return `$${price.toFixed(2)}`;
+    return `₹${price.toFixed(2)}`;
   };
 
   const formatDuration = (days: number) => {
@@ -67,8 +95,187 @@ export default function DashboardUpgrade() {
       music_director: "Music Director",
       doctor: "Doctor",
       astrologer: "Astrologer",
+      student: "Student",
     };
     return roleMap[role] || role;
+  };
+
+  const handlePurchase = async (planId: string, billingCycle: "monthly" | "yearly") => {
+    if (!user || user.isGuest) {
+      toast({
+        title: "Authentication Required",
+        description: "Please log in to purchase a plan",
+        variant: "destructive",
+      });
+      setLocation("/login");
+      return;
+    }
+
+    if (!paymentsEnabled) {
+      toast({
+        title: "Payments Disabled",
+        description: "Payments are currently disabled. Please contact support.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setProcessingPayment(`${planId}_${billingCycle}`);
+
+    try {
+      const currentUser = auth.currentUser;
+      if (!currentUser) {
+        throw new Error("User not authenticated");
+      }
+
+      const token = await currentUser.getIdToken();
+
+      // Create payment order
+      const orderResponse = await fetch("/api/payments/create-subscription-order", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          planId,
+          billingCycle,
+        }),
+      });
+
+      if (!orderResponse.ok) {
+        const errorData = await orderResponse.json();
+        throw new Error(errorData.error || "Failed to create payment order");
+      }
+
+      const orderData = await orderResponse.json();
+
+      // Get Razorpay key
+      const keyResponse = await fetch("/api/payments/razorpay-key");
+      if (!keyResponse.ok) {
+        throw new Error("Failed to get Razorpay key");
+      }
+      const keyData = await keyResponse.json();
+      if (!keyData.keyId) {
+        throw new Error("Razorpay is not configured");
+      }
+
+      // Initialize Razorpay checkout
+      const options = {
+        key: keyData.keyId,
+        amount: orderData.amount,
+        currency: orderData.currency,
+        name: "Thanvish Music AI",
+        description: `Subscription Plan - ${billingCycle}`,
+        order_id: orderData.orderId,
+        handler: async function (response: any) {
+          try {
+            // Verify payment on server
+            const verifyResponse = await fetch("/api/payments/verify-subscription", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${token}`,
+              },
+              body: JSON.stringify({
+                paymentId: orderData.paymentId,
+                razorpayOrderId: response.razorpay_order_id,
+                razorpayPaymentId: response.razorpay_payment_id,
+                signature: response.razorpay_signature,
+              }),
+            });
+
+            if (!verifyResponse.ok) {
+              const errorData = await verifyResponse.json();
+              throw new Error(errorData.error || "Payment verification failed");
+            }
+
+            const verifyData = await verifyResponse.json();
+
+            toast({
+              title: "Success",
+              description: verifyData.message || "Payment successful! Your plan is now active.",
+            });
+
+            // Redirect based on role assignment or default dashboard
+            setTimeout(() => {
+              if (verifyData.roleAssigned && verifyData.roleName) {
+                // Redirect to role-specific dashboard
+                const roleDashboardMap: Record<string, string> = {
+                  student: "/dashboard/student",
+                  music_teacher: "/dashboard/teacher",
+                  artist: "/dashboard/artist",
+                  music_director: "/dashboard/director",
+                  doctor: "/dashboard/doctor",
+                  astrologer: "/dashboard/astrologer",
+                };
+                const dashboardPath = roleDashboardMap[verifyData.roleName] || "/dashboard";
+                window.location.href = dashboardPath;
+              } else {
+                // Default dashboard redirect
+                window.location.href = "/dashboard";
+              }
+            }, 2000);
+          } catch (error: any) {
+            console.error("Payment verification error:", error);
+            toast({
+              title: "Payment Verification Failed",
+              description: error.message || "Failed to verify payment. Please contact support.",
+              variant: "destructive",
+            });
+          } finally {
+            setProcessingPayment(null);
+          }
+        },
+        prefill: {
+          name: user.name || "",
+          email: user.email || "",
+        },
+        theme: {
+          color: "#6366f1",
+        },
+        modal: {
+          ondismiss: function() {
+            setProcessingPayment(null);
+            toast({
+              title: "Payment Cancelled",
+              description: "Payment not completed. No changes were made.",
+              variant: "default",
+            });
+          },
+        },
+      };
+
+      const razorpay = new window.Razorpay(options);
+      razorpay.open();
+    } catch (error: any) {
+      console.error("Payment error:", error);
+      toast({
+        title: "Payment Failed",
+        description: error.message || "Payment failed or cancelled. No changes were made.",
+        variant: "destructive",
+      });
+      setProcessingPayment(null);
+    }
+  };
+
+  const handleActivateFree = async (planId: string) => {
+    if (!user || user.isGuest) {
+      toast({
+        title: "Authentication Required",
+        description: "Please log in to activate a plan",
+        variant: "destructive",
+      });
+      setLocation("/login");
+      return;
+    }
+
+    // For free plans, you might want to call an API to activate directly
+    // For now, show a message
+    toast({
+      title: "Free Plan",
+      description: "Please contact support to activate free plans, or upgrade to a paid plan.",
+    });
   };
 
   return (
@@ -80,6 +287,16 @@ export default function DashboardUpgrade() {
           Unlock premium features and enhance your music creation experience
         </p>
       </div>
+
+      {!paymentsEnabled && (
+        <Card className="border-yellow-500 bg-yellow-50 dark:bg-yellow-900/20">
+          <CardContent className="pt-6">
+            <p className="text-sm text-yellow-800 dark:text-yellow-200">
+              Payments are currently disabled. Please contact support.
+            </p>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Pricing plans */}
       {isLoading ? (
@@ -94,71 +311,114 @@ export default function DashboardUpgrade() {
         </Card>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {plans.map((plan, index) => (
-            <Card
-              key={plan.id}
-              className={index === 1 ? "border-primary border-2 relative" : ""}
-            >
-              {index === 1 && (
-                <div className="absolute -top-3 left-1/2 transform -translate-x-1/2">
-                  <span className="bg-primary text-primary-foreground px-3 py-1 rounded-full text-xs font-semibold">
-                    POPULAR
-                  </span>
-                </div>
-              )}
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  {index === 1 && <Crown className="h-5 w-5 text-primary" />}
-                  {index === plans.length - 1 && <Shield className="h-5 w-5" />}
-                  {plan.name}
-                </CardTitle>
-                <CardDescription>
-                  {getRoleLabel(plan.role)} Plan
-                </CardDescription>
-                <div className="mt-4">
-                  <span className="text-3xl font-bold">
-                    {formatPrice(plan.price)}
-                  </span>
-                  {plan.price > 0 && (
-                    <span className="text-muted-foreground">/{formatDuration(plan.duration)}</span>
-                  )}
-                </div>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <ul className="space-y-2">
-                  {plan.features.length > 0 ? (
-                    plan.features.map((feature, idx) => (
-                      <li key={idx} className="flex items-center gap-2 text-sm">
-                        <Check className="h-4 w-4 text-green-600" />
-                        <span>{feature}</span>
-                      </li>
-                    ))
+          {plans.map((plan, index) => {
+            const isFree = plan.price === 0 || plan.planType === "free";
+            const isProcessing = processingPayment?.startsWith(plan.id);
+
+            return (
+              <Card
+                key={plan.id}
+                className={index === 1 ? "border-primary border-2 relative" : ""}
+              >
+                {index === 1 && (
+                  <div className="absolute -top-3 left-1/2 transform -translate-x-1/2">
+                    <span className="bg-primary text-primary-foreground px-3 py-1 rounded-full text-xs font-semibold">
+                      POPULAR
+                    </span>
+                  </div>
+                )}
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    {index === 1 && <Crown className="h-5 w-5 text-primary" />}
+                    {index === plans.length - 1 && <Shield className="h-5 w-5" />}
+                    {plan.name}
+                  </CardTitle>
+                  <CardDescription>
+                    {getRoleLabel(plan.role)} Plan
+                  </CardDescription>
+                  <div className="mt-4">
+                    <span className="text-3xl font-bold">
+                      {formatPrice(plan.price)}
+                    </span>
+                    {plan.price > 0 && (
+                      <span className="text-muted-foreground">/{formatDuration(plan.duration)}</span>
+                    )}
+                  </div>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <ul className="space-y-2">
+                    {plan.features.length > 0 ? (
+                      plan.features.map((feature, idx) => (
+                        <li key={idx} className="flex items-center gap-2 text-sm">
+                          <Check className="h-4 w-4 text-green-600" />
+                          <span>{feature}</span>
+                        </li>
+                      ))
+                    ) : (
+                      <li className="text-sm text-muted-foreground">No features listed</li>
+                    )}
+                  </ul>
+                  
+                  {isFree ? (
+                    <Button
+                      className="w-full"
+                      variant="outline"
+                      onClick={() => handleActivateFree(plan.id)}
+                      disabled={isProcessing}
+                    >
+                      {isProcessing ? (
+                        <>
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          Processing...
+                        </>
+                      ) : (
+                        "Activate"
+                      )}
+                    </Button>
                   ) : (
-                    <li className="text-sm text-muted-foreground">No features listed</li>
+                    <div className="space-y-2">
+                      <Button
+                        className="w-full"
+                        variant={index === 1 ? "default" : "outline"}
+                        onClick={() => handlePurchase(plan.id, "monthly")}
+                        disabled={!paymentsEnabled || isProcessing}
+                      >
+                        {isProcessing && processingPayment === `${plan.id}_monthly` ? (
+                          <>
+                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                            Processing...
+                          </>
+                        ) : (
+                          <>
+                            <CreditCard className="mr-2 h-4 w-4" />
+                            Buy Monthly
+                          </>
+                        )}
+                      </Button>
+                      <Button
+                        className="w-full"
+                        variant="outline"
+                        onClick={() => handlePurchase(plan.id, "yearly")}
+                        disabled={!paymentsEnabled || isProcessing}
+                      >
+                        {isProcessing && processingPayment === `${plan.id}_yearly` ? (
+                          <>
+                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                            Processing...
+                          </>
+                        ) : (
+                          <>
+                            <CreditCard className="mr-2 h-4 w-4" />
+                            Buy Yearly
+                          </>
+                        )}
+                      </Button>
+                    </div>
                   )}
-                </ul>
-                <Button
-                  className={index === 1 ? "w-full" : "w-full"}
-                  variant={index === 1 ? "default" : "outline"}
-                  onClick={() => {
-                    // Navigate to upgrade page or handle purchase
-                    if (plan.price > 0) {
-                      window.location.href = "/dashboard/upgrade";
-                    }
-                  }}
-                >
-                  {plan.price === 0 ? (
-                    "Current Plan"
-                  ) : (
-                    <>
-                      <Sparkles className="mr-2 h-4 w-4" />
-                      {index === plans.length - 1 ? "Buy Now" : `Upgrade to ${plan.name}`}
-                    </>
-                  )}
-                </Button>
-              </CardContent>
-            </Card>
-          ))}
+                </CardContent>
+              </Card>
+            );
+          })}
         </div>
       )}
 
@@ -199,4 +459,3 @@ export default function DashboardUpgrade() {
     </div>
   );
 }
-

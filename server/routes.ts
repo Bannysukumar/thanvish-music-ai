@@ -27,6 +27,7 @@ import { checkStudentEnrollmentLimit } from "./student-limits";
 import { checkDoctorProgramLimit, checkDoctorTemplateLimit, checkDoctorArticleLimit, incrementDoctorProgramCount, incrementDoctorTemplateCount, incrementDoctorArticleCount } from "./doctor-limits";
 import { checkAstrologerClientLimit, checkAstrologerReadingLimit, checkAstrologerTemplateLimit, checkAstrologerRasiLimit, checkAstrologerPostLimit, incrementAstrologerReadingCount, incrementAstrologerTemplateCount, incrementAstrologerRasiCount, incrementAstrologerPostCount, validateHoroscopePostContent } from "./astrologer-limits";
 import { checkSubscriptionStatus } from "./expiry-handler";
+import { getRazorpayConfig, getRazorpayKeyId, getRazorpayInstance, createRazorpayOrder, verifyAndCapturePayment } from "./razorpay-utils";
 
 // Admin session storage (in-memory, use Redis in production)
 const adminSessions = new Map<string, { username: string; userId?: string; expiresAt: number }>();
@@ -191,7 +192,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       const userData = userDoc.data();
       const userRole = userData?.role;
-      const planId = userData?.planId;
+      const planId = userData?.planId || null;
 
       // Check and handle expiry before returning details (non-blocking)
       try {
@@ -214,14 +215,42 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const limitCheck = await checkSubscriptionLimits(userId);
       
       // Calculate days remaining
-      const subscriptionEndDate = userData?.subscriptionEndDate?.toDate?.() || 
-                                   userData?.subscriptionExpiresAt ? new Date(userData.subscriptionExpiresAt) : null;
+      let subscriptionEndDate: Date | null = null;
+      try {
+        if (userData?.subscriptionEndDate?.toDate) {
+          const endDate = userData.subscriptionEndDate.toDate();
+          if (endDate instanceof Date && !isNaN(endDate.getTime())) {
+            subscriptionEndDate = endDate;
+          }
+        } else if (userData?.subscriptionExpiresAt) {
+          const endDate = new Date(userData.subscriptionExpiresAt);
+          if (!isNaN(endDate.getTime())) {
+            subscriptionEndDate = endDate;
+          }
+        }
+      } catch (dateError) {
+        console.warn("Error parsing subscription end date:", dateError);
+      }
+
       let daysRemaining = null;
       if (subscriptionEndDate) {
         const now = new Date();
         const diffTime = subscriptionEndDate.getTime() - now.getTime();
         daysRemaining = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
         if (daysRemaining < 0) daysRemaining = 0;
+      }
+
+      // Safely parse subscription start date
+      let subscriptionStartDate: Date | null = null;
+      try {
+        if (userData?.subscriptionStartDate?.toDate) {
+          const startDate = userData.subscriptionStartDate.toDate();
+          if (startDate instanceof Date && !isNaN(startDate.getTime())) {
+            subscriptionStartDate = startDate;
+          }
+        }
+      } catch (dateError) {
+        console.warn("Error parsing subscription start date:", dateError);
       }
       
       const response: any = {
@@ -230,7 +259,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         planName: planData?.name || "No Plan",
         planType: planData?.planType || userData?.planType || "free",
         billingCycle: planData?.billingCycle || userData?.billingCycle || "monthly",
-        subscriptionStartDate: userData?.subscriptionStartDate?.toDate?.()?.toISOString() || null,
+        subscriptionStartDate: subscriptionStartDate?.toISOString() || null,
         subscriptionEndDate: subscriptionEndDate?.toISOString() || null,
         daysRemaining,
         dailyLimit: limitCheck.dailyLimit || 0,
@@ -239,6 +268,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         monthlyUsed: limitCheck.monthlyUsed || 0,
         dailyRemaining: limitCheck.dailyRemaining || 0,
         monthlyRemaining: limitCheck.monthlyRemaining || 0,
+        purchasedCourses: userData?.purchasedCourses || [],
       };
 
       // Add teacher-specific fields if user is a teacher
@@ -285,7 +315,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
         
         response.studentsAllocatedCount = actualAllocatedCount;
         response.studentsAllocatedRemaining = Math.max(0, (userData?.teacherMaxStudents || 0) - actualAllocatedCount);
-        response.teacherPlanExpiryDate = userData?.teacherPlanExpiryDate?.toDate?.()?.toISOString() || subscriptionEndDate?.toISOString() || null;
+        
+        // Safely parse teacher plan expiry date
+        let teacherPlanExpiryDate: Date | null = null;
+        try {
+          if (userData?.teacherPlanExpiryDate?.toDate) {
+            const expiryDate = userData.teacherPlanExpiryDate.toDate();
+            if (expiryDate instanceof Date && !isNaN(expiryDate.getTime())) {
+              teacherPlanExpiryDate = expiryDate;
+            }
+          }
+        } catch (dateError) {
+          console.warn("Error parsing teacher plan expiry date:", dateError);
+        }
+        response.teacherPlanExpiryDate = teacherPlanExpiryDate?.toISOString() || subscriptionEndDate?.toISOString() || null;
       }
 
       // Add student-specific fields if user is a student
@@ -2577,6 +2620,80 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // ========== RAZORPAY SETTINGS ==========
+  
+  // Get Razorpay settings (masked secret)
+  app.get("/api/admin/settings/razorpay", requireAdmin, async (req, res) => {
+    try {
+      const settingsDoc = await adminDb.collection("adminSettings").doc("razorpay").get();
+      
+      if (!settingsDoc.exists) {
+        // Check .env fallback
+        const envKeyId = process.env.RAZORPAY_KEY_ID || "";
+        const envKeySecret = process.env.RAZORPAY_KEY_SECRET || "";
+        const maskedSecret = envKeySecret ? `${envKeySecret.substring(0, 8)}...${envKeySecret.substring(envKeySecret.length - 4)}` : "";
+        
+        return res.json({
+          keyId: envKeyId || "",
+          keySecret: maskedSecret,
+          enabled: !!(envKeyId && envKeySecret),
+          hasKey: !!(envKeyId && envKeySecret),
+          source: "env",
+        });
+      }
+      
+      const data = settingsDoc.data();
+      const keySecret = data?.keySecret || "";
+      const maskedSecret = keySecret ? `${keySecret.substring(0, 8)}...${keySecret.substring(keySecret.length - 4)}` : "";
+      
+      res.json({
+        keyId: data?.keyId || "",
+        keySecret: maskedSecret,
+        enabled: data?.enabled === true,
+        hasKey: !!(data?.keyId && data?.keySecret),
+        source: "firebase",
+      });
+    } catch (error: any) {
+      console.error("Error getting Razorpay settings:", error);
+      res.status(500).json({ error: "Failed to get Razorpay settings" });
+    }
+  });
+
+  // Update Razorpay settings
+  app.put("/api/admin/settings/razorpay", requireAdmin, async (req, res) => {
+    try {
+      const { keyId, keySecret, enabled } = req.body;
+
+      if (!keyId || typeof keyId !== "string") {
+        return res.status(400).json({ error: "Razorpay Key ID is required" });
+      }
+
+      if (!keySecret || typeof keySecret !== "string") {
+        return res.status(400).json({ error: "Razorpay Key Secret is required" });
+      }
+
+      if (typeof enabled !== "boolean") {
+        return res.status(400).json({ error: "Enabled must be a boolean value" });
+      }
+
+      // Store in Firebase (encrypted/secured)
+      await adminDb.collection("adminSettings").doc("razorpay").set({
+        keyId: keyId.trim(),
+        keySecret: keySecret.trim(), // In production, encrypt this
+        enabled: enabled,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      }, { merge: true });
+
+      res.json({ 
+        success: true, 
+        message: "Razorpay settings updated successfully" 
+      });
+    } catch (error: any) {
+      console.error("Error updating Razorpay settings:", error);
+      res.status(500).json({ error: "Failed to update Razorpay settings" });
+    }
+  });
+
   // Get generation logs
   app.get("/api/admin/logs", requireAdmin, async (req, res) => {
     try {
@@ -4710,6 +4827,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Helper function to verify user token and get userId
+  async function verifyUserToken(req: Request): Promise<string | null> {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return null;
+    }
+    const token = authHeader.replace("Bearer ", "");
+    try {
+      const decodedToken = await adminAuth.verifyIdToken(token);
+      return decodedToken.uid;
+    } catch (error) {
+      return null;
+    }
+  }
+
   // Public endpoint to get upgrade page plans
   app.get("/api/upgrade-plans", async (req, res) => {
     try {
@@ -4760,6 +4892,897 @@ export async function registerRoutes(app: Express): Promise<Server> {
         error: "Failed to fetch upgrade plans",
         details: error.message || error.details || "Unknown error"
       });
+    }
+  });
+
+  // ========== RAZORPAY PAYMENTS ==========
+
+  // Get Razorpay Key ID (public, for client-side)
+  app.get("/api/payments/razorpay-key", async (req, res) => {
+    try {
+      const keyId = await getRazorpayKeyId();
+      const config = await getRazorpayConfig();
+      
+      if (!keyId || !config?.enabled) {
+        return res.json({ 
+          keyId: null, 
+          enabled: false,
+          message: "Payments are currently disabled. Please contact support."
+        });
+      }
+      
+      res.json({ keyId, enabled: true });
+    } catch (error: any) {
+      console.error("Error getting Razorpay key:", error);
+      res.status(500).json({ error: "Failed to get Razorpay configuration" });
+    }
+  });
+
+  // Create subscription payment order
+  app.post("/api/payments/create-subscription-order", async (req, res) => {
+    try {
+      const userId = await verifyUserToken(req);
+      if (!userId) {
+        return res.status(401).json({ error: "Authentication required" });
+      }
+
+      const { planId, billingCycle } = req.body;
+
+      if (!planId || !billingCycle) {
+        return res.status(400).json({ error: "planId and billingCycle are required" });
+      }
+
+      if (billingCycle !== "monthly" && billingCycle !== "yearly") {
+        return res.status(400).json({ error: "billingCycle must be 'monthly' or 'yearly'" });
+      }
+
+      // Check if payments are enabled
+      const config = await getRazorpayConfig();
+      if (!config || !config.enabled) {
+        return res.status(400).json({ 
+          error: "Payments are currently disabled. Please contact support." 
+        });
+      }
+
+      // Get plan details
+      const planDoc = await adminDb.collection("subscriptionPlans").doc(planId).get();
+      if (!planDoc.exists) {
+        return res.status(404).json({ error: "Plan not found" });
+      }
+
+      const planData = planDoc.data();
+      if (!planData) {
+        return res.status(404).json({ error: "Plan data not found" });
+      }
+
+      // Calculate amount based on billing cycle
+      let amount = planData.price || 0;
+      if (billingCycle === "yearly" && planData.billingCycle === "monthly") {
+        // If plan is monthly but user wants yearly, multiply by 12
+        amount = amount * 12;
+      }
+
+      if (amount <= 0) {
+        return res.status(400).json({ error: "This plan is free. No payment required." });
+      }
+
+      // Convert to paise (INR smallest unit)
+      const amountInPaise = Math.round(amount * 100);
+
+      // Create payment record in Firebase first
+      const paymentRef = adminDb.collection("subscriptionPayments").doc();
+      const paymentData = {
+        userId,
+        planId,
+        billingCycle,
+        amount: amount,
+        currency: "INR",
+        status: "CREATED",
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      };
+      await paymentRef.set(paymentData);
+
+      // Create Razorpay order
+      const razorpayOrder = await createRazorpayOrder(
+        amountInPaise,
+        "INR",
+        `sub_${paymentRef.id}`,
+        {
+          userId,
+          planId,
+          billingCycle,
+          paymentId: paymentRef.id,
+        }
+      );
+
+      if (!razorpayOrder) {
+        await paymentRef.update({ status: "FAILED" });
+        return res.status(500).json({ error: "Failed to create payment order" });
+      }
+
+      // Update payment record with Razorpay order ID
+      await paymentRef.update({
+        razorpayOrderId: razorpayOrder.orderId,
+        status: "ORDER_CREATED",
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+
+      res.json({
+        orderId: razorpayOrder.orderId,
+        amount: razorpayOrder.amount,
+        currency: razorpayOrder.currency,
+        paymentId: paymentRef.id,
+        keyId: config.keyId,
+      });
+    } catch (error: any) {
+      console.error("Error creating subscription order:", error);
+      res.status(500).json({ error: error.message || "Failed to create payment order" });
+    }
+  });
+
+  // Verify subscription payment
+  app.post("/api/payments/verify-subscription", async (req, res) => {
+    try {
+      const userId = await verifyUserToken(req);
+      if (!userId) {
+        return res.status(401).json({ error: "Authentication required" });
+      }
+
+      const { paymentId, razorpayOrderId, razorpayPaymentId, signature } = req.body;
+
+      if (!paymentId || !razorpayOrderId || !razorpayPaymentId || !signature) {
+        return res.status(400).json({ error: "Missing required payment verification fields" });
+      }
+
+      // Get payment record
+      const paymentRef = adminDb.collection("subscriptionPayments").doc(paymentId);
+      const paymentDoc = await paymentRef.get();
+
+      if (!paymentDoc.exists) {
+        return res.status(404).json({ error: "Payment record not found" });
+      }
+
+      const paymentData = paymentDoc.data();
+      if (paymentData?.userId !== userId) {
+        return res.status(403).json({ error: "Unauthorized access to payment record" });
+      }
+
+      if (paymentData?.status === "SUCCESS") {
+        return res.json({ 
+          success: true, 
+          message: "Payment already verified",
+          paymentId,
+        });
+      }
+
+      // Verify payment with Razorpay
+      const isValid = await verifyAndCapturePayment(razorpayOrderId, razorpayPaymentId, signature);
+
+      if (!isValid) {
+        await paymentRef.update({
+          status: "FAILED",
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+        return res.status(400).json({ error: "Payment verification failed" });
+      }
+
+      // Payment verified - activate subscription
+      const { planId, billingCycle, amount } = paymentData;
+
+      // Get plan details
+      const planDoc = await adminDb.collection("subscriptionPlans").doc(planId).get();
+      if (!planDoc.exists) {
+        return res.status(404).json({ error: "Plan not found" });
+      }
+
+      const planData = planDoc.data();
+      if (!planData) {
+        return res.status(404).json({ error: "Plan data not found" });
+      }
+
+      // Calculate validity
+      const now = new Date();
+      let validityDays = planData.validityDays || planData.duration || 30;
+      
+      // Adjust for billing cycle
+      if (billingCycle === "yearly") {
+        validityDays = 365;
+      } else if (billingCycle === "monthly") {
+        validityDays = 30;
+      }
+
+      const endDate = new Date(now);
+      endDate.setDate(endDate.getDate() + validityDays);
+
+      // Update user subscription
+      const userRef = adminDb.collection("users").doc(userId);
+      const userDoc = await userRef.get();
+      const userData = userDoc.data();
+      const currentRole = userData?.role || "user";
+      const planRole = planData?.role;
+
+      // Role level mapping
+      const roleLevels: Record<string, number> = {
+        user: 0,
+        student: 1,
+        music_teacher: 2,
+        artist: 3,
+        music_director: 4,
+        doctor: 5,
+        astrologer: 6,
+        admin: 7,
+      };
+
+      const currentLevel = roleLevels[currentRole] || 0;
+      const planLevel = roleLevels[planRole] || 0;
+
+      const updateData: any = {
+        planId,
+        subscriptionStatus: "active",
+        subscriptionStartDate: admin.firestore.Timestamp.fromDate(now),
+        subscriptionEndDate: admin.firestore.Timestamp.fromDate(endDate),
+        billingCycle,
+        planType: planData?.planType || "paid",
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      };
+
+      // Auto-assign role if plan role is higher than current role
+      if (planRole && planLevel > currentLevel) {
+        updateData.role = planRole;
+        updateData.roleLevel = planLevel;
+        updateData.requiresSubscription = true;
+      } else if (planRole && planLevel === currentLevel && currentRole !== planRole) {
+        // If same level but different role, update to plan role (e.g., switching between artist and director)
+        updateData.role = planRole;
+        updateData.requiresSubscription = true;
+      } else if (planRole) {
+        // If user already has equal or higher role, just ensure subscription is required
+        updateData.requiresSubscription = true;
+      }
+
+      // Copy plan limits and reset counters based on plan role
+      if (planRole === "student") {
+        updateData.studentMaxEnrollments = planData?.studentMaxEnrollments || 0;
+      } else if (planRole === "music_teacher") {
+        updateData.teacherMaxStudents = planData?.teacherMaxStudents || 0;
+        updateData.teacherMaxCourses = planData?.teacherMaxCourses || 0;
+        updateData.teacherMaxLessons = planData?.teacherMaxLessons || 0;
+        updateData.teacherPlanExpiryDate = admin.firestore.Timestamp.fromDate(endDate);
+        // Keep existing studentsAllocatedCount or initialize to 0
+        updateData.studentsAllocatedCount = userData?.studentsAllocatedCount || 0;
+      } else if (planRole === "artist") {
+        updateData.maxTrackUploadsPerDay = planData?.maxTrackUploadsPerDay || 0;
+        updateData.maxTrackUploadsPerMonth = planData?.maxTrackUploadsPerMonth || 0;
+        updateData.maxAlbumsPublishedPerMonth = planData?.maxAlbumsPublishedPerMonth || 0;
+        // Reset artist usage counters
+        updateData.trackUploadsUsedToday = 0;
+        updateData.trackUploadsUsedThisMonth = 0;
+        updateData.albumsPublishedThisMonth = 0;
+        const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        const firstOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+        updateData.lastTrackUploadDailyReset = admin.firestore.Timestamp.fromDate(today);
+        updateData.lastTrackUploadMonthlyReset = admin.firestore.Timestamp.fromDate(firstOfMonth);
+        updateData.lastAlbumPublishMonthlyReset = admin.firestore.Timestamp.fromDate(firstOfMonth);
+      } else if (planRole === "music_director") {
+        updateData.maxActiveProjects = planData?.maxActiveProjects || 0;
+        updateData.artistDiscoveryPerDay = planData?.artistDiscoveryPerDay || 0;
+        updateData.artistDiscoveryPerMonth = planData?.artistDiscoveryPerMonth || 0;
+        updateData.maxShortlistsCreatePerMonth = planData?.maxShortlistsCreatePerMonth || 0;
+        // Reset director usage counters
+        updateData.artistDiscoveryUsedToday = 0;
+        updateData.artistDiscoveryUsedThisMonth = 0;
+        updateData.shortlistsCreatedThisMonth = 0;
+        const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        const firstOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+        updateData.lastDiscoveryDailyReset = admin.firestore.Timestamp.fromDate(today);
+        updateData.lastDiscoveryMonthlyReset = admin.firestore.Timestamp.fromDate(firstOfMonth);
+        updateData.lastShortlistMonthlyReset = admin.firestore.Timestamp.fromDate(firstOfMonth);
+      } else if (planRole === "doctor") {
+        updateData.maxProgramsCreatePerMonth = planData?.maxProgramsCreatePerMonth || 0;
+        updateData.maxTemplatesCreatePerMonth = planData?.maxTemplatesCreatePerMonth || 0;
+        updateData.maxArticlesPublishPerMonth = planData?.maxArticlesPublishPerMonth || 0;
+        // Reset doctor usage counters
+        updateData.programsCreatedThisMonth = 0;
+        updateData.templatesCreatedThisMonth = 0;
+        updateData.articlesPublishedThisMonth = 0;
+        const firstOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+        updateData.lastProgramsMonthlyReset = admin.firestore.Timestamp.fromDate(firstOfMonth);
+        updateData.lastTemplatesMonthlyReset = admin.firestore.Timestamp.fromDate(firstOfMonth);
+        updateData.lastArticlesMonthlyReset = admin.firestore.Timestamp.fromDate(firstOfMonth);
+      } else if (planRole === "astrologer") {
+        updateData.maxClientsActive = planData?.maxClientsActive || 0;
+        updateData.maxReadingsPerMonth = planData?.maxReadingsPerMonth || 0;
+        updateData.maxAstroTemplatesCreatePerMonth = planData?.maxAstroTemplatesCreatePerMonth || 0;
+        updateData.maxRasiRecommendationsCreatePerMonth = planData?.maxRasiRecommendationsCreatePerMonth || 0;
+        updateData.maxHoroscopePostsPublishPerMonth = planData?.maxHoroscopePostsPublishPerMonth || 0;
+        // Reset astrologer usage counters
+        updateData.readingsCreatedThisMonth = 0;
+        updateData.astroTemplatesCreatedThisMonth = 0;
+        updateData.rasiRecommendationsCreatedThisMonth = 0;
+        updateData.horoscopePostsPublishedThisMonth = 0;
+        const firstOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+        updateData.lastReadingsMonthlyReset = admin.firestore.Timestamp.fromDate(firstOfMonth);
+        updateData.lastAstroTemplatesMonthlyReset = admin.firestore.Timestamp.fromDate(firstOfMonth);
+        updateData.lastRasiRecommendationsMonthlyReset = admin.firestore.Timestamp.fromDate(firstOfMonth);
+        updateData.lastHoroscopePostsMonthlyReset = admin.firestore.Timestamp.fromDate(firstOfMonth);
+      }
+
+      // Reset general generation counters
+      updateData.dailyGenerationUsed = 0;
+      updateData.monthlyGenerationUsed = 0;
+      const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      const firstOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+      updateData.lastDailyReset = admin.firestore.Timestamp.fromDate(today);
+      updateData.lastMonthlyReset = admin.firestore.Timestamp.fromDate(firstOfMonth);
+
+      await userRef.update(updateData);
+
+      // Update payment record
+      await paymentRef.update({
+        status: "SUCCESS",
+        razorpayPaymentId,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+
+      // Create audit log
+      const roleAssigned = planRole && planLevel > currentLevel;
+      await adminDb.collection("auditLogs").add({
+        userId,
+        action: "SUBSCRIPTION_PURCHASED",
+        details: {
+          planId,
+          planName: planData.name,
+          planRole: planRole,
+          billingCycle,
+          amount,
+          paymentId,
+          roleAssigned: roleAssigned,
+          previousRole: currentRole,
+          newRole: roleAssigned ? planRole : currentRole,
+        },
+        timestamp: admin.firestore.FieldValue.serverTimestamp(),
+      });
+
+      res.json({
+        success: true,
+        message: roleAssigned 
+          ? `Payment successful! Your plan is now active. You've been assigned the ${planRole} role.`
+          : "Payment successful! Your plan is now active.",
+        paymentId,
+        roleAssigned: roleAssigned,
+        roleName: roleAssigned ? planRole : null,
+      });
+    } catch (error: any) {
+      console.error("Error verifying subscription payment:", error);
+      res.status(500).json({ error: error.message || "Failed to verify payment" });
+    }
+  });
+
+  // Create course payment order
+  app.post("/api/payments/create-course-order", async (req, res) => {
+    try {
+      const userId = await verifyUserToken(req);
+      if (!userId) {
+        return res.status(401).json({ error: "Authentication required" });
+      }
+
+      const { courseId } = req.body;
+
+      if (!courseId) {
+        return res.status(400).json({ error: "courseId is required" });
+      }
+
+      // Check if payments are enabled
+      const config = await getRazorpayConfig();
+      if (!config || !config.enabled) {
+        return res.status(400).json({ 
+          error: "Payments are currently disabled. Please contact support." 
+        });
+      }
+
+      // Get course details
+      const courseDoc = await adminDb.collection("courses").doc(courseId).get();
+      if (!courseDoc.exists) {
+        return res.status(404).json({ error: "Course not found" });
+      }
+
+      const courseData = courseDoc.data();
+      if (!courseData) {
+        return res.status(404).json({ error: "Course data not found" });
+      }
+
+      if (courseData.status !== "live") {
+        return res.status(400).json({ error: "Course is not available for purchase" });
+      }
+
+      const amount = courseData.price || 0;
+      if (amount <= 0) {
+        return res.status(400).json({ error: "This course is free. No payment required." });
+      }
+
+      // Check if user already has access
+      const userDoc = await adminDb.collection("users").doc(userId).get();
+      const userData = userDoc.data();
+      const purchasedCourses = userData?.purchasedCourses || [];
+      
+      if (purchasedCourses.includes(courseId)) {
+        return res.status(400).json({ error: "You already have access to this course" });
+      }
+
+      // Convert to paise (INR smallest unit)
+      const amountInPaise = Math.round(amount * 100);
+
+      // Create payment record in Firebase first
+      const paymentRef = adminDb.collection("coursePayments").doc();
+      const paymentData = {
+        userId,
+        courseId,
+        amount: amount,
+        currency: "INR",
+        status: "CREATED",
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      };
+      await paymentRef.set(paymentData);
+
+      // Create Razorpay order
+      const razorpayOrder = await createRazorpayOrder(
+        amountInPaise,
+        "INR",
+        `course_${paymentRef.id}`,
+        {
+          userId,
+          courseId,
+          paymentId: paymentRef.id,
+        }
+      );
+
+      if (!razorpayOrder) {
+        await paymentRef.update({ status: "FAILED" });
+        return res.status(500).json({ error: "Failed to create payment order" });
+      }
+
+      // Update payment record with Razorpay order ID
+      await paymentRef.update({
+        razorpayOrderId: razorpayOrder.orderId,
+        status: "ORDER_CREATED",
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+
+      res.json({
+        orderId: razorpayOrder.orderId,
+        amount: razorpayOrder.amount,
+        currency: razorpayOrder.currency,
+        paymentId: paymentRef.id,
+        keyId: config.keyId,
+      });
+    } catch (error: any) {
+      console.error("Error creating course order:", error);
+      res.status(500).json({ error: error.message || "Failed to create payment order" });
+    }
+  });
+
+  // Verify course payment
+  app.post("/api/payments/verify-course", async (req, res) => {
+    try {
+      const userId = await verifyUserToken(req);
+      if (!userId) {
+        return res.status(401).json({ error: "Authentication required" });
+      }
+
+      const { paymentId, razorpayOrderId, razorpayPaymentId, signature } = req.body;
+
+      if (!paymentId || !razorpayOrderId || !razorpayPaymentId || !signature) {
+        return res.status(400).json({ error: "Missing required payment verification fields" });
+      }
+
+      // Get payment record
+      const paymentRef = adminDb.collection("coursePayments").doc(paymentId);
+      const paymentDoc = await paymentRef.get();
+
+      if (!paymentDoc.exists) {
+        return res.status(404).json({ error: "Payment record not found" });
+      }
+
+      const paymentData = paymentDoc.data();
+      if (paymentData?.userId !== userId) {
+        return res.status(403).json({ error: "Unauthorized access to payment record" });
+      }
+
+      if (paymentData?.status === "SUCCESS") {
+        return res.json({ 
+          success: true, 
+          message: "Payment already verified",
+          paymentId,
+        });
+      }
+
+      // Verify payment with Razorpay
+      const isValid = await verifyAndCapturePayment(razorpayOrderId, razorpayPaymentId, signature);
+
+      if (!isValid) {
+        await paymentRef.update({
+          status: "FAILED",
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+        return res.status(400).json({ error: "Payment verification failed" });
+      }
+
+      // Payment verified - grant course access
+      const { courseId, amount } = paymentData;
+
+      // Get course details
+      const courseDoc = await adminDb.collection("courses").doc(courseId).get();
+      if (!courseDoc.exists) {
+        return res.status(404).json({ error: "Course not found" });
+      }
+
+      const courseData = courseDoc.data();
+      if (!courseData) {
+        return res.status(404).json({ error: "Course data not found" });
+      }
+
+      // Update user - add course to purchasedCourses
+      const userRef = adminDb.collection("users").doc(userId);
+      const userDoc = await userRef.get();
+      const userData = userDoc.data();
+      
+      const purchasedCourses = userData?.purchasedCourses || [];
+      if (!purchasedCourses.includes(courseId)) {
+        purchasedCourses.push(courseId);
+      }
+
+      const now = new Date();
+      const updateData: any = {
+        purchasedCourses,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      };
+
+      // If course has validity, set access dates
+      if (courseData.validityDays) {
+        const endDate = new Date(now);
+        endDate.setDate(endDate.getDate() + courseData.validityDays);
+        
+        const courseAccess = userData?.courseAccess || {};
+        courseAccess[courseId] = {
+          startDate: admin.firestore.Timestamp.fromDate(now),
+          endDate: admin.firestore.Timestamp.fromDate(endDate),
+        };
+        updateData.courseAccess = courseAccess;
+      }
+
+      // Auto role assignment if course unlocks a role
+      let roleUnlocked = false;
+      let roleName = null;
+      if (courseData.roleUnlockOnPurchase) {
+        const newRole = courseData.roleUnlockOnPurchase;
+        const currentRole = userData?.role || "user";
+        
+        // Only assign if user doesn't already have this role or higher
+        const roleLevels: Record<string, number> = {
+          user: 0,
+          student: 1,
+          music_teacher: 2,
+          artist: 3,
+          music_director: 4,
+          doctor: 5,
+          astrologer: 6,
+          admin: 7,
+        };
+        
+        const currentLevel = roleLevels[currentRole] || 0;
+        const newLevel = roleLevels[newRole] || 0;
+        
+        if (newLevel > currentLevel) {
+          updateData.role = newRole;
+          updateData.roleLevel = newLevel;
+          roleUnlocked = true;
+          roleName = newRole;
+        }
+      }
+
+      await userRef.update(updateData);
+
+      // Update payment record
+      await paymentRef.update({
+        status: "SUCCESS",
+        razorpayPaymentId,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+
+      // Create audit log
+      await adminDb.collection("auditLogs").add({
+        userId,
+        action: "COURSE_PURCHASED",
+        details: {
+          courseId,
+          courseTitle: courseData.title,
+          amount,
+          paymentId,
+          roleUnlocked: roleUnlocked ? roleName : null,
+        },
+        timestamp: admin.firestore.FieldValue.serverTimestamp(),
+      });
+
+      res.json({
+        success: true,
+        message: roleUnlocked 
+          ? `Payment successful! Course access activated. You've unlocked ${roleName}. Redirecting to your dashboard...`
+          : "Payment successful! Course access activated.",
+        paymentId,
+        roleUnlocked,
+        roleName,
+        dashboardRedirectRole: courseData.dashboardRedirectRole || roleName,
+      });
+    } catch (error: any) {
+      console.error("Error verifying course payment:", error);
+      res.status(500).json({ error: error.message || "Failed to verify payment" });
+    }
+  });
+
+  // Razorpay webhook endpoint (for payment verification)
+  app.post("/api/payments/webhook", async (req, res) => {
+    try {
+      const webhookSignature = req.headers["x-razorpay-signature"] as string;
+      const webhookSecret = (await getRazorpayConfig())?.keySecret;
+
+      if (!webhookSecret) {
+        return res.status(500).json({ error: "Webhook secret not configured" });
+      }
+
+      // Verify webhook signature
+      const crypto = require("crypto");
+      const payload = JSON.stringify(req.body);
+      const generatedSignature = crypto
+        .createHmac("sha256", webhookSecret)
+        .update(payload)
+        .digest("hex");
+
+      if (generatedSignature !== webhookSignature) {
+        return res.status(400).json({ error: "Invalid webhook signature" });
+      }
+
+      const event = req.body.event;
+      const paymentEntity = req.body.payload?.payment?.entity;
+
+      if (event === "payment.captured" || event === "payment.authorized") {
+        const razorpayOrderId = paymentEntity?.order_id;
+        const razorpayPaymentId = paymentEntity?.id;
+
+        if (!razorpayOrderId || !razorpayPaymentId) {
+          return res.status(400).json({ error: "Missing order or payment ID" });
+        }
+
+        // Find payment record by razorpayOrderId
+        let paymentRef: any = null;
+        let paymentData: any = null;
+        let paymentType: "subscription" | "course" = "subscription";
+
+        // Try subscription payments first
+        const subscriptionPayments = await adminDb
+          .collection("subscriptionPayments")
+          .where("razorpayOrderId", "==", razorpayOrderId)
+          .limit(1)
+          .get();
+
+        if (!subscriptionPayments.empty) {
+          paymentRef = subscriptionPayments.docs[0].ref;
+          paymentData = subscriptionPayments.docs[0].data();
+          paymentType = "subscription";
+        } else {
+          // Try course payments
+          const coursePayments = await adminDb
+            .collection("coursePayments")
+            .where("razorpayOrderId", "==", razorpayOrderId)
+            .limit(1)
+            .get();
+
+          if (!coursePayments.empty) {
+            paymentRef = coursePayments.docs[0].ref;
+            paymentData = coursePayments.docs[0].data();
+            paymentType = "course";
+          }
+        }
+
+        if (!paymentRef || !paymentData) {
+          console.warn("Payment record not found for webhook:", razorpayOrderId);
+          return res.status(404).json({ error: "Payment record not found" });
+        }
+
+        // Only process if not already successful
+        if (paymentData.status === "SUCCESS") {
+          return res.json({ success: true, message: "Payment already processed" });
+        }
+
+        // Update payment status
+        await paymentRef.update({
+          status: "SUCCESS",
+          razorpayPaymentId,
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+
+        // Process subscription or course activation (similar to verify endpoints)
+        // This is a simplified version - in production, you might want to call the same logic
+        const userId = paymentData.userId;
+
+        if (paymentType === "subscription") {
+          const { planId, billingCycle } = paymentData;
+          const planDoc = await adminDb.collection("subscriptionPlans").doc(planId).get();
+          if (planDoc.exists) {
+            const planData = planDoc.data();
+            const now = new Date();
+            let validityDays = planData?.validityDays || planData?.duration || 30;
+            
+            if (billingCycle === "yearly") validityDays = 365;
+            else if (billingCycle === "monthly") validityDays = 30;
+
+            const endDate = new Date(now);
+            endDate.setDate(endDate.getDate() + validityDays);
+
+            // Get user data
+            const userRef = adminDb.collection("users").doc(userId);
+            const userDoc = await userRef.get();
+            const userData = userDoc.data();
+            const currentRole = userData?.role || "user";
+            const planRole = planData?.role;
+
+            // Role level mapping
+            const roleLevels: Record<string, number> = {
+              user: 0,
+              student: 1,
+              music_teacher: 2,
+              artist: 3,
+              music_director: 4,
+              doctor: 5,
+              astrologer: 6,
+              admin: 7,
+            };
+
+            const currentLevel = roleLevels[currentRole] || 0;
+            const planLevel = roleLevels[planRole] || 0;
+
+            const updateData: any = {
+              planId,
+              subscriptionStatus: "active",
+              subscriptionStartDate: admin.firestore.Timestamp.fromDate(now),
+              subscriptionEndDate: admin.firestore.Timestamp.fromDate(endDate),
+              billingCycle,
+              planType: planData?.planType || "paid",
+              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            };
+
+            // Auto-assign role if plan role is higher than current role
+            if (planRole && planLevel > currentLevel) {
+              updateData.role = planRole;
+              updateData.roleLevel = planLevel;
+              updateData.requiresSubscription = true;
+            } else if (planRole && planLevel === currentLevel && currentRole !== planRole) {
+              updateData.role = planRole;
+              updateData.requiresSubscription = true;
+            } else if (planRole) {
+              updateData.requiresSubscription = true;
+            }
+
+            // Copy plan limits based on plan role (similar to verification endpoint)
+            if (planRole === "student") {
+              updateData.studentMaxEnrollments = planData?.studentMaxEnrollments || 0;
+            } else if (planRole === "music_teacher") {
+              updateData.teacherMaxStudents = planData?.teacherMaxStudents || 0;
+              updateData.teacherMaxCourses = planData?.teacherMaxCourses || 0;
+              updateData.teacherMaxLessons = planData?.teacherMaxLessons || 0;
+              updateData.teacherPlanExpiryDate = admin.firestore.Timestamp.fromDate(endDate);
+              updateData.studentsAllocatedCount = userData?.studentsAllocatedCount || 0;
+            } else if (planRole === "artist") {
+              updateData.maxTrackUploadsPerDay = planData?.maxTrackUploadsPerDay || 0;
+              updateData.maxTrackUploadsPerMonth = planData?.maxTrackUploadsPerMonth || 0;
+              updateData.maxAlbumsPublishedPerMonth = planData?.maxAlbumsPublishedPerMonth || 0;
+              updateData.trackUploadsUsedToday = 0;
+              updateData.trackUploadsUsedThisMonth = 0;
+              updateData.albumsPublishedThisMonth = 0;
+              const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+              const firstOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+              updateData.lastTrackUploadDailyReset = admin.firestore.Timestamp.fromDate(today);
+              updateData.lastTrackUploadMonthlyReset = admin.firestore.Timestamp.fromDate(firstOfMonth);
+              updateData.lastAlbumPublishMonthlyReset = admin.firestore.Timestamp.fromDate(firstOfMonth);
+            } else if (planRole === "music_director") {
+              updateData.maxActiveProjects = planData?.maxActiveProjects || 0;
+              updateData.artistDiscoveryPerDay = planData?.artistDiscoveryPerDay || 0;
+              updateData.artistDiscoveryPerMonth = planData?.artistDiscoveryPerMonth || 0;
+              updateData.maxShortlistsCreatePerMonth = planData?.maxShortlistsCreatePerMonth || 0;
+              updateData.artistDiscoveryUsedToday = 0;
+              updateData.artistDiscoveryUsedThisMonth = 0;
+              updateData.shortlistsCreatedThisMonth = 0;
+              const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+              const firstOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+              updateData.lastDiscoveryDailyReset = admin.firestore.Timestamp.fromDate(today);
+              updateData.lastDiscoveryMonthlyReset = admin.firestore.Timestamp.fromDate(firstOfMonth);
+              updateData.lastShortlistMonthlyReset = admin.firestore.Timestamp.fromDate(firstOfMonth);
+            } else if (planRole === "doctor") {
+              updateData.maxProgramsCreatePerMonth = planData?.maxProgramsCreatePerMonth || 0;
+              updateData.maxTemplatesCreatePerMonth = planData?.maxTemplatesCreatePerMonth || 0;
+              updateData.maxArticlesPublishPerMonth = planData?.maxArticlesPublishPerMonth || 0;
+              updateData.programsCreatedThisMonth = 0;
+              updateData.templatesCreatedThisMonth = 0;
+              updateData.articlesPublishedThisMonth = 0;
+              const firstOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+              updateData.lastProgramsMonthlyReset = admin.firestore.Timestamp.fromDate(firstOfMonth);
+              updateData.lastTemplatesMonthlyReset = admin.firestore.Timestamp.fromDate(firstOfMonth);
+              updateData.lastArticlesMonthlyReset = admin.firestore.Timestamp.fromDate(firstOfMonth);
+            } else if (planRole === "astrologer") {
+              updateData.maxClientsActive = planData?.maxClientsActive || 0;
+              updateData.maxReadingsPerMonth = planData?.maxReadingsPerMonth || 0;
+              updateData.maxAstroTemplatesCreatePerMonth = planData?.maxAstroTemplatesCreatePerMonth || 0;
+              updateData.maxRasiRecommendationsCreatePerMonth = planData?.maxRasiRecommendationsCreatePerMonth || 0;
+              updateData.maxHoroscopePostsPublishPerMonth = planData?.maxHoroscopePostsPublishPerMonth || 0;
+              updateData.readingsCreatedThisMonth = 0;
+              updateData.astroTemplatesCreatedThisMonth = 0;
+              updateData.rasiRecommendationsCreatedThisMonth = 0;
+              updateData.horoscopePostsPublishedThisMonth = 0;
+              const firstOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+              updateData.lastReadingsMonthlyReset = admin.firestore.Timestamp.fromDate(firstOfMonth);
+              updateData.lastAstroTemplatesMonthlyReset = admin.firestore.Timestamp.fromDate(firstOfMonth);
+              updateData.lastRasiRecommendationsMonthlyReset = admin.firestore.Timestamp.fromDate(firstOfMonth);
+              updateData.lastHoroscopePostsMonthlyReset = admin.firestore.Timestamp.fromDate(firstOfMonth);
+            }
+
+            // Reset general generation counters
+            updateData.dailyGenerationUsed = 0;
+            updateData.monthlyGenerationUsed = 0;
+            const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+            const firstOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+            updateData.lastDailyReset = admin.firestore.Timestamp.fromDate(today);
+            updateData.lastMonthlyReset = admin.firestore.Timestamp.fromDate(firstOfMonth);
+
+            await userRef.update(updateData);
+          }
+        } else if (paymentType === "course") {
+          const { courseId } = paymentData;
+          const userRef = adminDb.collection("users").doc(userId);
+          const userDoc = await userRef.get();
+          const userData = userDoc.data();
+          
+          const purchasedCourses = userData?.purchasedCourses || [];
+          if (!purchasedCourses.includes(courseId)) {
+            purchasedCourses.push(courseId);
+            await userRef.update({
+              purchasedCourses,
+              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            });
+          }
+
+          // Handle role unlock if applicable
+          const courseDoc = await adminDb.collection("courses").doc(courseId).get();
+          if (courseDoc.exists) {
+            const courseData = courseDoc.data();
+            if (courseData?.roleUnlockOnPurchase) {
+              const newRole = courseData.roleUnlockOnPurchase;
+              const currentRole = userData?.role || "user";
+              
+              const roleLevels: Record<string, number> = {
+                user: 0, student: 1, music_teacher: 2, artist: 3,
+                music_director: 4, doctor: 5, astrologer: 6, admin: 7,
+              };
+              
+              const currentLevel = roleLevels[currentRole] || 0;
+              const newLevel = roleLevels[newRole] || 0;
+              
+              if (newLevel > currentLevel) {
+                await userRef.update({
+                  role: newRole,
+                  roleLevel: newLevel,
+                  updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+                });
+              }
+            }
+          }
+        }
+      }
+
+      res.json({ success: true });
+    } catch (error: any) {
+      console.error("Error processing webhook:", error);
+      res.status(500).json({ error: error.message || "Failed to process webhook" });
     }
   });
 
