@@ -1,14 +1,19 @@
 import { QueryClient, QueryFunction } from "@tanstack/react-query";
+import { auth } from "@/lib/firebase";
 
 async function throwIfResNotOk(res: Response) {
   if (!res.ok) {
     // Try to parse as JSON first to get structured error message
     let errorMessage = res.statusText;
+    let errorCode: string | undefined;
+    let errorData: any = {};
+    
     try {
       const contentType = res.headers.get("content-type");
       if (contentType && contentType.includes("application/json")) {
-        const errorData = await res.clone().json();
+        errorData = await res.clone().json();
         errorMessage = errorData.error || errorData.message || res.statusText;
+        errorCode = errorData.code;
       } else {
         const text = await res.text();
         errorMessage = text || res.statusText;
@@ -18,8 +23,10 @@ async function throwIfResNotOk(res: Response) {
       errorMessage = res.statusText;
     }
     
-    const error = new Error(errorMessage) as Error & { status?: number; code?: string };
+    const error = new Error(errorMessage) as Error & { status?: number; code?: string; data?: any };
     error.status = res.status;
+    error.code = errorCode;
+    error.data = errorData;
     throw error;
   }
 }
@@ -29,9 +36,29 @@ export async function apiRequest(
   url: string,
   data?: unknown | undefined,
 ): Promise<Response> {
+  // Get auth token if user is logged in
+  let authToken: string | null = null;
+  try {
+    const currentUser = auth.currentUser;
+    if (currentUser) {
+      authToken = await currentUser.getIdToken();
+    }
+  } catch (error) {
+    // If token fetch fails, continue without token
+    console.warn("Failed to get auth token:", error);
+  }
+  
+  const headers: Record<string, string> = {};
+  if (data) {
+    headers["Content-Type"] = "application/json";
+  }
+  if (authToken) {
+    headers["Authorization"] = `Bearer ${authToken}`;
+  }
+  
   const res = await fetch(url, {
     method,
-    headers: data ? { "Content-Type": "application/json" } : {},
+    headers,
     body: data ? JSON.stringify(data) : undefined,
     credentials: "include",
   });

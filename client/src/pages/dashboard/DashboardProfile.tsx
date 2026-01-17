@@ -23,7 +23,11 @@ import {
   Music,
   TrendingUp,
   Sparkles,
-  Loader2
+  Loader2,
+  Calendar,
+  Clock,
+  AlertCircle,
+  Users
 } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useTheme } from "@/hooks/use-theme";
@@ -31,8 +35,9 @@ import { useToast } from "@/hooks/use-toast";
 import { useLocation } from "wouter";
 import { getSavedCompositions } from "@/lib/compositionStorage";
 import { ChangePasswordModal } from "@/components/auth/ChangePasswordModal";
-import { db } from "@/lib/firebase";
+import { db, auth } from "@/lib/firebase";
 import { doc, getDoc, setDoc, serverTimestamp } from "firebase/firestore";
+import { Progress } from "@/components/ui/progress";
 
 // Music generation constants (matching Onboarding and Generator)
 const RAGAS = [
@@ -152,12 +157,52 @@ export default function DashboardProfile() {
   const [language, setLanguage] = useState<string>("");
   const [isLoadingPreferences, setIsLoadingPreferences] = useState(true);
   const [isSavingPreferences, setIsSavingPreferences] = useState(false);
+  
+  // Subscription details state
+  const [subscriptionDetails, setSubscriptionDetails] = useState<any>(null);
+  const [isLoadingSubscription, setIsLoadingSubscription] = useState(true);
 
   // Load user stats
   useEffect(() => {
     const compositions = getSavedCompositions();
     setCompositionsCount(compositions.length);
   }, []);
+
+  // Load subscription details
+  useEffect(() => {
+    const fetchSubscriptionDetails = async () => {
+      if (!user || user.isGuest) {
+        setIsLoadingSubscription(false);
+        return;
+      }
+
+      try {
+        const currentUser = auth.currentUser;
+        if (!currentUser) {
+          setIsLoadingSubscription(false);
+          return;
+        }
+
+        const token = await currentUser.getIdToken();
+        const response = await fetch("/api/user/subscription-details", {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          setSubscriptionDetails(data);
+        }
+      } catch (error) {
+        console.error("Error fetching subscription details:", error);
+      } finally {
+        setIsLoadingSubscription(false);
+      }
+    };
+
+    fetchSubscriptionDetails();
+  }, [user]);
 
   // Load music generation preferences
   useEffect(() => {
@@ -364,23 +409,75 @@ export default function DashboardProfile() {
             <Crown className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">
-              {user?.isGuest ? "Free" : "Pro"}
-            </div>
-            <p className="text-xs text-muted-foreground">
-              {user?.isGuest ? "Upgrade available" : "Premium member"}
-            </p>
+            {isLoadingSubscription ? (
+              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+            ) : subscriptionDetails ? (
+              <>
+                <div className="text-2xl font-bold">
+                  {subscriptionDetails.planType === "free" ? "Free" : 
+                   subscriptionDetails.planType === "free_trial" ? "Trial" : 
+                   subscriptionDetails.planType === "paid" ? "Pro" : "Free"}
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  {subscriptionDetails.planName || (user?.isGuest ? "Upgrade available" : "Premium member")}
+                </p>
+                {subscriptionDetails.subscriptionStatus && (
+                  <Badge 
+                    variant={
+                      subscriptionDetails.subscriptionStatus === "active" ? "default" :
+                      subscriptionDetails.subscriptionStatus === "trial" ? "secondary" :
+                      subscriptionDetails.subscriptionStatus === "expired" ? "destructive" :
+                      "outline"
+                    }
+                    className="mt-1 text-xs"
+                  >
+                    {subscriptionDetails.subscriptionStatus.toUpperCase()}
+                  </Badge>
+                )}
+              </>
+            ) : (
+              <>
+                <div className="text-2xl font-bold">
+                  {user?.isGuest ? "Free" : "Pro"}
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  {user?.isGuest ? "Upgrade available" : "Premium member"}
+                </p>
+              </>
+            )}
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Storage</CardTitle>
-            <TrendingUp className="h-4 w-4 text-muted-foreground" />
+            <CardTitle className="text-sm font-medium">Generation Credits</CardTitle>
+            <Sparkles className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">Unlimited</div>
-            <p className="text-xs text-muted-foreground">Cloud storage</p>
+            {isLoadingSubscription ? (
+              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+            ) : subscriptionDetails ? (
+              <>
+                <div className="text-2xl font-bold">
+                  {subscriptionDetails.dailyRemaining !== undefined && subscriptionDetails.monthlyRemaining !== undefined
+                    ? `${subscriptionDetails.dailyRemaining}/${subscriptionDetails.dailyLimit}`
+                    : "N/A"}
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Daily remaining
+                </p>
+                {subscriptionDetails.monthlyRemaining !== undefined && (
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Monthly: {subscriptionDetails.monthlyRemaining}/{subscriptionDetails.monthlyLimit}
+                  </p>
+                )}
+              </>
+            ) : (
+              <>
+                <div className="text-2xl font-bold">Unlimited</div>
+                <p className="text-xs text-muted-foreground">Cloud storage</p>
+              </>
+            )}
           </CardContent>
         </Card>
       </div>
@@ -466,55 +563,209 @@ export default function DashboardProfile() {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="flex items-center justify-between p-4 border rounded-lg">
-            <div className="flex-1">
-              <div className="flex items-center gap-2 mb-1">
-                <p className="font-semibold">
-                  {user?.isGuest ? "Free Account" : "Pro Account"}
-                </p>
-                {!user?.isGuest && (
-                  <Badge variant="default" className="ml-2">Active</Badge>
+          {isLoadingSubscription ? (
+            <div className="flex items-center justify-center py-8">
+              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+            </div>
+          ) : subscriptionDetails ? (
+            <>
+              {/* Account Type Card */}
+              <div className="p-4 border rounded-lg space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2 mb-1">
+                      <p className="font-semibold">
+                        {subscriptionDetails.planType === "free" ? "Free" : 
+                         subscriptionDetails.planType === "free_trial" ? "Trial" : "Paid"} Account
+                      </p>
+                      <Badge 
+                        variant={
+                          subscriptionDetails.subscriptionStatus === "active" ? "default" :
+                          subscriptionDetails.subscriptionStatus === "trial" ? "secondary" :
+                          subscriptionDetails.subscriptionStatus === "expired" ? "destructive" :
+                          "outline"
+                        }
+                      >
+                        {subscriptionDetails.subscriptionStatus?.toUpperCase() || "INACTIVE"}
+                      </Badge>
+                    </div>
+                    <p className="text-sm text-muted-foreground">
+                      Plan: {subscriptionDetails.planName}
+                    </p>
+                    <p className="text-sm text-muted-foreground">
+                      Billing: {subscriptionDetails.billingCycle === "monthly" ? "Monthly" : "Yearly"}
+                    </p>
+                  </div>
+                  {(subscriptionDetails.subscriptionStatus === "expired" || !subscriptionDetails.planId) && (
+                    <Button onClick={handleUpgrade} className="ml-4">
+                      <Crown className="mr-2 h-4 w-4" />
+                      Upgrade
+                    </Button>
+                  )}
+                </div>
+
+                {/* Validity Information */}
+                {subscriptionDetails.subscriptionStartDate && subscriptionDetails.subscriptionEndDate && (
+                  <div className="pt-3 border-t space-y-2">
+                    <div className="flex items-center gap-2 text-sm">
+                      <Calendar className="h-4 w-4 text-muted-foreground" />
+                      <span className="text-muted-foreground">Start:</span>
+                      <span>{new Date(subscriptionDetails.subscriptionStartDate).toLocaleDateString()}</span>
+                    </div>
+                    <div className="flex items-center gap-2 text-sm">
+                      <Calendar className="h-4 w-4 text-muted-foreground" />
+                      <span className="text-muted-foreground">End:</span>
+                      <span>{new Date(subscriptionDetails.subscriptionEndDate).toLocaleDateString()}</span>
+                    </div>
+                    {subscriptionDetails.daysRemaining !== null && (
+                      <div className="flex items-center gap-2 text-sm">
+                        <Clock className="h-4 w-4 text-muted-foreground" />
+                        <span className="text-muted-foreground">Days Remaining:</span>
+                        <span className={subscriptionDetails.daysRemaining <= 7 ? "text-destructive font-semibold" : ""}>
+                          {subscriptionDetails.daysRemaining} days
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Status Messages */}
+                {subscriptionDetails.subscriptionStatus === "expired" && (
+                  <div className="p-3 bg-destructive/10 border border-destructive/20 rounded-md">
+                    <div className="flex items-start gap-2">
+                      <AlertCircle className="h-4 w-4 text-destructive mt-0.5" />
+                      <p className="text-sm text-destructive">
+                        Plan expired. Upgrade to continue generating music.
+                      </p>
+                    </div>
+                  </div>
                 )}
               </div>
+
+              {/* Available Generation Credits */}
+              <div className="p-4 border rounded-lg space-y-4">
+                <h3 className="font-semibold text-sm">Available Generation Credits</h3>
+                
+                {/* Daily Remaining */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-muted-foreground">Daily Remaining</span>
+                    <span className="font-semibold">
+                      {subscriptionDetails.dailyRemaining} / {subscriptionDetails.dailyLimit}
+                    </span>
+                  </div>
+                  <Progress 
+                    value={(subscriptionDetails.dailyRemaining / subscriptionDetails.dailyLimit) * 100} 
+                    className="h-2"
+                  />
+                  {subscriptionDetails.dailyRemaining === 0 && (
+                    <p className="text-xs text-destructive">
+                      Today's limit reached. Try again tomorrow or upgrade.
+                    </p>
+                  )}
+                </div>
+
+                {/* Monthly Remaining */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-muted-foreground">Monthly Remaining</span>
+                    <span className="font-semibold">
+                      {subscriptionDetails.monthlyRemaining} / {subscriptionDetails.monthlyLimit}
+                    </span>
+                  </div>
+                  <Progress 
+                    value={(subscriptionDetails.monthlyRemaining / subscriptionDetails.monthlyLimit) * 100} 
+                    className="h-2"
+                  />
+                  {subscriptionDetails.monthlyRemaining === 0 && (
+                    <p className="text-xs text-destructive">
+                      Monthly limit reached. Resets next month or upgrade.
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              {/* Teacher Capacity Section - Only for teachers */}
+              {user?.role === "music_teacher" && subscriptionDetails?.teacherMaxStudents !== undefined && (
+                <div className="p-4 border rounded-lg space-y-4">
+                  <h3 className="font-semibold text-sm flex items-center gap-2">
+                    <Users className="h-4 w-4" />
+                    Teacher Capacity
+                  </h3>
+                  
+                  <div className="space-y-3">
+                    <div className="grid grid-cols-3 gap-4 text-sm">
+                      <div>
+                        <span className="text-muted-foreground block">Max Students Allowed</span>
+                        <span className="font-semibold text-lg">{subscriptionDetails.teacherMaxStudents}</span>
+                      </div>
+                      <div>
+                        <span className="text-muted-foreground block">Students Assigned</span>
+                        <span className="font-semibold text-lg">{subscriptionDetails.studentsAllocatedCount || 0}</span>
+                      </div>
+                      <div>
+                        <span className="text-muted-foreground block">Remaining Slots</span>
+                        <span className={`font-semibold text-lg ${(subscriptionDetails.studentsAllocatedRemaining || 0) === 0 ? "text-destructive" : ""}`}>
+                          {subscriptionDetails.studentsAllocatedRemaining || 0}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="text-muted-foreground">Allocation Progress</span>
+                        <span className="font-semibold">
+                          {subscriptionDetails.studentsAllocatedCount || 0} / {subscriptionDetails.teacherMaxStudents}
+                        </span>
+                      </div>
+                      <Progress 
+                        value={subscriptionDetails.teacherMaxStudents > 0 
+                          ? ((subscriptionDetails.studentsAllocatedCount || 0) / subscriptionDetails.teacherMaxStudents) * 100 
+                          : 0} 
+                        className="h-2" 
+                      />
+                    </div>
+
+                    {subscriptionDetails.teacherPlanExpiryDate && (
+                      <div className="pt-2 border-t">
+                        <div className="flex items-center gap-2 text-sm">
+                          <Calendar className="h-4 w-4 text-muted-foreground" />
+                          <span className="text-muted-foreground">Plan Expiry:</span>
+                          <span>{new Date(subscriptionDetails.teacherPlanExpiryDate).toLocaleDateString()}</span>
+                        </div>
+                      </div>
+                    )}
+
+                    {subscriptionDetails.studentsAllocatedRemaining === 0 && subscriptionDetails.teacherMaxStudents > 0 && (
+                      <div className="p-3 bg-amber-50 dark:bg-amber-950/20 border border-amber-200 rounded-md">
+                        <div className="flex items-start gap-2">
+                          <AlertCircle className="h-4 w-4 text-amber-600 mt-0.5" />
+                          <p className="text-sm text-amber-800 dark:text-amber-200">
+                            Student limit reached. Upgrade your plan to add more students.
+                          </p>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </>
+          ) : (
+            <div className="p-4 border rounded-lg">
               <p className="text-sm text-muted-foreground">
                 {user?.isGuest 
                   ? "Limited features. Upgrade to unlock premium features."
-                  : "Full access to all premium features and unlimited generations."
+                  : "No subscription plan assigned. Please contact support."
                 }
               </p>
+              {user?.isGuest && (
+                <Button onClick={handleUpgrade} className="mt-4">
+                  <Crown className="mr-2 h-4 w-4" />
+                  Upgrade Account
+                </Button>
+              )}
             </div>
-            {user?.isGuest && (
-              <Button onClick={handleUpgrade} className="ml-4">
-                <Crown className="mr-2 h-4 w-4" />
-                Upgrade Account
-              </Button>
-            )}
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
-            <div className="space-y-2">
-              <p className="text-sm font-medium">Storage</p>
-              <p className="text-sm text-muted-foreground">Unlimited</p>
-            </div>
-            <div className="space-y-2">
-              <p className="text-sm font-medium">Generations</p>
-              <p className="text-sm text-muted-foreground">
-                {user?.isGuest ? "Limited" : "Unlimited"}
-              </p>
-            </div>
-            <div className="space-y-2">
-              <p className="text-sm font-medium">Audio Quality</p>
-              <p className="text-sm text-muted-foreground">
-                {user?.isGuest ? "Standard" : "High Quality"}
-              </p>
-            </div>
-            <div className="space-y-2">
-              <p className="text-sm font-medium">Support</p>
-              <p className="text-sm text-muted-foreground">
-                {user?.isGuest ? "Community" : "Priority"}
-              </p>
-            </div>
-          </div>
+          )}
         </CardContent>
       </Card>
         </TabsContent>

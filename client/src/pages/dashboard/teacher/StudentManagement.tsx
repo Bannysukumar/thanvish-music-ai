@@ -134,58 +134,93 @@ export default function StudentManagement() {
         return;
       }
 
-      // Fetch enrollments for these courses
-      // Note: In a real app, you'd have an enrollments collection
-      // For now, we'll simulate by checking if there's an enrollments collection
-      // or we'll create a structure where enrollments are stored per course
-      
+      // Fetch enrollments for these courses in batches (Firestore 'in' limit is 10)
       const enrollmentsRef = collection(db, "enrollments");
-      const enrollmentsQuery = query(
-        enrollmentsRef,
-        where("courseId", "in", courseIds.slice(0, 10)) // Firestore 'in' limit is 10
-      );
+      const allEnrollments: any[] = [];
       
-      let enrollmentsSnapshot;
       try {
-        enrollmentsSnapshot = await getDocs(enrollmentsQuery);
+        // Fetch enrollments in batches
+        for (let i = 0; i < courseIds.length; i += 10) {
+          const batch = courseIds.slice(i, i + 10);
+          const enrollmentsQuery = query(
+            enrollmentsRef,
+            where("courseId", "in", batch)
+          );
+          
+          try {
+            const batchSnapshot = await getDocs(enrollmentsQuery);
+            batchSnapshot.forEach((enrollmentDoc) => {
+              allEnrollments.push({
+                id: enrollmentDoc.id,
+                ...enrollmentDoc.data(),
+              });
+            });
+          } catch (error) {
+            console.error(`Error fetching enrollments for batch ${i}:`, error);
+          }
+        }
       } catch (error) {
-        // If enrollments collection doesn't exist yet, that's okay
-        console.log("No enrollments found yet");
+        console.error("Error fetching enrollments:", error);
         setStudents([]);
         setIsLoading(false);
         return;
       }
 
-      // Group enrollments by student
-      const studentMap = new Map<string, StudentDetail>();
+      if (allEnrollments.length === 0) {
+        console.log("No enrollments found");
+        setStudents([]);
+        setIsLoading(false);
+        return;
+      }
 
-      enrollmentsSnapshot.forEach((enrollmentDoc) => {
-        const enrollmentData = enrollmentDoc.data();
+      console.log(`Found ${allEnrollments.length} enrollments`);
+
+      // Get unique student IDs
+      const uniqueStudentIds = new Set<string>();
+      allEnrollments.forEach((enrollment) => {
+        if (enrollment.studentId) {
+          uniqueStudentIds.add(enrollment.studentId);
+        }
+      });
+
+      console.log(`Found ${uniqueStudentIds.size} unique students`);
+
+      // Fetch all student details first (await all promises)
+      const studentMap = new Map<string, StudentDetail>();
+      const studentFetchPromises = Array.from(uniqueStudentIds).map(async (studentId) => {
+        try {
+          const studentDoc = await getDoc(doc(db, "users", studentId));
+          if (studentDoc.exists()) {
+            const studentData = studentDoc.data();
+            studentMap.set(studentId, {
+              id: studentId,
+              name: studentData.name || "Unknown Student",
+              email: studentData.email || "",
+              enrollments: [],
+              lastActiveAt: studentData.lastSignIn || null,
+              totalCourses: 0,
+              totalLessonsCompleted: 0,
+            });
+          }
+        } catch (error) {
+          console.error(`Error fetching student ${studentId}:`, error);
+        }
+      });
+
+      // Wait for all student details to be fetched
+      await Promise.all(studentFetchPromises);
+
+      console.log(`Fetched ${studentMap.size} student details`);
+
+      // Now process enrollments with student data available
+      allEnrollments.forEach((enrollmentData) => {
         const studentId = enrollmentData.studentId;
         const courseId = enrollmentData.courseId;
         
-        if (!studentMap.has(studentId)) {
-          // Fetch student details
-          getDoc(doc(db, "users", studentId)).then((studentDoc) => {
-            if (studentDoc.exists()) {
-              const studentData = studentDoc.data();
-              studentMap.set(studentId, {
-                id: studentId,
-                name: studentData.name || "Unknown Student",
-                email: studentData.email || "",
-                enrollments: [],
-                lastActiveAt: studentData.lastSignIn || null,
-                totalCourses: 0,
-                totalLessonsCompleted: 0,
-              });
-            }
-          });
-        }
-
         const student = studentMap.get(studentId);
         if (student) {
           const enrollment: StudentEnrollment = {
-            id: enrollmentDoc.id,
+            id: enrollmentData.id,
             studentId,
             studentName: student.name,
             studentEmail: student.email,
@@ -201,6 +236,8 @@ export default function StudentManagement() {
           student.enrollments.push(enrollment);
           student.totalCourses = student.enrollments.length;
           student.totalLessonsCompleted += enrollment.lessonsCompleted;
+        } else {
+          console.warn(`Student ${studentId} not found in studentMap`);
         }
       });
 

@@ -146,6 +146,9 @@ function Router() {
       <Route path="/dashboard/astrologer/settings" component={DashboardRouter} />
       <Route path="/dashboard/astrologer" component={DashboardRouter} />
       {/* Student routes */}
+      <Route path="/dashboard/student/courses" component={DashboardRouter} />
+      <Route path="/dashboard/student/lessons" component={DashboardRouter} />
+      <Route path="/dashboard/student/progress" component={DashboardRouter} />
       <Route path="/dashboard/student/educational-music" component={DashboardRouter} />
       <Route path="/dashboard/student/instrumental-education" component={DashboardRouter} />
       <Route path="/dashboard/student/practice" component={DashboardRouter} />

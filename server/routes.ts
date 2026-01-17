@@ -18,6 +18,10 @@ import {
   removeVerifiedOTP,
   } from "./otp-service.js";
 import { sendChatMessage, sendChatMessageStream, type ChatMessage } from "./groq.js";
+import { checkSubscriptionLimits, incrementGenerationCounters } from "./subscription-limits";
+import { checkTeacherStudentLimit, incrementTeacherStudentCount, decrementTeacherStudentCount, checkTeacherCourseLimit, checkTeacherLessonLimit } from "./teacher-limits";
+import { autoAllocateStudentToTeacher, reassignStudentToTeacher } from "./student-allocation";
+import { checkSubscriptionStatus } from "./expiry-handler";
 
 // Admin session storage (in-memory, use Redis in production)
 const adminSessions = new Map<string, { username: string; userId?: string; expiresAt: number }>();
@@ -150,8 +154,558 @@ export async function registerRoutes(app: Express): Promise<Server> {
     return description.replace(/\n\n<!--AUDIO_URLS:.*?-->/, "").trim();
   };
 
+  // Get user subscription details and limits
+  app.get("/api/user/subscription-details", async (req, res) => {
+    try {
+      const authHeader = req.headers.authorization;
+      let userId: string | null = null;
+      
+      if (authHeader && authHeader.startsWith("Bearer ")) {
+        const token = authHeader.replace("Bearer ", "");
+        try {
+          const decodedToken = await adminAuth.verifyIdToken(token);
+          userId = decodedToken.uid;
+        } catch (error) {
+          return res.status(401).json({ error: "Invalid authentication token" });
+        }
+      } else {
+        return res.status(401).json({ error: "Authentication required" });
+      }
+      
+      if (!userId) {
+        return res.status(401).json({ error: "User ID not found" });
+      }
+      
+      // Get user document
+      const userRef = adminDb.collection("users").doc(userId);
+      const userDoc = await userRef.get();
+      
+      if (!userDoc.exists) {
+        return res.status(404).json({ error: "User not found" });
+      }
+      
+      const userData = userDoc.data();
+      const userRole = userData?.role;
+      const planId = userData?.planId;
+
+      // Check and handle expiry before returning details (non-blocking)
+      try {
+        await checkSubscriptionStatus(userId, userRole || "user");
+      } catch (expiryError) {
+        // Don't fail the request if expiry check fails
+        console.warn("Error checking subscription expiry:", expiryError);
+      }
+      
+      let planData = null;
+      if (planId) {
+        const planRef = adminDb.collection("subscriptionPlans").doc(planId);
+        const planDoc = await planRef.get();
+        if (planDoc.exists) {
+          planData = planDoc.data();
+        }
+      }
+      
+      // Calculate remaining limits
+      const limitCheck = await checkSubscriptionLimits(userId);
+      
+      // Calculate days remaining
+      const subscriptionEndDate = userData?.subscriptionEndDate?.toDate?.() || 
+                                   userData?.subscriptionExpiresAt ? new Date(userData.subscriptionExpiresAt) : null;
+      let daysRemaining = null;
+      if (subscriptionEndDate) {
+        const now = new Date();
+        const diffTime = subscriptionEndDate.getTime() - now.getTime();
+        daysRemaining = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+        if (daysRemaining < 0) daysRemaining = 0;
+      }
+      
+      const response: any = {
+        subscriptionStatus: userData?.subscriptionStatus || "expired",
+        planId,
+        planName: planData?.name || "No Plan",
+        planType: planData?.planType || userData?.planType || "free",
+        billingCycle: planData?.billingCycle || userData?.billingCycle || "monthly",
+        subscriptionStartDate: userData?.subscriptionStartDate?.toDate?.()?.toISOString() || null,
+        subscriptionEndDate: subscriptionEndDate?.toISOString() || null,
+        daysRemaining,
+        dailyLimit: limitCheck.dailyLimit || 0,
+        monthlyLimit: limitCheck.monthlyLimit || 0,
+        dailyUsed: limitCheck.dailyUsed || 0,
+        monthlyUsed: limitCheck.monthlyUsed || 0,
+        dailyRemaining: limitCheck.dailyRemaining || 0,
+        monthlyRemaining: limitCheck.monthlyRemaining || 0,
+      };
+
+      // Add teacher-specific fields if user is a teacher
+      if (userData?.role === "music_teacher") {
+        const teacherLimitCheck = await checkTeacherStudentLimit(userId);
+        response.teacherMaxStudents = userData?.teacherMaxStudents || 0;
+        
+        // Calculate actual allocated students count from studentAllocations collection
+        // This ensures accuracy even if the stored count is out of sync
+        let actualAllocatedCount = 0;
+        try {
+          // Method 1: Count from studentAllocations collection (preferred)
+          const allocationsSnapshot = await adminDb.collection("studentAllocations")
+            .where("teacherId", "==", userId)
+            .where("status", "==", "active")
+            .get();
+          actualAllocatedCount = allocationsSnapshot.size;
+          
+          // Method 2: Also count students with allocatedTeacherId (backup verification)
+          const studentsSnapshot = await adminDb.collection("users")
+            .where("role", "==", "student")
+            .where("allocatedTeacherId", "==", userId)
+            .where("allocationStatus", "==", "ALLOCATED")
+            .get();
+          const studentsCount = studentsSnapshot.size;
+          
+          // Use the higher count (in case one source is missing data)
+          actualAllocatedCount = Math.max(actualAllocatedCount, studentsCount);
+          
+          // If actual count differs from stored count, update the stored count
+          const storedCount = userData?.studentsAllocatedCount || 0;
+          if (actualAllocatedCount !== storedCount) {
+            console.log(`[Subscription Details] Syncing student count for teacher ${userId}: stored=${storedCount}, actual=${actualAllocatedCount} (from allocations=${allocationsSnapshot.size}, from students=${studentsCount})`);
+            await adminDb.collection("users").doc(userId).update({
+              studentsAllocatedCount: actualAllocatedCount,
+              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            });
+          }
+        } catch (error) {
+          console.error("Error calculating actual allocated students:", error);
+          // Fallback to stored count if query fails
+          actualAllocatedCount = userData?.studentsAllocatedCount || 0;
+        }
+        
+        response.studentsAllocatedCount = actualAllocatedCount;
+        response.studentsAllocatedRemaining = Math.max(0, (userData?.teacherMaxStudents || 0) - actualAllocatedCount);
+        response.teacherPlanExpiryDate = userData?.teacherPlanExpiryDate?.toDate?.()?.toISOString() || subscriptionEndDate?.toISOString() || null;
+      }
+
+      res.json(response);
+    } catch (error: any) {
+      console.error("Error fetching subscription details:", error);
+      res.status(500).json({ error: "Failed to fetch subscription details: " + error.message });
+    }
+  });
+
+  // Get available teachers for student allocation
+  app.get("/api/admin/teachers/available", requireAdmin, async (req, res) => {
+    try {
+      const teachersSnapshot = await adminDb.collection("users")
+        .where("role", "==", "music_teacher")
+        .get();
+
+      const now = new Date();
+      const availableTeachers: Array<{id: string, name: string, capacity: number}> = [];
+
+      for (const teacherDoc of teachersSnapshot.docs) {
+        const teacherData = teacherDoc.data();
+        const teacherId = teacherDoc.id;
+
+        // Check subscription status
+        const teacherStatus = teacherData?.subscriptionStatus;
+        if (!teacherStatus || (teacherStatus !== "active" && teacherStatus !== "trial")) {
+          continue;
+        }
+
+        // Check if teacher plan is expired
+        const teacherEndDate = teacherData?.subscriptionEndDate;
+        if (teacherEndDate) {
+          const endDate = teacherEndDate.toDate ? teacherEndDate.toDate() : new Date(teacherEndDate);
+          if (endDate < now) {
+            continue;
+          }
+        }
+
+        // Check if teacher is suspended
+        if (teacherStatus === "suspended") {
+          continue;
+        }
+
+        // Get current student count
+        const currentCount = teacherData?.studentsAllocatedCount || 0;
+        const maxStudents = teacherData?.teacherMaxStudents || 0;
+
+        // Check if teacher has capacity
+        if (maxStudents === 0) {
+          continue; // Teacher cannot take students
+        }
+
+        const remaining = maxStudents - currentCount;
+        if (remaining > 0) {
+          availableTeachers.push({
+            id: teacherId,
+            name: teacherData?.name || "Unknown Teacher",
+            capacity: remaining,
+          });
+        }
+      }
+
+      res.json({ teachers: availableTeachers });
+    } catch (error: any) {
+      console.error("Error fetching available teachers:", error);
+      res.status(500).json({ error: "Failed to fetch available teachers: " + error.message });
+    }
+  });
+
+  // Manually reassign student to teacher
+  app.post("/api/admin/students/:studentId/reassign-teacher", requireAdmin, async (req, res) => {
+    try {
+      const { studentId } = req.params;
+      const { teacherId } = req.body;
+
+      if (!teacherId) {
+        return res.status(400).json({ error: "teacherId is required" });
+      }
+
+      const sessionId = req.headers.authorization?.replace("Bearer ", "") || "";
+      const session = adminSessions.get(sessionId);
+      const adminUserId = session?.userId || "unknown";
+
+      const result = await reassignStudentToTeacher(studentId, teacherId, adminUserId);
+
+      if (result.success) {
+        res.json({ success: true, message: "Student reassigned successfully" });
+      } else {
+        res.status(400).json({ error: result.error || "Failed to reassign student" });
+      }
+    } catch (error: any) {
+      console.error("Error reassigning student:", error);
+      res.status(500).json({ error: "Failed to reassign student: " + error.message });
+    }
+  });
+
+  // Retry allocation for a student
+  app.post("/api/admin/students/:studentId/retry-allocation", requireAdmin, async (req, res) => {
+    try {
+      const { studentId } = req.params;
+      const { planId } = req.body;
+
+      if (!planId) {
+        return res.status(400).json({ error: "planId is required" });
+      }
+
+      const allocationResult = await autoAllocateStudentToTeacher(studentId, planId);
+
+      if (allocationResult.success) {
+        res.json({
+          success: true,
+          teacherId: allocationResult.teacherId,
+          teacherName: allocationResult.teacherName,
+          message: `Successfully allocated to ${allocationResult.teacherName}`,
+        });
+      } else {
+        res.status(200).json({
+          success: false,
+          error: allocationResult.error,
+          reason: allocationResult.reason,
+        });
+      }
+    } catch (error: any) {
+      console.error("Error retrying allocation:", error);
+      res.status(500).json({ error: "Failed to retry allocation: " + error.message });
+    }
+  });
+
+  // Auto-allocate student to teacher (triggered on login or manually)
+  app.post("/api/student/auto-allocate", async (req, res) => {
+    try {
+      const authHeader = req.headers.authorization;
+      let userId: string | null = null;
+      
+      if (authHeader && authHeader.startsWith("Bearer ")) {
+        const token = authHeader.replace("Bearer ", "");
+        try {
+          const decodedToken = await adminAuth.verifyIdToken(token);
+          userId = decodedToken.uid;
+        } catch (error) {
+          return res.status(401).json({ error: "Invalid authentication token" });
+        }
+      } else {
+        return res.status(401).json({ error: "Authentication required" });
+      }
+
+      const { planId } = req.body;
+
+      if (!planId) {
+        return res.status(400).json({ error: "planId is required" });
+      }
+
+      const allocationResult = await autoAllocateStudentToTeacher(userId, planId);
+
+      if (allocationResult.success) {
+        res.json({
+          success: true,
+          teacherId: allocationResult.teacherId,
+          teacherName: allocationResult.teacherName,
+          message: `Successfully allocated to ${allocationResult.teacherName}`,
+        });
+      } else {
+        res.status(200).json({
+          success: false,
+          error: allocationResult.error,
+          reason: allocationResult.reason,
+        });
+      }
+    } catch (error: any) {
+      console.error("Error in auto-allocation endpoint:", error);
+      res.status(500).json({ error: "Failed to allocate student: " + error.message });
+    }
+  });
+
+  // Check teacher course creation limit
+  app.get("/api/teacher/check-course-limit", async (req, res) => {
+    try {
+      const authHeader = req.headers.authorization;
+      let userId: string | null = null;
+      
+      if (authHeader && authHeader.startsWith("Bearer ")) {
+        const token = authHeader.replace("Bearer ", "");
+        try {
+          const decodedToken = await adminAuth.verifyIdToken(token);
+          userId = decodedToken.uid;
+        } catch (error) {
+          return res.status(401).json({ error: "Invalid authentication token" });
+        }
+      } else {
+        return res.status(401).json({ error: "Authentication required" });
+      }
+      
+      if (!userId) {
+        return res.status(401).json({ error: "User ID not found" });
+      }
+
+      const limitCheck = await checkTeacherCourseLimit(userId);
+      
+      res.json({
+        canCreate: limitCheck.canCreate,
+        remaining: limitCheck.remaining,
+        maxCourses: limitCheck.maxCourses,
+        currentCount: limitCheck.currentCount,
+        error: limitCheck.error,
+        subscriptionStatus: limitCheck.subscriptionStatus,
+        isExpired: limitCheck.isExpired,
+      });
+    } catch (error: any) {
+      console.error("Error checking teacher course limit:", error);
+      res.status(500).json({ error: "Failed to check course limit: " + error.message });
+    }
+  });
+
+  // Check teacher lesson creation limit
+  app.get("/api/teacher/check-lesson-limit", async (req, res) => {
+    try {
+      const authHeader = req.headers.authorization;
+      let userId: string | null = null;
+      
+      if (authHeader && authHeader.startsWith("Bearer ")) {
+        const token = authHeader.replace("Bearer ", "");
+        try {
+          const decodedToken = await adminAuth.verifyIdToken(token);
+          userId = decodedToken.uid;
+        } catch (error) {
+          return res.status(401).json({ error: "Invalid authentication token" });
+        }
+      } else {
+        return res.status(401).json({ error: "Authentication required" });
+      }
+      
+      if (!userId) {
+        return res.status(401).json({ error: "User ID not found" });
+      }
+
+      const limitCheck = await checkTeacherLessonLimit(userId);
+      
+      res.json({
+        canCreate: limitCheck.canCreate,
+        remaining: limitCheck.remaining,
+        maxLessons: limitCheck.maxLessons,
+        currentCount: limitCheck.currentCount,
+        error: limitCheck.error,
+        subscriptionStatus: limitCheck.subscriptionStatus,
+        isExpired: limitCheck.isExpired,
+      });
+    } catch (error: any) {
+      console.error("Error checking teacher lesson limit:", error);
+      res.status(500).json({ error: "Failed to check lesson limit: " + error.message });
+    }
+  });
+
+  // Check teacher student allocation limit
+  app.get("/api/teacher/check-student-limit", async (req, res) => {
+    try {
+      const authHeader = req.headers.authorization;
+      let userId: string | null = null;
+      
+      if (authHeader && authHeader.startsWith("Bearer ")) {
+        const token = authHeader.replace("Bearer ", "");
+        try {
+          const decodedToken = await adminAuth.verifyIdToken(token);
+          userId = decodedToken.uid;
+        } catch (error) {
+          return res.status(401).json({ error: "Invalid authentication token" });
+        }
+      } else {
+        return res.status(401).json({ error: "Authentication required" });
+      }
+      
+      if (!userId) {
+        return res.status(401).json({ error: "User ID not found" });
+      }
+
+      const limitCheck = await checkTeacherStudentLimit(userId);
+      
+      if (!limitCheck.canAssign) {
+        return res.status(403).json({
+          canAssign: false,
+          error: limitCheck.error,
+          remaining: limitCheck.remaining,
+          maxStudents: limitCheck.maxStudents,
+          subscriptionStatus: limitCheck.subscriptionStatus,
+          isExpired: limitCheck.isExpired,
+        });
+      }
+
+      res.json({
+        canAssign: true,
+        remaining: limitCheck.remaining,
+        maxStudents: limitCheck.maxStudents,
+        subscriptionStatus: limitCheck.subscriptionStatus,
+      });
+    } catch (error: any) {
+      console.error("Error checking teacher student limit:", error);
+      res.status(500).json({ error: "Failed to check teacher limit: " + error.message });
+    }
+  });
+
+  // Create enrollment with teacher limit checking
+  app.post("/api/enrollments", async (req, res) => {
+    try {
+      const authHeader = req.headers.authorization;
+      let studentId: string | null = null;
+      
+      if (authHeader && authHeader.startsWith("Bearer ")) {
+        const token = authHeader.replace("Bearer ", "");
+        try {
+          const decodedToken = await adminAuth.verifyIdToken(token);
+          studentId = decodedToken.uid;
+        } catch (error) {
+          return res.status(401).json({ error: "Invalid authentication token" });
+        }
+      } else {
+        return res.status(401).json({ error: "Authentication required" });
+      }
+
+      const { courseId, teacherId } = req.body;
+
+      if (!courseId || !teacherId) {
+        return res.status(400).json({ error: "courseId and teacherId are required" });
+      }
+
+      // Check if teacher can accept more students
+      const limitCheck = await checkTeacherStudentLimit(teacherId);
+      if (!limitCheck.canAssign) {
+        return res.status(403).json({
+          error: limitCheck.error || "Student limit reached for teacher's plan",
+          code: "TEACHER_LIMIT_REACHED",
+          remaining: limitCheck.remaining,
+          maxStudents: limitCheck.maxStudents,
+        });
+      }
+
+      // Check if enrollment already exists
+      const enrollmentsRef = adminDb.collection("enrollments");
+      const existingQuery = await enrollmentsRef
+        .where("studentId", "==", studentId)
+        .where("courseId", "==", courseId)
+        .get();
+
+      if (!existingQuery.empty) {
+        return res.status(400).json({ error: "Student is already enrolled in this course" });
+      }
+
+      // Get course to verify teacher
+      const courseRef = adminDb.collection("courses").doc(courseId);
+      const courseDoc = await courseRef.get();
+      if (!courseDoc.exists) {
+        return res.status(404).json({ error: "Course not found" });
+      }
+
+      const courseData = courseDoc.data();
+      if (courseData?.teacherId !== teacherId) {
+        return res.status(400).json({ error: "Course does not belong to the specified teacher" });
+      }
+
+      // Create enrollment
+      const enrollmentData = {
+        studentId,
+        courseId,
+        teacherId,
+        enrolledAt: admin.firestore.FieldValue.serverTimestamp(),
+        progress: 0,
+        lessonsCompleted: 0,
+        status: "active",
+      };
+
+      const enrollmentRef = await enrollmentsRef.add(enrollmentData);
+
+      // Increment teacher's student count
+      await incrementTeacherStudentCount(teacherId);
+
+      res.json({
+        success: true,
+        enrollmentId: enrollmentRef.id,
+        message: "Enrollment created successfully",
+      });
+    } catch (error: any) {
+      console.error("Error creating enrollment:", error);
+      res.status(500).json({ error: "Failed to create enrollment: " + error.message });
+    }
+  });
+
   app.post("/api/generate-music", async (req, res) => {
     try {
+      // Get user ID from authorization header or request body
+      const authHeader = req.headers.authorization;
+      let userId: string | null = null;
+      
+      if (authHeader && authHeader.startsWith("Bearer ")) {
+        const token = authHeader.replace("Bearer ", "");
+        try {
+          const decodedToken = await adminAuth.verifyIdToken(token);
+          userId = decodedToken.uid;
+        } catch (error) {
+          // Token verification failed, try to get userId from body
+          userId = req.body.userId || null;
+        }
+      } else {
+        userId = req.body.userId || null;
+      }
+      
+      if (!userId) {
+        return res.status(401).json({
+          error: "Authentication required. Please login to generate music.",
+          code: "AUTH_REQUIRED",
+        });
+      }
+      
+      // Check subscription limits before generating
+      const limitCheck = await checkSubscriptionLimits(userId);
+      if (!limitCheck.allowed) {
+        return res.status(403).json({
+          error: limitCheck.reason || "Subscription limit reached",
+          code: "SUBSCRIPTION_LIMIT",
+          dailyRemaining: limitCheck.dailyRemaining,
+          monthlyRemaining: limitCheck.monthlyRemaining,
+          dailyLimit: limitCheck.dailyLimit,
+          monthlyLimit: limitCheck.monthlyLimit,
+          dailyUsed: limitCheck.dailyUsed,
+          monthlyUsed: limitCheck.monthlyUsed,
+        });
+      }
+      
       const validatedData = musicGenerationRequestSchema.parse(req.body);
 
       // Backend validation for generation mode
@@ -164,6 +718,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Start music generation (async - returns taskId)
       const { taskId } = await generateMusicComposition(validatedData);
+      
+      // Increment generation counters after successful generation start
+      await incrementGenerationCounters(userId);
 
       // Create composition with pending status
       // For voice_only mode, use placeholder values for required fields
@@ -250,6 +807,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         taskId,
         status: "pending",
         message: "Music generation started. Use the taskId to poll for status or wait for callback.",
+        dailyRemaining: limitCheck.dailyRemaining ? limitCheck.dailyRemaining - 1 : undefined,
+        monthlyRemaining: limitCheck.monthlyRemaining ? limitCheck.monthlyRemaining - 1 : undefined,
       });
     } catch (error: any) {
       console.error("Music generation error:", error);
@@ -1123,6 +1682,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
               lastSignIn: firebaseUser.metadata.lastSignInTime,
               subscriptionStatus: profileData?.subscriptionStatus,
               subscriptionExpiresAt: profileData?.subscriptionExpiresAt,
+              subscriptionStartDate: profileData?.subscriptionStartDate?.toDate?.()?.toISOString(),
+              subscriptionEndDate: profileData?.subscriptionEndDate?.toDate?.()?.toISOString(),
+              planId: profileData?.planId,
+              billingCycle: profileData?.billingCycle,
+              planType: profileData?.planType,
+              dailyGenerationUsed: profileData?.dailyGenerationUsed || 0,
+              monthlyGenerationUsed: profileData?.monthlyGenerationUsed || 0,
               teacherSubscriptionRequired: profileData?.teacherSubscriptionRequired,
               verifiedArtist: profileData?.verifiedArtist || false,
               verifiedDirector: profileData?.verifiedDirector || false,
@@ -1363,16 +1929,152 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Update user subscription status (for music teachers and artists)
+  // Assign subscription plan to user
+  app.post("/api/admin/users/:userId/assign-plan", requireAdmin, async (req, res) => {
+    try {
+      const { userId } = req.params;
+      const { planId, startDate } = req.body;
+      
+      if (!planId) {
+        return res.status(400).json({ error: "planId is required" });
+      }
+      
+      // Get plan details
+      const planRef = adminDb.collection("subscriptionPlans").doc(planId);
+      const planDoc = await planRef.get();
+      
+      if (!planDoc.exists) {
+        return res.status(404).json({ error: "Subscription plan not found" });
+      }
+      
+      const planData = planDoc.data();
+      
+      // Get user
+      const userRef = adminDb.collection("users").doc(userId);
+      const userDoc = await userRef.get();
+      
+      if (!userDoc.exists) {
+        return res.status(404).json({ error: "User not found" });
+      }
+      
+      // Calculate dates
+      const subscriptionStart = startDate ? new Date(startDate) : new Date();
+      // For teacher plans, prefer validityDays from plan, otherwise use duration
+      const planValidityDays = planData?.validityDays || planData?.duration || 30;
+      const subscriptionEnd = new Date(subscriptionStart);
+      subscriptionEnd.setDate(subscriptionEnd.getDate() + planValidityDays);
+      
+      // Determine subscription status based on plan type
+      let subscriptionStatus = "active";
+      if (planData?.planType === "free_trial") {
+        subscriptionStatus = "trial";
+      } else if (planData?.planType === "free") {
+        subscriptionStatus = "free";
+      }
+      
+      // Get user data to check if we should keep existing student allocation count
+      const userData = userDoc.data();
+      const userRole = userData?.role;
+      
+      // Prepare update data
+      const updateData: any = {
+        planId,
+        subscriptionStatus,
+        subscriptionStartDate: admin.firestore.Timestamp.fromDate(subscriptionStart),
+        subscriptionEndDate: admin.firestore.Timestamp.fromDate(subscriptionEnd),
+        subscriptionExpiresAt: subscriptionEnd.toISOString(),
+        billingCycle: planData?.billingCycle || "monthly",
+        planType: planData?.planType || "paid",
+        // Reset usage counters
+        dailyGenerationUsed: 0,
+        monthlyGenerationUsed: 0,
+        lastDailyReset: admin.firestore.Timestamp.fromDate(new Date(subscriptionStart.getFullYear(), subscriptionStart.getMonth(), subscriptionStart.getDate())),
+        lastMonthlyReset: admin.firestore.Timestamp.fromDate(new Date(subscriptionStart.getFullYear(), subscriptionStart.getMonth(), 1)),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      };
+
+      // Teacher-specific fields
+      if (userRole === "music_teacher" && planData?.role === "music_teacher") {
+        // Keep existing studentsAllocatedCount (default behavior to prevent abuse)
+        // Only reset if explicitly requested via resetAllocations flag
+        const resetAllocations = req.body.resetAllocations === true;
+        if (resetAllocations) {
+          updateData.studentsAllocatedCount = 0;
+        } else {
+          // Keep existing count, or initialize to 0 if not set
+          updateData.studentsAllocatedCount = userData?.studentsAllocatedCount || 0;
+        }
+        // Store teacher plan limits
+        updateData.teacherMaxStudents = planData?.teacherMaxStudents || 0;
+        updateData.teacherPlanExpiryDate = admin.firestore.Timestamp.fromDate(subscriptionEnd);
+      }
+      
+      // Update user with plan assignment
+      await userRef.update(updateData);
+      
+      // Auto-allocate student to teacher if this is a student plan
+      if (userRole === "student" && planData?.role === "student" && planData?.autoAllocateTeacher !== false) {
+        try {
+          const allocationResult = await autoAllocateStudentToTeacher(userId, planId);
+          if (allocationResult.success) {
+            console.log(`Student ${userId} auto-allocated to teacher ${allocationResult.teacherId}`);
+          } else {
+            console.warn(`Failed to auto-allocate student ${userId}: ${allocationResult.error}`);
+            // Update student with pending status
+            await userRef.update({
+              allocationStatus: "PENDING",
+              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            });
+          }
+        } catch (allocationError: any) {
+          console.error("Error during auto-allocation:", allocationError);
+          // Don't fail the plan assignment if allocation fails
+        }
+      }
+      
+      // Create audit log
+      const sessionId = req.headers.authorization?.replace("Bearer ", "") || "";
+      const session = adminSessions.get(sessionId);
+      const adminUserId = session?.userId || "unknown";
+      
+      await adminDb.collection("auditLogs").add({
+        action: "assign_plan",
+        userId,
+        planId,
+        details: {
+          planName: planData?.name,
+          planType: planData?.planType,
+          billingCycle: planData?.billingCycle,
+          startDate: subscriptionStart.toISOString(),
+          endDate: subscriptionEnd.toISOString(),
+        },
+        performedBy: adminUserId,
+        timestamp: admin.firestore.FieldValue.serverTimestamp(),
+      });
+      
+      res.json({
+        success: true,
+        message: "Plan assigned successfully",
+        subscriptionStart: subscriptionStart.toISOString(),
+        subscriptionEnd: subscriptionEnd.toISOString(),
+        subscriptionStatus,
+      });
+    } catch (error: any) {
+      console.error("Error assigning plan:", error);
+      res.status(500).json({ error: "Failed to assign plan: " + error.message });
+    }
+  });
+
   app.put("/api/admin/users/:userId/subscription", requireAdmin, async (req, res) => {
     try {
       const { userId } = req.params;
       const { subscriptionStatus, subscriptionExpiresAt, trialDays } = req.body;
 
-      if (!subscriptionStatus || !["active", "inactive", "trial", "expired"].includes(subscriptionStatus)) {
+      if (!subscriptionStatus || !["active", "inactive", "trial", "expired", "suspended", "free"].includes(subscriptionStatus)) {
         console.error("Invalid subscription status received:", subscriptionStatus);
         console.error("Request body:", req.body);
         return res.status(400).json({ 
-          error: `Invalid subscription status: ${subscriptionStatus || "undefined"}. Must be 'active', 'inactive', 'trial', or 'expired'` 
+          error: `Invalid subscription status: ${subscriptionStatus || "undefined"}. Must be 'active', 'inactive', 'trial', 'expired', 'suspended', or 'free'` 
         });
       }
 
@@ -1728,12 +2430,39 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const snapshot = await query.get();
       const plans = snapshot.docs.map(doc => {
         const data = doc.data();
-        return {
+        // Ensure all fields are included, even if they're null or undefined
+        const plan = {
           id: doc.id,
-          ...data,
-          createdAt: data.createdAt?.toDate?.()?.toISOString(),
-          updatedAt: data.updatedAt?.toDate?.()?.toISOString(),
+          role: data.role || "",
+          name: data.name || "",
+          planType: data.planType || "paid",
+          billingCycle: data.billingCycle || "monthly",
+          price: data.price !== undefined ? data.price : 0,
+          duration: data.duration !== undefined ? data.duration : 0,
+          features: Array.isArray(data.features) ? data.features : [],
+          displayOnUpgradePage: data.displayOnUpgradePage === true,
+          usageLimits: data.usageLimits || {
+            dailyGenerations: 0,
+            monthlyGenerations: 0,
+          },
+          // Teacher-specific fields
+          teacherMaxStudents: data.teacherMaxStudents !== undefined ? data.teacherMaxStudents : null,
+          validityDays: data.validityDays !== undefined ? data.validityDays : null,
+          teacherMaxCourses: data.teacherMaxCourses !== undefined ? data.teacherMaxCourses : null,
+          teacherMaxLessons: data.teacherMaxLessons !== undefined ? data.teacherMaxLessons : null,
+          trialTeacherMaxStudents: data.trialTeacherMaxStudents !== undefined ? data.trialTeacherMaxStudents : null,
+          // Student plan fields
+          autoAllocateTeacher: data.autoAllocateTeacher !== undefined ? data.autoAllocateTeacher : null,
+          allocationStrategy: data.allocationStrategy || null,
+          preferredTeacherCategory: data.preferredTeacherCategory || null,
+          // Trial fields
+          trialDurationDays: data.trialDurationDays !== undefined ? data.trialDurationDays : null,
+          // Timestamps
+          createdAt: data.createdAt?.toDate?.()?.toISOString() || null,
+          updatedAt: data.updatedAt?.toDate?.()?.toISOString() || null,
+          validUntil: data.validUntil?.toDate?.()?.toISOString() || (data.validUntil || null),
         };
+        return plan;
       });
       
       res.json({ plans });
@@ -1763,27 +2492,237 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Create subscription plan
   app.post("/api/admin/subscription-plans", requireAdmin, async (req, res) => {
     try {
-      const { role, name, price, duration, features, usageLimits, displayOnUpgradePage } = req.body;
+      const { 
+        role, 
+        name, 
+        planType, 
+        billingCycle, 
+        price, 
+        duration, 
+        validUntil, 
+        features, 
+        usageLimits, 
+        displayOnUpgradePage,
+        trialDurationDays,
+        teacherMaxStudents,
+        validityDays,
+        teacherMaxCourses,
+        teacherMaxLessons,
+        // Student plan fields
+        autoAllocateTeacher,
+        allocationStrategy,
+        preferredTeacherCategory
+      } = req.body;
       
-      if (!role || !name || price === undefined || !duration) {
-        return res.status(400).json({ error: "Role, name, price, and duration are required" });
+      // Required field validations
+      if (!role || !name || !planType || !billingCycle) {
+        return res.status(400).json({ error: "Role, name, planType, and billingCycle are required" });
       }
       
-      if (!["user", "music_teacher", "artist", "music_director", "doctor", "astrologer"].includes(role)) {
+      if (!["user", "music_teacher", "student", "artist", "music_director", "doctor", "astrologer"].includes(role)) {
         return res.status(400).json({ error: "Invalid role for subscription plan" });
       }
       
-      const planData = {
+      if (!["free", "paid", "free_trial"].includes(planType)) {
+        return res.status(400).json({ error: "planType must be 'free', 'paid', or 'free_trial'" });
+      }
+      
+      if (!["monthly", "yearly"].includes(billingCycle)) {
+        return res.status(400).json({ error: "billingCycle must be 'monthly' or 'yearly'" });
+      }
+      
+      // Price validation: required for paid plans, must be 0 for free plans
+      if (planType === "paid") {
+        if (price === undefined || price === null || price === "") {
+          return res.status(400).json({ error: "Price is required for paid plans" });
+        }
+        if (parseFloat(price) < 0) {
+          return res.status(400).json({ error: "Price cannot be negative" });
+        }
+      } else {
+        // Free or free_trial plans must have price = 0
+        if (price !== undefined && price !== null && price !== "" && parseFloat(price) !== 0) {
+          return res.status(400).json({ error: "Free and free_trial plans must have price = 0" });
+        }
+      }
+      
+      // Trial duration validation for free_trial plans
+      if (planType === "free_trial") {
+        if (!trialDurationDays || parseInt(trialDurationDays) <= 0) {
+          return res.status(400).json({ error: "trialDurationDays is required and must be > 0 for free_trial plans" });
+        }
+      }
+      
+      // Validity validation: either duration (days) or validUntil (date) must be provided
+      if (!duration && !validUntil) {
+        return res.status(400).json({ error: "Either duration (days) or validUntil (date) is required" });
+      }
+      
+      // Usage limits validation - different for teacher vs other roles
+      if (role === "music_teacher") {
+        // For teachers, validate teacher feature limits instead
+        if (teacherMaxCourses === undefined || teacherMaxLessons === undefined) {
+          return res.status(400).json({ error: "teacherMaxCourses and teacherMaxLessons are required for music_teacher plans" });
+        }
+        const maxCourses = parseInt(teacherMaxCourses);
+        const maxLessons = parseInt(teacherMaxLessons);
+        if (isNaN(maxCourses) || maxCourses < 0) {
+          return res.status(400).json({ error: "teacherMaxCourses must be a non-negative integer" });
+        }
+        if (isNaN(maxLessons) || maxLessons < 0) {
+          return res.status(400).json({ error: "teacherMaxLessons must be a non-negative integer" });
+        }
+      } else if (role === "student") {
+        // Student plans don't require generation limits - they use teacher allocation instead
+        // Student-specific validation is handled below
+      } else {
+        // For other roles, validate generation limits
+        if (!usageLimits || usageLimits.dailyGenerations === undefined || usageLimits.monthlyGenerations === undefined) {
+          return res.status(400).json({ error: "Both dailyGenerations and monthlyGenerations limits are required" });
+        }
+        
+        const dailyLimit = parseInt(usageLimits.dailyGenerations);
+        const monthlyLimit = parseInt(usageLimits.monthlyGenerations);
+        
+        if (isNaN(dailyLimit) || dailyLimit < 0) {
+          return res.status(400).json({ error: "dailyGenerations must be a non-negative integer" });
+        }
+        
+        if (isNaN(monthlyLimit) || monthlyLimit < 0) {
+          return res.status(400).json({ error: "monthlyGenerations must be a non-negative integer" });
+        }
+      }
+
+      // Teacher-specific plan validation
+      if (role === "music_teacher") {
+        // teacherMaxStudents is required for teacher plans
+        if (teacherMaxStudents === undefined || teacherMaxStudents === null || teacherMaxStudents === "") {
+          return res.status(400).json({ error: "teacherMaxStudents is required for music_teacher plans" });
+        }
+        const maxStudents = parseInt(teacherMaxStudents);
+        if (isNaN(maxStudents) || maxStudents < 0) {
+          return res.status(400).json({ error: "teacherMaxStudents must be a non-negative integer" });
+        }
+
+        // validityDays is required for teacher plans (or use duration if provided)
+        if (!validityDays && !duration && !validUntil) {
+          return res.status(400).json({ error: "validityDays (or duration/validUntil) is required for music_teacher plans" });
+        }
+      }
+
+      // Student-specific plan validation
+      if (role === "student") {
+        // validityDays is required for student plans (or use duration if provided)
+        if (!validityDays && !duration && !validUntil) {
+          return res.status(400).json({ error: "validityDays (or duration/validUntil) is required for student plans" });
+        }
+
+        // Validate allocation strategy if auto-allocation is enabled
+        if (autoAllocateTeacher !== false) {
+          if (allocationStrategy && !["LeastStudentsFirst", "RoundRobin", "NewestTeacherFirst"].includes(allocationStrategy)) {
+            return res.status(400).json({ error: "allocationStrategy must be 'LeastStudentsFirst', 'RoundRobin', or 'NewestTeacherFirst'" });
+          }
+        }
+      }
+      
+      // Calculate duration from validUntil if duration not provided
+      let calculatedDuration = duration ? parseInt(duration) : null;
+      // For teacher plans, prefer validityDays if provided
+      if (role === "music_teacher" && validityDays) {
+        calculatedDuration = parseInt(validityDays);
+        if (isNaN(calculatedDuration) || calculatedDuration <= 0) {
+          return res.status(400).json({ error: "validityDays must be a positive integer" });
+        }
+      } else if (!calculatedDuration && validUntil) {
+        const validUntilDate = new Date(validUntil);
+        const now = new Date();
+        calculatedDuration = Math.ceil((validUntilDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+        if (calculatedDuration <= 0) {
+          return res.status(400).json({ error: "validUntil date must be in the future" });
+        }
+      }
+      
+      const planData: any = {
         role,
         name,
-        price: parseFloat(price),
-        duration: parseInt(duration), // days
+        planType,
+        billingCycle,
+        price: planType === "paid" ? parseFloat(price) : 0,
+        duration: calculatedDuration || 0,
         features: Array.isArray(features) ? features : [],
-        usageLimits: usageLimits || {},
         displayOnUpgradePage: displayOnUpgradePage === true,
         createdAt: admin.firestore.FieldValue.serverTimestamp(),
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       };
+      
+      // Always set validUntil if provided, otherwise set to null explicitly
+      if (validUntil) {
+        planData.validUntil = admin.firestore.Timestamp.fromDate(new Date(validUntil));
+      } else {
+        planData.validUntil = null; // Explicitly set to null so it's stored
+      }
+      
+      // Set usage limits based on role
+      if (role === "music_teacher") {
+        // For teachers, set generation limits to 0 and use teacher feature limits
+        planData.usageLimits = {
+          dailyGenerations: 0,
+          monthlyGenerations: 0,
+        };
+        planData.teacherMaxStudents = parseInt(teacherMaxStudents) || 0;
+        planData.validityDays = calculatedDuration || 0; // Store validityDays for teacher plans
+        planData.teacherMaxCourses = parseInt(teacherMaxCourses) || 0;
+        planData.teacherMaxLessons = parseInt(teacherMaxLessons) || 0;
+        // Explicitly set trial fields to null if not provided
+        planData.trialTeacherMaxStudents = null;
+      } else if (role === "student") {
+        // For students, set generation limits (if needed) and student-specific fields
+        planData.usageLimits = {
+          dailyGenerations: parseInt(usageLimits?.dailyGenerations) || 0,
+          monthlyGenerations: parseInt(usageLimits?.monthlyGenerations) || 0,
+        };
+        planData.validityDays = calculatedDuration || 0;
+        // Student auto-allocation settings
+        planData.autoAllocateTeacher = autoAllocateTeacher !== false; // Default to true
+        planData.allocationStrategy = allocationStrategy || "LeastStudentsFirst";
+        if (preferredTeacherCategory) {
+          planData.preferredTeacherCategory = preferredTeacherCategory;
+        }
+        // Set teacher fields to null for student plans
+        planData.teacherMaxStudents = null;
+        planData.teacherMaxCourses = null;
+        planData.teacherMaxLessons = null;
+        planData.trialTeacherMaxStudents = null;
+      } else {
+        // For other roles, use generation limits
+        planData.usageLimits = {
+          dailyGenerations: parseInt(usageLimits.dailyGenerations) || 0,
+          monthlyGenerations: parseInt(usageLimits.monthlyGenerations) || 0,
+        };
+        // Set teacher fields to null for non-teacher plans
+        planData.teacherMaxStudents = null;
+        planData.validityDays = null;
+        planData.teacherMaxCourses = null;
+        planData.teacherMaxLessons = null;
+        planData.trialTeacherMaxStudents = null;
+        // Set student fields to null for non-student plans
+        planData.autoAllocateTeacher = null;
+        planData.allocationStrategy = null;
+        planData.preferredTeacherCategory = null;
+      }
+      
+      // Handle trial duration - always set it, even if null
+      if (planType === "free_trial" && trialDurationDays) {
+        planData.trialDurationDays = parseInt(trialDurationDays);
+        // For trial teacher plans, can have separate trial student limit
+        if (role === "music_teacher" && req.body.trialTeacherMaxStudents !== undefined && req.body.trialTeacherMaxStudents !== null && req.body.trialTeacherMaxStudents !== "") {
+          planData.trialTeacherMaxStudents = parseInt(req.body.trialTeacherMaxStudents);
+        } else {
+          planData.trialTeacherMaxStudents = null;
+        }
+      } else {
+        planData.trialDurationDays = null; // Explicitly set to null for non-trial plans
+      }
       
       const docRef = await adminDb.collection("subscriptionPlans").add(planData);
       
@@ -1794,7 +2733,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
     } catch (error: any) {
       console.error("Error creating subscription plan:", error);
-      res.status(500).json({ error: "Failed to create subscription plan" });
+      res.status(500).json({ error: "Failed to create subscription plan: " + error.message });
     }
   });
 
@@ -1802,7 +2741,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.put("/api/admin/subscription-plans/:planId", requireAdmin, async (req, res) => {
     try {
       const { planId } = req.params;
-      const { name, price, duration, features, usageLimits, displayOnUpgradePage } = req.body;
+      const { 
+        role,
+        name, 
+        planType, 
+        billingCycle, 
+        price, 
+        duration, 
+        validUntil, 
+        features, 
+        usageLimits, 
+        displayOnUpgradePage,
+        trialDurationDays,
+        teacherMaxStudents,
+        validityDays,
+        trialTeacherMaxStudents,
+        teacherMaxCourses,
+        teacherMaxLessons
+      } = req.body;
       
       const planRef = adminDb.collection("subscriptionPlans").doc(planId);
       const planDoc = await planRef.get();
@@ -1811,23 +2767,222 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ error: "Subscription plan not found" });
       }
       
+      const existingPlan = planDoc.data();
+      // Determine the role - use provided role or existing plan's role
+      const finalRole = role || existingPlan?.role;
+      
       const updateData: any = {
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       };
       
+      // Validate and update fields
+      if (role !== undefined) {
+        if (!["user", "music_teacher", "artist", "music_director", "doctor", "astrologer", "student"].includes(role)) {
+          return res.status(400).json({ error: "Invalid role for subscription plan" });
+        }
+        updateData.role = role;
+      }
       if (name !== undefined) updateData.name = name;
-      if (price !== undefined) updateData.price = parseFloat(price);
-      if (duration !== undefined) updateData.duration = parseInt(duration);
+      if (planType !== undefined) {
+        if (!["free", "paid", "free_trial"].includes(planType)) {
+          return res.status(400).json({ error: "planType must be 'free', 'paid', or 'free_trial'" });
+        }
+        updateData.planType = planType;
+      }
+      
+      if (billingCycle !== undefined) {
+        if (!["monthly", "yearly"].includes(billingCycle)) {
+          return res.status(400).json({ error: "billingCycle must be 'monthly' or 'yearly'" });
+        }
+        updateData.billingCycle = billingCycle;
+      }
+      
+      // Price validation
+      const finalPlanType = planType || existingPlan?.planType;
+      if (price !== undefined) {
+        if (finalPlanType === "paid") {
+          if (price === null || price === "" || parseFloat(price) < 0) {
+            return res.status(400).json({ error: "Price must be >= 0 for paid plans" });
+          }
+          updateData.price = parseFloat(price);
+        } else {
+          updateData.price = 0;
+        }
+      }
+      
+      // Duration/validUntil validation
+      // If both are provided, prefer validUntil and calculate duration from it
+      if (validUntil !== undefined && validUntil !== null && validUntil !== "") {
+        const validUntilDate = new Date(validUntil);
+        const now = new Date();
+        if (isNaN(validUntilDate.getTime())) {
+          return res.status(400).json({ error: "Invalid validUntil date format" });
+        }
+        if (validUntilDate <= now) {
+          return res.status(400).json({ error: "validUntil date must be in the future" });
+        }
+        updateData.validUntil = admin.firestore.Timestamp.fromDate(validUntilDate);
+        // Calculate duration from validUntil
+        const calculatedDuration = Math.ceil((validUntilDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+        updateData.duration = calculatedDuration;
+      } else if (duration !== undefined && duration !== null && duration !== "") {
+        updateData.duration = parseInt(duration);
+        // If duration is provided but no validUntil, delete validUntil field
+        updateData.validUntil = admin.firestore.FieldValue.delete();
+      }
+      
+      // Trial duration for free_trial plans
+      if (trialDurationDays !== undefined) {
+        if (finalPlanType === "free_trial") {
+          if (!trialDurationDays || parseInt(trialDurationDays) <= 0) {
+            return res.status(400).json({ error: "trialDurationDays must be > 0 for free_trial plans" });
+          }
+          updateData.trialDurationDays = parseInt(trialDurationDays);
+        }
+      }
+      
+      // Usage limits validation - different for teacher and student vs other roles
+      if (usageLimits !== undefined) {
+        if (finalRole === "music_teacher") {
+          // For teachers, set generation limits to 0 (they don't use generation limits)
+          updateData.usageLimits = {
+            dailyGenerations: 0,
+            monthlyGenerations: 0,
+          };
+        } else if (finalRole === "student") {
+          // For students, set generation limits to 0 (they don't use generation limits)
+          updateData.usageLimits = {
+            dailyGenerations: 0,
+            monthlyGenerations: 0,
+          };
+        } else {
+          // For other roles, validate generation limits
+          if (usageLimits.dailyGenerations === undefined || usageLimits.monthlyGenerations === undefined) {
+            return res.status(400).json({ error: "Both dailyGenerations and monthlyGenerations are required" });
+          }
+          const dailyLimit = parseInt(usageLimits.dailyGenerations);
+          const monthlyLimit = parseInt(usageLimits.monthlyGenerations);
+          
+          if (isNaN(dailyLimit) || dailyLimit < 0) {
+            return res.status(400).json({ error: "dailyGenerations must be a non-negative integer" });
+          }
+          if (isNaN(monthlyLimit) || monthlyLimit < 0) {
+            return res.status(400).json({ error: "monthlyGenerations must be a non-negative integer" });
+          }
+          
+          updateData.usageLimits = {
+            dailyGenerations: dailyLimit,
+            monthlyGenerations: monthlyLimit,
+          };
+        }
+      }
+
+      // Teacher-specific fields validation and update
+      if (finalRole === "music_teacher") {
+        if (teacherMaxStudents !== undefined && teacherMaxStudents !== null && teacherMaxStudents !== "") {
+          const maxStudents = parseInt(teacherMaxStudents);
+          if (isNaN(maxStudents) || maxStudents < 0) {
+            return res.status(400).json({ error: "teacherMaxStudents must be a non-negative integer" });
+          }
+          updateData.teacherMaxStudents = maxStudents;
+        }
+        
+        // Handle teacher feature limits - always update if provided (including 0)
+        // For teacher plans, these fields should always be present in the request
+        if (teacherMaxCourses !== undefined && teacherMaxCourses !== null && teacherMaxCourses !== "") {
+          const maxCourses = parseInt(teacherMaxCourses);
+          if (isNaN(maxCourses) || maxCourses < 0) {
+            return res.status(400).json({ error: "teacherMaxCourses must be a non-negative integer" });
+          }
+          updateData.teacherMaxCourses = maxCourses;
+        } else if (teacherMaxCourses === "" || teacherMaxCourses === null) {
+          // If explicitly set to empty/null, set to 0
+          updateData.teacherMaxCourses = 0;
+        }
+        // If undefined, don't update (keep existing value)
+        
+        if (teacherMaxLessons !== undefined && teacherMaxLessons !== null && teacherMaxLessons !== "") {
+          const maxLessons = parseInt(teacherMaxLessons);
+          if (isNaN(maxLessons) || maxLessons < 0) {
+            return res.status(400).json({ error: "teacherMaxLessons must be a non-negative integer" });
+          }
+          updateData.teacherMaxLessons = maxLessons;
+        } else if (teacherMaxLessons === "" || teacherMaxLessons === null) {
+          // If explicitly set to empty/null, set to 0
+          updateData.teacherMaxLessons = 0;
+        }
+        // If undefined, don't update (keep existing value)
+        
+        // Handle validityDays
+        if (validityDays !== undefined) {
+          const validity = parseInt(validityDays);
+          if (isNaN(validity) || validity <= 0) {
+            return res.status(400).json({ error: "validityDays must be a positive integer" });
+          }
+          updateData.validityDays = validity;
+          // Also update duration if not explicitly set
+          if (duration === undefined && validUntil === undefined) {
+            updateData.duration = validity;
+          }
+        } else if (duration !== undefined) {
+          updateData.validityDays = parseInt(duration);
+        } else if (validUntil !== undefined && updateData.duration) {
+          updateData.validityDays = updateData.duration;
+        }
+      }
+
+      // Trial teacher max students
+      if (finalPlanType === "free_trial" && trialTeacherMaxStudents !== undefined && finalRole === "music_teacher") {
+        const trialMaxStudents = parseInt(trialTeacherMaxStudents);
+        if (isNaN(trialMaxStudents) || trialMaxStudents < 0) {
+          return res.status(400).json({ error: "trialTeacherMaxStudents must be a non-negative integer" });
+        }
+        updateData.trialTeacherMaxStudents = trialMaxStudents;
+      }
+
+      // Student-specific fields update
+      if (finalRole === "student") {
+        if (validityDays !== undefined) {
+          const validity = parseInt(validityDays);
+          if (isNaN(validity) || validity <= 0) {
+            return res.status(400).json({ error: "validityDays must be a positive integer" });
+          }
+          updateData.validityDays = validity;
+        }
+        if (autoAllocateTeacher !== undefined) {
+          updateData.autoAllocateTeacher = autoAllocateTeacher !== false;
+        }
+        if (allocationStrategy !== undefined) {
+          if (!["LeastStudentsFirst", "RoundRobin", "NewestTeacherFirst"].includes(allocationStrategy)) {
+            return res.status(400).json({ error: "allocationStrategy must be 'LeastStudentsFirst', 'RoundRobin', or 'NewestTeacherFirst'" });
+          }
+          updateData.allocationStrategy = allocationStrategy;
+        }
+        if (preferredTeacherCategory !== undefined) {
+          updateData.preferredTeacherCategory = preferredTeacherCategory || null;
+        }
+      }
+      
       if (features !== undefined) updateData.features = Array.isArray(features) ? features : [];
-      if (usageLimits !== undefined) updateData.usageLimits = usageLimits;
       if (displayOnUpgradePage !== undefined) updateData.displayOnUpgradePage = displayOnUpgradePage === true;
       
+      console.log("Updating plan with data:", JSON.stringify(updateData, null, 2));
+      console.log("Request body:", JSON.stringify(req.body, null, 2));
       await planRef.update(updateData);
       
       res.json({ success: true, message: "Subscription plan updated successfully" });
     } catch (error: any) {
       console.error("Error updating subscription plan:", error);
-      res.status(500).json({ error: "Failed to update subscription plan" });
+      console.error("Error details:", {
+        message: error.message,
+        stack: error.stack,
+        requestBody: req.body,
+      });
+      // If it's a validation error (400), return it as-is
+      if (error.status === 400 || error.message?.includes("must be")) {
+        return res.status(400).json({ error: error.message });
+      }
+      res.status(500).json({ error: "Failed to update subscription plan: " + error.message });
     }
   });
 

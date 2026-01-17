@@ -3,6 +3,7 @@ import { useLocation } from "wouter";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Progress } from "@/components/ui/progress";
 import { 
   BookOpen, 
   Users, 
@@ -12,10 +13,14 @@ import {
   Upload, 
   BarChart3,
   Lock,
-  AlertCircle
+  AlertCircle,
+  Calendar,
+  Clock,
+  Loader2,
+  Crown
 } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
-import { db } from "@/lib/firebase";
+import { db, auth } from "@/lib/firebase";
 import { collection, query, where, getDocs } from "firebase/firestore";
 
 export default function MusicTeacherDashboard() {
@@ -30,6 +35,8 @@ export default function MusicTeacherDashboard() {
   });
   const [isLoading, setIsLoading] = useState(true);
   const [isLocked, setIsLocked] = useState(false);
+  const [subscriptionDetails, setSubscriptionDetails] = useState<any>(null);
+  const [isLoadingSubscription, setIsLoadingSubscription] = useState(true);
 
   useEffect(() => {
     // Check if user is music teacher
@@ -47,9 +54,90 @@ export default function MusicTeacherDashboard() {
 
     // Fetch teacher stats
     const fetchStats = async () => {
+      if (!user?.id) {
+        setIsLoading(false);
+        return;
+      }
+
       try {
-        // TODO: Replace with actual Firestore queries when course/lesson/student collections are created
-        // For now, using placeholder data
+        // Fetch all courses for this teacher
+        const coursesRef = collection(db, "courses");
+        const coursesQuery = query(
+          coursesRef,
+          where("teacherId", "==", user.id)
+        );
+        const coursesSnapshot = await getDocs(coursesQuery);
+        
+        let totalCourses = 0;
+        let totalLessons = 0;
+        let pendingReviews = 0;
+        const courseIds: string[] = [];
+        
+        coursesSnapshot.forEach((courseDoc) => {
+          const courseData = courseDoc.data();
+          totalCourses++;
+          courseIds.push(courseDoc.id);
+          
+          // Count lessons in all modules
+          if (courseData.modules && Array.isArray(courseData.modules)) {
+            courseData.modules.forEach((module: any) => {
+              if (module.lessons && Array.isArray(module.lessons)) {
+                totalLessons += module.lessons.length;
+              }
+            });
+          }
+          
+          // Count pending reviews
+          if (courseData.status === "pending") {
+            pendingReviews++;
+          }
+        });
+
+        // Fetch enrollments to count unique students
+        let totalStudents = 0;
+        const uniqueStudentIds = new Set<string>();
+        
+        if (courseIds.length > 0) {
+          // Fetch enrollments in batches (Firestore 'in' limit is 10)
+          for (let i = 0; i < courseIds.length; i += 10) {
+            const batch = courseIds.slice(i, i + 10);
+            const enrollmentsRef = collection(db, "enrollments");
+            const enrollmentsQuery = query(
+              enrollmentsRef,
+              where("courseId", "in", batch)
+            );
+            
+            try {
+              const enrollmentsSnapshot = await getDocs(enrollmentsQuery);
+              enrollmentsSnapshot.forEach((enrollmentDoc) => {
+                const enrollmentData = enrollmentDoc.data();
+                if (enrollmentData.studentId) {
+                  uniqueStudentIds.add(enrollmentData.studentId);
+                }
+              });
+            } catch (error) {
+              // If enrollments collection doesn't exist yet, that's okay
+              console.log("No enrollments found for batch");
+            }
+          }
+        }
+        
+        totalStudents = uniqueStudentIds.size;
+
+        // Calculate this month earnings (placeholder - would need payment/earnings collection)
+        // For now, we'll use a simple calculation or set to 0
+        const thisMonthEarnings = 0; // TODO: Implement earnings calculation from payments/enrollments
+
+        setStats({
+          totalCourses,
+          totalLessons,
+          totalStudents,
+          thisMonthEarnings,
+          pendingReviews,
+        });
+      } catch (error) {
+        console.error("Error fetching teacher stats:", error);
+        // Set defaults on error
         setStats({
           totalCourses: 0,
           totalLessons: 0,
@@ -57,14 +145,46 @@ export default function MusicTeacherDashboard() {
           thisMonthEarnings: 0,
           pendingReviews: 0,
         });
-      } catch (error) {
-        console.error("Error fetching teacher stats:", error);
       } finally {
         setIsLoading(false);
       }
     };
 
     fetchStats();
+
+    // Fetch subscription details
+    const fetchSubscriptionDetails = async () => {
+      if (!user || user.isGuest) {
+        setIsLoadingSubscription(false);
+        return;
+      }
+
+      try {
+        const currentUser = auth.currentUser;
+        if (!currentUser) {
+          setIsLoadingSubscription(false);
+          return;
+        }
+
+        const token = await currentUser.getIdToken();
+        const response = await fetch("/api/user/subscription-details", {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          setSubscriptionDetails(data);
+        }
+      } catch (error) {
+        console.error("Error fetching subscription details:", error);
+      } finally {
+        setIsLoadingSubscription(false);
+      }
+    };
+
+    fetchSubscriptionDetails();
   }, [user, setLocation]);
 
   if (isLoading) {
@@ -148,13 +268,13 @@ export default function MusicTeacherDashboard() {
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Total Students</CardTitle>
+            <CardTitle className="text-sm font-medium">Enrolled Students</CardTitle>
             <Users className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{stats.totalStudents}</div>
             <p className="text-xs text-muted-foreground">
-              Enrolled students
+              Students enrolled in your courses
             </p>
           </CardContent>
         </Card>
@@ -251,44 +371,137 @@ export default function MusicTeacherDashboard() {
         </CardContent>
       </Card>
 
-      {/* Subscription Status */}
-      {user.subscriptionStatus && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Subscription Status</CardTitle>
-            <CardDescription>
-              Current subscription information
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="flex items-center justify-between">
-              <div>
-                <div className="flex items-center gap-2">
-                  <Badge 
-                    variant={
-                      user.subscriptionStatus === "active" ? "default" :
-                      user.subscriptionStatus === "trial" ? "secondary" :
-                      "outline"
-                    }
-                  >
-                    {user.subscriptionStatus}
-                  </Badge>
-                  {user.subscriptionExpiresAt && (
-                    <span className="text-sm text-muted-foreground">
-                      Expires: {new Date(user.subscriptionExpiresAt).toLocaleDateString()}
-                    </span>
+      {/* Teacher Plan Card */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Crown className="h-5 w-5" />
+            Teacher Plan Status
+          </CardTitle>
+          <CardDescription>
+            Your current plan details and student allocation capacity
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {isLoadingSubscription ? (
+            <div className="flex items-center justify-center py-8">
+              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+            </div>
+          ) : subscriptionDetails ? (
+            <>
+              {/* Plan Info */}
+              <div className="p-4 border rounded-lg space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2 mb-1">
+                      <p className="font-semibold">{subscriptionDetails.planName || "No Plan"}</p>
+                      <Badge 
+                        variant={
+                          subscriptionDetails.subscriptionStatus === "active" ? "default" :
+                          subscriptionDetails.subscriptionStatus === "trial" ? "secondary" :
+                          subscriptionDetails.subscriptionStatus === "expired" ? "destructive" :
+                          "outline"
+                        }
+                      >
+                        {subscriptionDetails.subscriptionStatus?.toUpperCase() || "INACTIVE"}
+                      </Badge>
+                    </div>
+                    <p className="text-sm text-muted-foreground">
+                      Billing: {subscriptionDetails.billingCycle === "monthly" ? "Monthly" : "Yearly"}
+                    </p>
+                  </div>
+                  {(subscriptionDetails.subscriptionStatus === "expired" || !subscriptionDetails.planId) && (
+                    <Button onClick={() => setLocation("/dashboard/upgrade")}>
+                      <Crown className="mr-2 h-4 w-4" />
+                      Upgrade
+                    </Button>
                   )}
                 </div>
+
+                {/* Validity Information */}
+                {subscriptionDetails.subscriptionEndDate && (
+                  <div className="pt-3 border-t space-y-2">
+                    <div className="flex items-center gap-2 text-sm">
+                      <Calendar className="h-4 w-4 text-muted-foreground" />
+                      <span className="text-muted-foreground">End Date:</span>
+                      <span>{new Date(subscriptionDetails.subscriptionEndDate).toLocaleDateString()}</span>
+                    </div>
+                    {subscriptionDetails.daysRemaining !== null && (
+                      <div className="flex items-center gap-2 text-sm">
+                        <Clock className="h-4 w-4 text-muted-foreground" />
+                        <span className="text-muted-foreground">Days Remaining:</span>
+                        <span className={subscriptionDetails.daysRemaining <= 7 ? "text-destructive font-semibold" : ""}>
+                          {subscriptionDetails.daysRemaining} days
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Status Messages */}
+                {subscriptionDetails.subscriptionStatus === "expired" && (
+                  <div className="p-3 bg-destructive/10 border border-destructive/20 rounded-md">
+                    <div className="flex items-start gap-2">
+                      <AlertCircle className="h-4 w-4 text-destructive mt-0.5" />
+                      <p className="text-sm text-destructive">
+                        Your plan validity has ended. Renew/upgrade to manage students.
+                      </p>
+                    </div>
+                  </div>
+                )}
               </div>
-              {isLocked && (
-                <Button onClick={() => setLocation("/dashboard/upgrade")}>
-                  Activate Subscription
-                </Button>
+
+              {/* Student Allocation */}
+              {subscriptionDetails.teacherMaxStudents !== undefined && (
+                <div className="p-4 border rounded-lg space-y-4">
+                  <div>
+                    <h3 className="font-semibold text-sm">Students Allocated</h3>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Students automatically assigned to you from student plans (different from enrolled students)
+                    </p>
+                  </div>
+                  
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-muted-foreground">Used / Limit</span>
+                      <span className="font-semibold">
+                        {subscriptionDetails.studentsAllocatedCount || 0} / {subscriptionDetails.teacherMaxStudents}
+                      </span>
+                    </div>
+                    <Progress 
+                      value={subscriptionDetails.teacherMaxStudents > 0 
+                        ? ((subscriptionDetails.studentsAllocatedCount || 0) / subscriptionDetails.teacherMaxStudents) * 100 
+                        : 0} 
+                      className="h-2" 
+                    />
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-muted-foreground">Remaining</span>
+                      <span className="font-semibold">
+                        {subscriptionDetails.studentsAllocatedRemaining || 0} slots
+                      </span>
+                    </div>
+                    {subscriptionDetails.studentsAllocatedRemaining === 0 && subscriptionDetails.teacherMaxStudents > 0 && (
+                      <p className="text-xs text-destructive">
+                        Student limit reached. Upgrade your plan to add more students.
+                      </p>
+                    )}
+                  </div>
+                </div>
               )}
+            </>
+          ) : (
+            <div className="p-4 border rounded-lg">
+              <p className="text-sm text-muted-foreground">
+                No subscription plan assigned. Please contact support.
+              </p>
+              <Button onClick={() => setLocation("/dashboard/upgrade")} className="mt-4">
+                <Crown className="mr-2 h-4 w-4" />
+                View Plans
+              </Button>
             </div>
-          </CardContent>
-        </Card>
-      )}
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }

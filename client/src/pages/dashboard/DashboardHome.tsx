@@ -2,9 +2,10 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/contexts/AuthContext";
 import { Link, useLocation } from "wouter";
-import { Sparkles, Library, TrendingUp, Music } from "lucide-react";
+import { Sparkles, Library, TrendingUp, Music, Loader2 } from "lucide-react";
 import { getSavedCompositions } from "@/lib/compositionStorage";
 import { useEffect, useState } from "react";
+import { auth } from "@/lib/firebase";
 
 /**
  * DashboardHome component - main dashboard page
@@ -15,6 +16,8 @@ export default function DashboardHome() {
   const [, setLocation] = useLocation();
   const [totalCompositions, setTotalCompositions] = useState(0);
   const [libraryCount, setLibraryCount] = useState(0);
+  const [subscriptionDetails, setSubscriptionDetails] = useState<any>(null);
+  const [isLoadingSubscription, setIsLoadingSubscription] = useState(true);
 
   // Redirect music teachers, artists, directors, doctors, astrologers, and students to their respective dashboards
   useEffect(() => {
@@ -39,6 +42,42 @@ export default function DashboardHome() {
     setTotalCompositions(compositions.length);
     setLibraryCount(compositions.length);
   }, []);
+
+  // Load subscription details
+  useEffect(() => {
+    const fetchSubscriptionDetails = async () => {
+      if (!user || user.isGuest) {
+        setIsLoadingSubscription(false);
+        return;
+      }
+
+      try {
+        const currentUser = auth.currentUser;
+        if (!currentUser) {
+          setIsLoadingSubscription(false);
+          return;
+        }
+
+        const token = await currentUser.getIdToken();
+        const response = await fetch("/api/user/subscription-details", {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          setSubscriptionDetails(data);
+        }
+      } catch (error) {
+        console.error("Error fetching subscription details:", error);
+      } finally {
+        setIsLoadingSubscription(false);
+      }
+    };
+
+    fetchSubscriptionDetails();
+  }, [user]);
 
   // Show message for normal users
   if (user && user.role !== "music_teacher" && user.role !== "artist" && user.role !== "music_director" && user.role !== "doctor" && user.role !== "astrologer" && user.role !== "student") {
@@ -100,8 +139,21 @@ export default function DashboardHome() {
               <TrendingUp className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">0</div>
-              <p className="text-xs text-muted-foreground">New compositions</p>
+              {isLoadingSubscription ? (
+                <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+              ) : subscriptionDetails && subscriptionDetails.monthlyRemaining !== undefined ? (
+                <>
+                  <div className="text-2xl font-bold">
+                    {subscriptionDetails.monthlyRemaining} / {subscriptionDetails.monthlyLimit}
+                  </div>
+                  <p className="text-xs text-muted-foreground">Monthly generations remaining</p>
+                </>
+              ) : (
+                <>
+                  <div className="text-2xl font-bold">—</div>
+                  <p className="text-xs text-muted-foreground">No subscription plan</p>
+                </>
+              )}
             </CardContent>
           </Card>
         </div>

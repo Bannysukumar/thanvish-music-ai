@@ -89,19 +89,133 @@ service cloud.firestore {
       allow read: if isDoctor() && resource.data.role == 'artist';
       // Astrologers can read artist profiles (for discovery)
       allow read: if isAstrologer() && resource.data.role == 'artist';
-      // Students can read teacher profiles (for course enrollment)
+      // Students can read teacher profiles (for course enrollment and allocation)
       allow read: if isStudent() && resource.data.role == 'music_teacher';
+      // Teachers can read their allocated students
+      allow read: if isMusicTeacher() && resource.data.role == 'student' && 
+        resource.data.allocatedTeacherId == request.auth.uid;
+      // Students can read their allocated teacher
+      allow read: if isStudent() && resource.data.role == 'music_teacher' && 
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.allocatedTeacherId == userId;
+      // Students can read other students who share the same allocated teacher (for batch view)
+      allow read: if isStudent() && resource.data.role == 'student' &&
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.allocatedTeacherId != null &&
+        resource.data.allocatedTeacherId == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.allocatedTeacherId;
+      
+      // Users can create their own profile (for new users during onboarding)
+      // Allow creating profile with preferences and basic fields
+      allow create: if isOwner(userId) &&
+        // Allow setting basic role (default to "user" if not set)
+        (!('role' in request.resource.data) || request.resource.data.role == 'user') &&
+        // Allow setting subscriptionStatus to null (new users don't have subscription)
+        (!('subscriptionStatus' in request.resource.data) || 
+         request.resource.data.subscriptionStatus == null) &&
+        // Don't allow setting sensitive server-only fields on create
+        !('allocatedTeacherId' in request.resource.data) &&
+        !('allocatedTeacherName' in request.resource.data) &&
+        !('allocationStatus' in request.resource.data) &&
+        !('allocationDate' in request.resource.data) &&
+        !('allocationPlanId' in request.resource.data) &&
+        !('studentsAllocatedCount' in request.resource.data) &&
+        !('teacherMaxStudents' in request.resource.data) &&
+        !('teacherMaxCourses' in request.resource.data) &&
+        !('teacherMaxLessons' in request.resource.data) &&
+        !('teacherPlanExpiryDate' in request.resource.data) &&
+        !('planId' in request.resource.data) &&
+        !('subscriptionStartDate' in request.resource.data) &&
+        !('subscriptionEndDate' in request.resource.data) &&
+        !('subscriptionExpiresAt' in request.resource.data) &&
+        !('billingCycle' in request.resource.data) &&
+        !('planType' in request.resource.data) &&
+        !('dailyGenerationUsed' in request.resource.data) &&
+        !('monthlyGenerationUsed' in request.resource.data) &&
+        !('lastDailyReset' in request.resource.data) &&
+        !('lastMonthlyReset' in request.resource.data);
       
       // Users can update their own profile (limited fields)
-      // Prevent users from changing role or subscriptionStatus (admin only)
+      // Allow updating preferences and profile fields, but prevent changing sensitive fields
       allow update: if isOwner(userId) && 
-        request.resource.data.role == resource.data.role &&
-        request.resource.data.subscriptionStatus == resource.data.subscriptionStatus;
+        // Prevent changing role (admin only) - must match existing or not be in request
+        (!('role' in request.resource.data) || 
+         !('role' in resource.data) || 
+         request.resource.data.role == resource.data.role) &&
+        // Prevent changing subscriptionStatus (admin only) - must match existing or not be in request
+        // Allow setting to null if field doesn't exist in resource (for new users)
+        (!('subscriptionStatus' in request.resource.data) || 
+         !('subscriptionStatus' in resource.data) ||
+         request.resource.data.subscriptionStatus == resource.data.subscriptionStatus ||
+         (request.resource.data.subscriptionStatus == null && !('subscriptionStatus' in resource.data))) &&
+        // Prevent changing allocation fields (server-only) - must match existing or not be in request
+        (!('allocatedTeacherId' in request.resource.data) || 
+         !('allocatedTeacherId' in resource.data) ||
+         request.resource.data.allocatedTeacherId == resource.data.allocatedTeacherId) &&
+        (!('allocatedTeacherName' in request.resource.data) || 
+         !('allocatedTeacherName' in resource.data) ||
+         request.resource.data.allocatedTeacherName == resource.data.allocatedTeacherName) &&
+        (!('allocationStatus' in request.resource.data) || 
+         !('allocationStatus' in resource.data) ||
+         request.resource.data.allocationStatus == resource.data.allocationStatus) &&
+        (!('allocationDate' in request.resource.data) || 
+         !('allocationDate' in resource.data) ||
+         request.resource.data.allocationDate == resource.data.allocationDate) &&
+        (!('allocationPlanId' in request.resource.data) || 
+         !('allocationPlanId' in resource.data) ||
+         request.resource.data.allocationPlanId == resource.data.allocationPlanId) &&
+        // Prevent changing teacher-specific fields (server-only) - must match existing or not be in request
+        (!('studentsAllocatedCount' in request.resource.data) || 
+         !('studentsAllocatedCount' in resource.data) ||
+         request.resource.data.studentsAllocatedCount == resource.data.studentsAllocatedCount) &&
+        (!('teacherMaxStudents' in request.resource.data) || 
+         !('teacherMaxStudents' in resource.data) ||
+         request.resource.data.teacherMaxStudents == resource.data.teacherMaxStudents) &&
+        (!('teacherMaxCourses' in request.resource.data) || 
+         !('teacherMaxCourses' in resource.data) ||
+         request.resource.data.teacherMaxCourses == resource.data.teacherMaxCourses) &&
+        (!('teacherMaxLessons' in request.resource.data) || 
+         !('teacherMaxLessons' in resource.data) ||
+         request.resource.data.teacherMaxLessons == resource.data.teacherMaxLessons) &&
+        (!('teacherPlanExpiryDate' in request.resource.data) || 
+         !('teacherPlanExpiryDate' in resource.data) ||
+         request.resource.data.teacherPlanExpiryDate == resource.data.teacherPlanExpiryDate) &&
+        // Prevent changing subscription-related fields (server-only)
+        (!('planId' in request.resource.data) || 
+         !('planId' in resource.data) ||
+         request.resource.data.planId == resource.data.planId) &&
+        (!('subscriptionStartDate' in request.resource.data) || 
+         !('subscriptionStartDate' in resource.data) ||
+         request.resource.data.subscriptionStartDate == resource.data.subscriptionStartDate) &&
+        (!('subscriptionEndDate' in request.resource.data) || 
+         !('subscriptionEndDate' in resource.data) ||
+         request.resource.data.subscriptionEndDate == resource.data.subscriptionEndDate) &&
+        (!('subscriptionExpiresAt' in request.resource.data) || 
+         !('subscriptionExpiresAt' in resource.data) ||
+         request.resource.data.subscriptionExpiresAt == resource.data.subscriptionExpiresAt) &&
+        (!('billingCycle' in request.resource.data) || 
+         !('billingCycle' in resource.data) ||
+         request.resource.data.billingCycle == resource.data.billingCycle) &&
+        (!('planType' in request.resource.data) || 
+         !('planType' in resource.data) ||
+         request.resource.data.planType == resource.data.planType) &&
+        // Prevent changing usage counters (server-only)
+        (!('dailyGenerationUsed' in request.resource.data) || 
+         !('dailyGenerationUsed' in resource.data) ||
+         request.resource.data.dailyGenerationUsed == resource.data.dailyGenerationUsed) &&
+        (!('monthlyGenerationUsed' in request.resource.data) || 
+         !('monthlyGenerationUsed' in resource.data) ||
+         request.resource.data.monthlyGenerationUsed == resource.data.monthlyGenerationUsed) &&
+        (!('lastDailyReset' in request.resource.data) || 
+         !('lastDailyReset' in resource.data) ||
+         request.resource.data.lastDailyReset == resource.data.lastDailyReset) &&
+        (!('lastMonthlyReset' in request.resource.data) || 
+         !('lastMonthlyReset' in resource.data) ||
+         request.resource.data.lastMonthlyReset == resource.data.lastMonthlyReset);
       
       // Admins can read all users
       allow read: if isAdmin();
       
-      // Only server (via Admin SDK) can create/update role and subscription
+      // Only server (via Admin SDK) can create/update role, subscription, and allocation fields
       // This is handled server-side, so we deny client-side writes to these fields
     }
     
@@ -460,8 +574,51 @@ service cloud.firestore {
     match /subscriptionPlans/{planId} {
       // Public read access for plans marked for upgrade page
       allow read: if resource.data.displayOnUpgradePage == true;
+      // Authenticated users can read plans (for viewing available plans)
+      allow read: if isAuthenticated();
       // Admins can read/write all plans
       allow read, write: if isAdmin();
+    }
+
+    // Student Allocations collection
+    match /studentAllocations/{allocationId} {
+      // Students can read their own allocations
+      allow read: if isAuthenticated() && 
+        resource.data.studentId == request.auth.uid;
+      
+      // Teachers can read allocations for their students
+      allow read: if isMusicTeacher() && 
+        resource.data.teacherId == request.auth.uid;
+      
+      // Admins can read all allocations
+      allow read: if isAdmin();
+      
+      // Only server (via Admin SDK) can create/update allocations
+      allow write: if false;
+    }
+
+    // User Preferences collection (if stored separately)
+    match /userPreferences/{userId} {
+      // Users can read/write their own preferences
+      allow read, write: if isOwner(userId);
+      // Admins can read all preferences
+      allow read: if isAdmin();
+    }
+
+    // Onboarding status collection
+    match /onboardingStatus/{userId} {
+      // Users can read/write their own onboarding status
+      allow read, write: if isOwner(userId);
+      // Admins can read all onboarding status
+      allow read: if isAdmin();
+    }
+
+    // Audit Logs collection
+    match /auditLogs/{logId} {
+      // Only admins can read audit logs
+      allow read: if isAdmin();
+      // Only server (via Admin SDK) can write audit logs
+      allow write: if false;
     }
     
     // Default: deny all other collections

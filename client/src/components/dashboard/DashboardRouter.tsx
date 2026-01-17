@@ -58,6 +58,9 @@ import PracticeRoom from "@/pages/dashboard/student/PracticeRoom";
 import MusicEBooks from "@/pages/dashboard/student/MusicEBooks";
 import StudentSaved from "@/pages/dashboard/student/StudentSaved";
 import StudentSettings from "@/pages/dashboard/student/StudentSettings";
+import MyCourses from "@/pages/dashboard/student/MyCourses";
+import StudentMyLessons from "@/pages/dashboard/student/MyLessons";
+import StudentProgress from "@/pages/dashboard/student/Progress";
 import NotFound from "@/pages/not-found";
 import { useAuth } from "@/contexts/AuthContext";
 import { db } from "@/lib/firebase";
@@ -417,6 +420,21 @@ export function DashboardRouter() {
             </Route>
             
             {/* Student routes - protected by StudentRoute */}
+            <Route path="/dashboard/student/courses">
+              <StudentRoute>
+                <MyCourses />
+              </StudentRoute>
+            </Route>
+            <Route path="/dashboard/student/lessons">
+              <StudentRoute>
+                <StudentMyLessons />
+              </StudentRoute>
+            </Route>
+            <Route path="/dashboard/student/progress">
+              <StudentRoute>
+                <StudentProgress />
+              </StudentRoute>
+            </Route>
             <Route path="/dashboard/student/educational-music">
               <StudentRoute>
                 <EducationalMusic />

@@ -3,16 +3,18 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { BookOpen, Search, Play, Heart, Clock, Lock } from "lucide-react";
+import { BookOpen, Search, Play, Heart, Clock, Lock, Loader2, AlertCircle, CheckCircle } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
-import { db } from "@/lib/firebase";
-import { collection, query, where, getDocs, limit } from "firebase/firestore";
+import { db, auth } from "@/lib/firebase";
+import { collection, query, where, getDocs, limit, doc, getDoc } from "firebase/firestore";
+import { useToast } from "@/hooks/use-toast";
 
 interface Course {
   id: string;
   title: string;
   description?: string;
   teacherName?: string;
+  teacherId?: string;
   thumbnailUrl?: string;
   lessonCount?: number;
   status: string;
@@ -20,9 +22,12 @@ interface Course {
 
 export default function EducationalMusic() {
   const { user } = useAuth();
+  const { toast } = useToast();
   const [courses, setCourses] = useState<Course[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
+  const [enrollingCourseId, setEnrollingCourseId] = useState<string | null>(null);
+  const [enrolledCourseIds, setEnrolledCourseIds] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     if (!user || user.role !== "student") {
@@ -30,7 +35,30 @@ export default function EducationalMusic() {
     }
 
     fetchCourses();
+    fetchEnrollments();
   }, [user]);
+
+  const fetchEnrollments = async () => {
+    if (!user?.id) return;
+    
+    try {
+      const enrollmentsQuery = query(
+        collection(db, "enrollments"),
+        where("studentId", "==", user.id)
+      );
+      const enrollmentsSnapshot = await getDocs(enrollmentsQuery);
+      const enrolledIds = new Set<string>();
+      enrollmentsSnapshot.forEach((doc) => {
+        const data = doc.data();
+        if (data.courseId) {
+          enrolledIds.add(data.courseId);
+        }
+      });
+      setEnrolledCourseIds(enrolledIds);
+    } catch (error) {
+      console.error("Error fetching enrollments:", error);
+    }
+  };
 
   const fetchCourses = async () => {
     try {
@@ -50,6 +78,83 @@ export default function EducationalMusic() {
       console.error("Error fetching courses:", error);
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleEnroll = async (course: Course) => {
+    if (!user?.id || !auth.currentUser) {
+      toast({
+        title: "Error",
+        description: "Please login to enroll in courses",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (enrolledCourseIds.has(course.id)) {
+      toast({
+        title: "Already Enrolled",
+        description: "You are already enrolled in this course",
+      });
+      return;
+    }
+
+    setEnrollingCourseId(course.id);
+
+    try {
+      const token = await auth.currentUser.getIdToken();
+      
+      // Get teacherId from course - use from course data if available, otherwise fetch
+      let teacherId = course.teacherId || "";
+      if (!teacherId) {
+        const courseDocRef = doc(db, "courses", course.id);
+        const courseDoc = await getDoc(courseDocRef);
+        if (courseDoc.exists()) {
+          teacherId = courseDoc.data().teacherId || "";
+        }
+      }
+
+      if (!teacherId) {
+        throw new Error("Course teacher not found");
+      }
+
+      const response = await fetch("/api/enrollments", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          courseId: course.id,
+          teacherId: teacherId,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Failed to enroll in course");
+      }
+
+      toast({
+        title: "Success",
+        description: "Successfully enrolled in course!",
+      });
+
+      // Update enrolled courses
+      setEnrolledCourseIds((prev) => new Set([...prev, course.id]));
+      
+      // Refresh enrollments
+      fetchEnrollments();
+    } catch (error: any) {
+      console.error("Error enrolling in course:", error);
+      toast({
+        title: "Enrollment Failed",
+        description: error.message || "Failed to enroll in course. The teacher may have reached their student limit.",
+        variant: "destructive",
+      });
+    } finally {
+      setEnrollingCourseId(null);
     }
   };
 
@@ -123,10 +228,31 @@ export default function EducationalMusic() {
                   </div>
                 </div>
                 <div className="flex gap-2">
-                  <Button className="flex-1" variant="default">
-                    <Play className="h-4 w-4 mr-2" />
-                    Enroll
-                  </Button>
+                  {enrolledCourseIds.has(course.id) ? (
+                    <Button className="flex-1" variant="outline" disabled>
+                      <CheckCircle className="h-4 w-4 mr-2" />
+                      Enrolled
+                    </Button>
+                  ) : (
+                    <Button 
+                      className="flex-1" 
+                      variant="default"
+                      onClick={() => handleEnroll(course)}
+                      disabled={enrollingCourseId === course.id}
+                    >
+                      {enrollingCourseId === course.id ? (
+                        <>
+                          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                          Enrolling...
+                        </>
+                      ) : (
+                        <>
+                          <Play className="h-4 w-4 mr-2" />
+                          Enroll
+                        </>
+                      )}
+                    </Button>
+                  )}
                   <Button variant="outline" size="icon">
                     <Heart className="h-4 w-4" />
                   </Button>

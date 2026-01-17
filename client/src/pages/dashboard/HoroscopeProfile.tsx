@@ -593,9 +593,26 @@ export default function HoroscopeProfile() {
 
   const generateMusicMutation = useMutation({
     mutationFn: async (params: Partial<MusicGenerationRequest>) => {
+      // Get auth token
+      let authToken: string | null = null;
+      try {
+        const { auth } = await import("@/lib/firebase");
+        const currentUser = auth.currentUser;
+        if (currentUser) {
+          authToken = await currentUser.getIdToken();
+        }
+      } catch (error) {
+        console.warn("Failed to get auth token:", error);
+      }
+      
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (authToken) {
+        headers["Authorization"] = `Bearer ${authToken}`;
+      }
+      
       const response = await fetch("/api/generate-music", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers,
         body: JSON.stringify(params),
       });
 
@@ -607,6 +624,15 @@ export default function HoroscopeProfile() {
         } catch {
           error = { error: errorText || "Failed to generate music" };
         }
+        
+        // Handle subscription limit errors with specific messages
+        if (error.code === "SUBSCRIPTION_LIMIT" || response.status === 403) {
+          const limitError = new Error(error.error || error.reason || "Subscription limit reached");
+          (limitError as any).code = error.code;
+          (limitError as any).data = error;
+          throw limitError;
+        }
+        
         throw new Error(error.error || error.message || "Failed to generate music");
       }
 
@@ -629,8 +655,22 @@ export default function HoroscopeProfile() {
         });
       }
     },
-    onError: (error: Error) => {
+    onError: (error: Error & { code?: string; data?: any }) => {
       let errorMessage = error.message || "Failed to generate music. Please try again.";
+      
+      // Handle subscription limit errors with specific messaging
+      if (error.code === "SUBSCRIPTION_LIMIT" || error.code === "AUTH_REQUIRED") {
+        const errorData = error.data || {};
+        errorMessage = error.message || errorData.reason || "Subscription limit reached";
+        toast({
+          title: "Generation Blocked",
+          description: errorMessage,
+          variant: "destructive",
+          duration: 5000,
+        });
+        setIsGenerating(false);
+        return;
+      }
       
       // Provide more user-friendly error messages
       if (errorMessage.includes("credits") || errorMessage.includes("insufficient")) {

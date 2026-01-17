@@ -33,13 +33,14 @@ import {
 } from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/AuthContext";
-import { db } from "@/lib/firebase";
+import { db, auth } from "@/lib/firebase";
 import { 
   collection, 
   addDoc, 
   query, 
   where, 
-  getDocs, 
+  getDocs,
+  getDoc,
   doc, 
   updateDoc,
   deleteDoc,
@@ -57,7 +58,8 @@ import {
   FileText,
   Loader2,
   Eye,
-  EyeOff
+  EyeOff,
+  Globe
 } from "lucide-react";
 
 interface Lesson {
@@ -226,6 +228,60 @@ export default function CourseBuilder() {
     }
 
     try {
+      // Count total lessons in the course
+      const totalLessons = editingCourse.modules.reduce((sum, module) => sum + (module.lessons?.length || 0), 0);
+      
+      // Check lesson limit before saving (for both create and update)
+      const currentUser = auth.currentUser;
+      if (!currentUser) {
+        toast({
+          title: "Error",
+          description: "You must be logged in to save courses",
+          variant: "destructive",
+        });
+        return;
+      }
+      const token = await currentUser.getIdToken();
+      const lessonLimitResponse = await fetch("/api/teacher/check-lesson-limit", {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (lessonLimitResponse.ok) {
+        const lessonLimitData = await lessonLimitResponse.json();
+        // Calculate how many lessons this course will add/update
+        if (editingCourse.id) {
+          // For updates, we need to check if adding new lessons exceeds the limit
+          // Get current course to compare
+          const currentCourseRef = doc(db, "courses", editingCourse.id);
+          const currentCourseSnap = await getDoc(currentCourseRef);
+          if (currentCourseSnap.exists()) {
+            const currentCourseData = currentCourseSnap.data();
+            const currentLessons = currentCourseData.modules?.reduce((sum: number, module: any) => sum + (module.lessons?.length || 0), 0) || 0;
+            const newLessons = totalLessons - currentLessons;
+            if (newLessons > 0 && lessonLimitData.currentCount + newLessons > lessonLimitData.maxLessons) {
+              toast({
+                title: "Lesson Limit Reached",
+                description: `Adding ${newLessons} lesson(s) would exceed your limit (${lessonLimitData.currentCount}/${lessonLimitData.maxLessons}). Please remove some lessons or upgrade your plan.`,
+                variant: "destructive",
+              });
+              return;
+            }
+          }
+        } else {
+          // For new courses, check if total lessons exceed limit
+          if (totalLessons > lessonLimitData.remaining) {
+            toast({
+              title: "Lesson Limit Reached",
+              description: `This course has ${totalLessons} lessons, but you only have ${lessonLimitData.remaining} remaining. Please reduce the number of lessons or upgrade your plan.`,
+              variant: "destructive",
+            });
+            return;
+          }
+        }
+      }
+
       const courseData = {
         ...editingCourse,
         updatedAt: serverTimestamp(),
@@ -240,7 +296,43 @@ export default function CourseBuilder() {
           description: "Course updated successfully",
         });
       } else {
-        // Create new course
+        // Create new course - check limit first
+        const currentUser = auth.currentUser;
+        if (!currentUser) {
+          toast({
+            title: "Error",
+            description: "You must be logged in to create courses",
+            variant: "destructive",
+          });
+          return;
+        }
+        const token = await currentUser.getIdToken();
+        const limitResponse = await fetch("/api/teacher/check-course-limit", {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        });
+
+        if (!limitResponse.ok) {
+          const errorData = await limitResponse.json();
+          toast({
+            title: "Course Limit Reached",
+            description: errorData.error || "You have reached your course creation limit. Please upgrade your plan.",
+            variant: "destructive",
+          });
+          return;
+        }
+
+        const limitData = await limitResponse.json();
+        if (!limitData.canCreate) {
+          toast({
+            title: "Course Limit Reached",
+            description: limitData.error || `You have reached your course limit (${limitData.currentCount}/${limitData.maxCourses}). Please upgrade your plan to create more courses.`,
+            variant: "destructive",
+          });
+          return;
+        }
+
         courseData.createdAt = serverTimestamp();
         await addDoc(collection(db, "courses"), courseData);
         toast({
@@ -319,8 +411,56 @@ export default function CourseBuilder() {
     setEditingCourse({ ...editingCourse, modules: updatedModules });
   };
 
-  const addLesson = (moduleIndex: number) => {
-    if (!editingCourse) return;
+  const addLesson = async (moduleIndex: number) => {
+    if (!editingCourse || !user?.id) return;
+    
+    // Check lesson limit before adding
+    try {
+      const currentUser = auth.currentUser;
+      if (!currentUser) {
+        toast({
+          title: "Error",
+          description: "You must be logged in to add lessons",
+          variant: "destructive",
+        });
+        return;
+      }
+      const token = await currentUser.getIdToken();
+      const limitResponse = await fetch("/api/teacher/check-lesson-limit", {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (!limitResponse.ok) {
+        const errorData = await limitResponse.json();
+        toast({
+          title: "Lesson Limit Reached",
+          description: errorData.error || "You have reached your lesson creation limit. Please upgrade your plan.",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      const limitData = await limitResponse.json();
+      if (!limitData.canCreate) {
+        toast({
+          title: "Lesson Limit Reached",
+          description: limitData.error || `You have reached your lesson limit (${limitData.currentCount}/${limitData.maxLessons}). Please upgrade your plan to create more lessons.`,
+          variant: "destructive",
+        });
+        return;
+      }
+    } catch (error) {
+      console.error("Error checking lesson limit:", error);
+      toast({
+        title: "Error",
+        description: "Failed to check lesson limit. Please try again.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     const module = editingCourse.modules[moduleIndex];
     const newLesson: Lesson = {
       title: `Lesson ${module.lessons.length + 1}`,
@@ -686,6 +826,36 @@ export default function CourseBuilder() {
                     </div>
                   </div>
                   <div className="flex gap-2">
+                    {course.status !== "live" && (
+                      <Button
+                        variant="default"
+                        size="sm"
+                        onClick={async () => {
+                          try {
+                            const courseRef = doc(db, "courses", course.id);
+                            await updateDoc(courseRef, {
+                              status: "live",
+                              updatedAt: serverTimestamp(),
+                            });
+                            toast({
+                              title: "Success",
+                              description: "Course published! Students can now see and enroll in it.",
+                            });
+                            fetchCourses();
+                          } catch (error) {
+                            console.error("Error publishing course:", error);
+                            toast({
+                              title: "Error",
+                              description: "Failed to publish course",
+                              variant: "destructive",
+                            });
+                          }
+                        }}
+                      >
+                        <Globe className="h-4 w-4 mr-2" />
+                        Publish
+                      </Button>
+                    )}
                     <Button
                       variant="outline"
                       size="sm"

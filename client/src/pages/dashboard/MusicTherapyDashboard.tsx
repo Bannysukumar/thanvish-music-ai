@@ -465,9 +465,26 @@ export default function MusicTherapyDashboard() {
       console.log("Mutation function called with params:", params);
       
       try {
+        // Get auth token
+        let authToken: string | null = null;
+        try {
+          const { auth } = await import("@/lib/firebase");
+          const currentUser = auth.currentUser;
+          if (currentUser) {
+            authToken = await currentUser.getIdToken();
+          }
+        } catch (error) {
+          console.warn("Failed to get auth token:", error);
+        }
+        
+        const headers: Record<string, string> = { "Content-Type": "application/json" };
+        if (authToken) {
+          headers["Authorization"] = `Bearer ${authToken}`;
+        }
+        
         const response = await fetch("/api/generate-music", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers,
           body: JSON.stringify(params),
         });
 
@@ -483,6 +500,14 @@ export default function MusicTherapyDashboard() {
           } catch {
             error = { error: errorText || "Failed to generate music" };
           }
+          // Handle subscription limit errors with specific messages
+          if (error.code === "SUBSCRIPTION_LIMIT" || response.status === 403) {
+            const limitError = new Error(error.error || error.reason || "Subscription limit reached");
+            (limitError as any).code = error.code;
+            (limitError as any).data = error;
+            throw limitError;
+          }
+          
           throw new Error(error.error || error.message || "Failed to generate music");
         }
 
@@ -514,13 +539,25 @@ export default function MusicTherapyDashboard() {
         });
       }
     },
-    onError: (error: Error) => {
+    onError: (error: Error & { code?: string; data?: any }) => {
       console.error("Mutation error:", error);
-      toast({
-        title: "Generation Failed",
-        description: error.message || "Failed to generate music. Please try again.",
-        variant: "destructive",
-      });
+      
+      // Handle subscription limit errors with specific messaging
+      if (error.code === "SUBSCRIPTION_LIMIT" || error.code === "AUTH_REQUIRED") {
+        const errorData = error.data || {};
+        toast({
+          title: "Generation Blocked",
+          description: error.message || errorData.reason || "Subscription limit reached",
+          variant: "destructive",
+          duration: 5000,
+        });
+      } else {
+        toast({
+          title: "Generation Failed",
+          description: error.message || "Failed to generate music. Please try again.",
+          variant: "destructive",
+        });
+      }
       setIsGenerating(false);
     },
   });
@@ -782,7 +819,7 @@ export default function MusicTherapyDashboard() {
             Music Therapy
           </h1>
           <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
-            Personalized healing music powered by Suno AI. Select your therapy goal and generate music tailored to your needs.
+            Personalized healing music powered by THANVISH AI. Select your therapy goal and generate music tailored to your needs.
           </p>
         </div>
 

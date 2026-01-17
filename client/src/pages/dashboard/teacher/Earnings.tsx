@@ -104,23 +104,37 @@ export default function Earnings() {
       // In a real app, you'd fetch from a payments/transactions collection
       
       let enrollmentsSnapshot;
+      const uniqueStudentIds = new Set<string>();
+      let totalEnrollments = 0;
+      
       try {
-        const enrollmentsRef = collection(db, "enrollments");
-        const enrollmentsQuery = query(
-          enrollmentsRef,
-          where("courseId", "in", courseIds.slice(0, 10))
-        );
-        enrollmentsSnapshot = await getDocs(enrollmentsQuery);
+        // Fetch enrollments in batches (Firestore 'in' limit is 10)
+        for (let i = 0; i < courseIds.length; i += 10) {
+          const batch = courseIds.slice(i, i + 10);
+          const enrollmentsRef = collection(db, "enrollments");
+          const enrollmentsQuery = query(
+            enrollmentsRef,
+            where("courseId", "in", batch)
+          );
+          const batchSnapshot = await getDocs(enrollmentsQuery);
+          batchSnapshot.forEach((enrollmentDoc) => {
+            const enrollmentData = enrollmentDoc.data();
+            if (enrollmentData.studentId) {
+              uniqueStudentIds.add(enrollmentData.studentId);
+              totalEnrollments++;
+            }
+          });
+        }
       } catch (error) {
         console.log("No enrollments found");
       }
 
       // Calculate earnings (assuming $X per enrollment)
       // In a real app, you'd fetch actual payment data
-      const enrollmentCount = enrollmentsSnapshot?.size || 0;
+      const uniqueStudentCount = uniqueStudentIds.size;
       const pricePerEnrollment = 29.99; // Example price
       
-      const totalEarnings = enrollmentCount * pricePerEnrollment;
+      const totalEarnings = totalEnrollments * pricePerEnrollment;
       
       // Calculate monthly breakdown (simplified)
       const monthlyBreakdown: Array<{ month: string; earnings: number; students: number }> = [];
@@ -133,7 +147,7 @@ export default function Earnings() {
         monthlyBreakdown.push({
           month: monthKey,
           earnings: totalEarnings / 6,
-          students: Math.floor(enrollmentCount / 6),
+          students: Math.floor(uniqueStudentCount / 6),
         });
       }
 
@@ -146,7 +160,7 @@ export default function Earnings() {
         totalEarnings,
         thisMonthEarnings: totalEarnings / 6, // Simplified
         lastMonthEarnings: totalEarnings / 6, // Simplified
-        totalStudents: enrollmentCount,
+        totalStudents: uniqueStudentCount, // Count unique students, not enrollments
         totalCourses: coursesSnapshot.size,
         monthlyBreakdown: monthlyBreakdown.reverse(),
       });
@@ -237,13 +251,13 @@ export default function Earnings() {
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Total Students</CardTitle>
+            <CardTitle className="text-sm font-medium">Enrolled Students</CardTitle>
             <BarChart3 className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{earnings.totalStudents}</div>
             <p className="text-xs text-muted-foreground">
-              Enrolled students
+              Unique students enrolled
             </p>
           </CardContent>
         </Card>
