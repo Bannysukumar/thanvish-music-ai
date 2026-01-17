@@ -10,7 +10,7 @@ import { useLocation } from "wouter";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { SafetyDisclaimer } from "@/components/doctor/SafetyDisclaimer";
-import { db } from "@/lib/firebase";
+import { db, auth } from "@/lib/firebase";
 import { collection, query, where, getDocs, addDoc, serverTimestamp } from "firebase/firestore";
 
 interface Program {
@@ -106,6 +106,47 @@ export default function TherapyPrograms() {
       return;
     }
 
+    // Check program creation limit before proceeding
+    try {
+      if (!auth.currentUser) {
+        throw new Error("User not authenticated");
+      }
+      const token = await auth.currentUser.getIdToken();
+      const limitResponse = await fetch("/api/doctor/check-program-limit", {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (!limitResponse.ok) {
+        const errorData = await limitResponse.json();
+        toast({
+          title: "Program Limit Reached",
+          description: errorData.error || "You've reached your program creation limit for this month. Upgrade your plan to create more programs.",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      const limitData = await limitResponse.json();
+      if (!limitData.canCreate) {
+        toast({
+          title: "Program Limit Reached",
+          description: limitData.error || "You've reached your program creation limit for this month. Upgrade your plan to create more programs.",
+          variant: "destructive",
+        });
+        return;
+      }
+    } catch (error: any) {
+      console.error("Error checking program limits:", error);
+      toast({
+        title: "Error",
+        description: "Failed to check program limits. Please try again.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     setIsLoading(true);
 
     try {
@@ -124,6 +165,22 @@ export default function TherapyPrograms() {
       };
 
       await addDoc(collection(db, "therapyPrograms"), programData);
+
+      // Increment program count after successful creation
+      try {
+        if (auth.currentUser) {
+          const token = await auth.currentUser.getIdToken();
+          await fetch("/api/doctor/increment-program-count", {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${token}`,
+            },
+          });
+        }
+      } catch (error: any) {
+        console.error("Error incrementing program count:", error);
+        // Don't fail the creation if increment fails
+      }
 
       toast({
         title: "Success",

@@ -50,6 +50,17 @@ export default function AdminSettings() {
           },
         });
 
+        if (apiKeyResponse.status === 401) {
+          localStorage.removeItem("adminSession");
+          toast({
+            title: "Session Expired",
+            description: "Your session has expired. Please log in again.",
+            variant: "destructive",
+          });
+          window.location.href = "/admin/login";
+          return;
+        }
+
         if (apiKeyResponse.ok) {
           const apiKeyData = await apiKeyResponse.json();
           setApiKey(apiKeyData.apiKey || "");
@@ -63,6 +74,17 @@ export default function AdminSettings() {
           },
         });
 
+        if (groqApiKeyResponse.status === 401) {
+          localStorage.removeItem("adminSession");
+          toast({
+            title: "Session Expired",
+            description: "Your session has expired. Please log in again.",
+            variant: "destructive",
+          });
+          window.location.href = "/admin/login";
+          return;
+        }
+
         if (groqApiKeyResponse.ok) {
           const groqApiKeyData = await groqApiKeyResponse.json();
           setGroqApiKey(groqApiKeyData.apiKey || "");
@@ -75,6 +97,17 @@ export default function AdminSettings() {
             Authorization: `Bearer ${sessionId}`,
           },
         });
+
+        if (smtpResponse.status === 401) {
+          localStorage.removeItem("adminSession");
+          toast({
+            title: "Session Expired",
+            description: "Your session has expired. Please log in again.",
+            variant: "destructive",
+          });
+          window.location.href = "/admin/login";
+          return;
+        }
 
         if (smtpResponse.ok) {
           const smtpData = await smtpResponse.json();
@@ -92,6 +125,17 @@ export default function AdminSettings() {
             Authorization: `Bearer ${sessionId}`,
           },
         });
+
+        if (guestModeResponse.status === 401) {
+          localStorage.removeItem("adminSession");
+          toast({
+            title: "Session Expired",
+            description: "Your session has expired. Please log in again.",
+            variant: "destructive",
+          });
+          window.location.href = "/admin/login";
+          return;
+        }
 
         if (guestModeResponse.ok) {
           const guestModeData = await guestModeResponse.json();

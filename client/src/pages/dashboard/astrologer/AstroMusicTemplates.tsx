@@ -11,7 +11,8 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Plus, FileEdit, Lock, AlertCircle } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { AstrologyDisclaimer } from "@/components/astrologer/AstrologyDisclaimer";
-import { db } from "@/lib/firebase";
+import { db, auth } from "@/lib/firebase";
+import { useToast } from "@/hooks/use-toast";
 import { collection, query, where, getDocs, addDoc, updateDoc, doc } from "firebase/firestore";
 
 const RASIS = [
@@ -55,6 +56,7 @@ interface AstroMusicTemplate {
 
 export default function AstroMusicTemplates() {
   const { user } = useAuth();
+  const { toast } = useToast();
   const [, params] = useRoute("/dashboard/astrologer/templates/:id");
   const [, setLocation] = useLocation();
   const [templates, setTemplates] = useState<AstroMusicTemplate[]>([]);
@@ -112,6 +114,53 @@ export default function AstroMusicTemplates() {
     e.preventDefault();
     if (!user || isLocked) return;
 
+    // Check template limit before creating
+    try {
+      if (!auth.currentUser) {
+        toast({
+          title: "Error",
+          description: "Authentication required",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      const token = await auth.currentUser.getIdToken();
+      const limitResponse = await fetch("/api/astrologer/check-template-limit", {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (!limitResponse.ok) {
+        const errorData = await limitResponse.json();
+        toast({
+          title: "Template Limit Reached",
+          description: errorData.error || "You've reached your template creation limit for this month. Upgrade your plan to create more templates.",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      const limitData = await limitResponse.json();
+      if (!limitData.canCreate) {
+        toast({
+          title: "Template Limit Reached",
+          description: limitData.error || "You've reached your template creation limit for this month. Upgrade your plan to create more templates.",
+          variant: "destructive",
+        });
+        return;
+      }
+    } catch (error: any) {
+      console.error("Error checking template limits:", error);
+      toast({
+        title: "Error",
+        description: "Failed to check template limits. Please try again.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     try {
       setIsCreating(true);
       const templateData: Omit<AstroMusicTemplate, "id"> = {
@@ -131,6 +180,17 @@ export default function AstroMusicTemplates() {
 
       await addDoc(collection(db, "astroMusicTemplates"), templateData);
       
+      // Increment template count after successful creation
+      if (auth.currentUser) {
+        const token = await auth.currentUser.getIdToken();
+        await fetch("/api/astrologer/increment-template-count", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        });
+      }
+      
       // Reset form
       setFormData({
         templateName: "",
@@ -146,9 +206,18 @@ export default function AstroMusicTemplates() {
       
       fetchTemplates();
       setLocation("/dashboard/astrologer/templates");
+      
+      toast({
+        title: "Success",
+        description: "Template created successfully",
+      });
     } catch (error) {
       console.error("Error creating template:", error);
-      alert("Failed to create template. Please try again.");
+      toast({
+        title: "Error",
+        description: "Failed to create template. Please try again.",
+        variant: "destructive",
+      });
     } finally {
       setIsCreating(false);
     }

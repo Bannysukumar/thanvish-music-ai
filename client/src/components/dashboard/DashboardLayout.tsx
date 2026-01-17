@@ -174,6 +174,24 @@ function getMenuItemsFallback(userRole?: string): MenuItem[] {
     ];
   }
 
+  // Add astrologer-specific items if user is astrologer
+  if (userRole === "astrologer") {
+    const astrologerItems: MenuItem[] = [
+      { path: "/dashboard/astrologer", label: "Astrologer Dashboard", icon: AstrologyIcon },
+      { path: "/dashboard/astrologer/templates", label: "Create Template", icon: FileEdit },
+      { path: "/dashboard/astrologer/recommendations", label: "Create Rasi Set", icon: Star },
+      { path: "/dashboard/astrologer/posts", label: "Publish Post", icon: BookOpen },
+      { path: "/dashboard/astrologer/clients", label: "My Clients", icon: UsersIcon },
+      { path: "/dashboard/astrologer/readings", label: "Readings", icon: BookOpen },
+      { path: "/dashboard/astrologer/settings", label: "Astrologer Settings", icon: SettingsIcon },
+    ];
+    return [
+      baseItems[0], // Home
+      ...astrologerItems,
+      ...baseItems.slice(1), // Rest of base items
+    ];
+  }
+
   return baseItems;
 }
 

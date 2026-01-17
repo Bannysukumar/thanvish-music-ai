@@ -52,6 +52,8 @@ import HoroscopeContentPosts from "@/pages/dashboard/astrologer/HoroscopeContent
 import AstrologerRequests from "@/pages/dashboard/astrologer/AstrologerRequests";
 import AstrologerAnalytics from "@/pages/dashboard/astrologer/AstrologerAnalytics";
 import AstrologerSettings from "@/pages/dashboard/astrologer/AstrologerSettings";
+import AstrologerClients from "@/pages/dashboard/astrologer/AstrologerClients";
+import AstrologerReadings from "@/pages/dashboard/astrologer/AstrologerReadings";
 import EducationalMusic from "@/pages/dashboard/student/EducationalMusic";
 import InstrumentalEducation from "@/pages/dashboard/student/InstrumentalEducation";
 import PracticeRoom from "@/pages/dashboard/student/PracticeRoom";
@@ -396,6 +398,16 @@ export function DashboardRouter() {
             <Route path="/dashboard/astrologer/posts">
               <AstrologerRoute>
                 <HoroscopeContentPosts />
+              </AstrologerRoute>
+            </Route>
+            <Route path="/dashboard/astrologer/clients">
+              <AstrologerRoute>
+                <AstrologerClients />
+              </AstrologerRoute>
+            </Route>
+            <Route path="/dashboard/astrologer/readings">
+              <AstrologerRoute>
+                <AstrologerReadings />
               </AstrologerRoute>
             </Route>
             <Route path="/dashboard/astrologer/requests">

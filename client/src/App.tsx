@@ -141,6 +141,8 @@ function Router() {
       <Route path="/dashboard/astrologer/posts/new" component={DashboardRouter} />
       <Route path="/dashboard/astrologer/posts/:id" component={DashboardRouter} />
       <Route path="/dashboard/astrologer/posts" component={DashboardRouter} />
+      <Route path="/dashboard/astrologer/clients" component={DashboardRouter} />
+      <Route path="/dashboard/astrologer/readings" component={DashboardRouter} />
       <Route path="/dashboard/astrologer/requests" component={DashboardRouter} />
       <Route path="/dashboard/astrologer/analytics" component={DashboardRouter} />
       <Route path="/dashboard/astrologer/settings" component={DashboardRouter} />

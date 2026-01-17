@@ -53,6 +53,13 @@ export default function AdminDashboard() {
             Authorization: `Bearer ${sessionId}`,
           },
         });
+        
+        if (usersRes.status === 401) {
+          localStorage.removeItem("adminSession");
+          window.location.href = "/admin/login";
+          return;
+        }
+        
         const usersData = await usersRes.json();
         const allUsers = usersData.users || [];
         
@@ -66,6 +73,13 @@ export default function AdminDashboard() {
             Authorization: `Bearer ${sessionId}`,
           },
         });
+        
+        if (settingsRes.status === 401) {
+          localStorage.removeItem("adminSession");
+          window.location.href = "/admin/login";
+          return;
+        }
+        
         const settingsData = await settingsRes.json();
 
         // Fetch pending content for approvals count
@@ -76,6 +90,13 @@ export default function AdminDashboard() {
               Authorization: `Bearer ${sessionId}`,
             },
           });
+          
+          if (pendingRes.status === 401) {
+            localStorage.removeItem("adminSession");
+            window.location.href = "/admin/login";
+            return;
+          }
+          
           if (pendingRes.ok) {
             const pendingData = await pendingRes.json();
             pendingCount += (pendingData.items || []).length;
@@ -86,6 +107,13 @@ export default function AdminDashboard() {
               Authorization: `Bearer ${sessionId}`,
             },
           });
+          
+          if (pendingLessonsRes.status === 401) {
+            localStorage.removeItem("adminSession");
+            window.location.href = "/admin/login";
+            return;
+          }
+          
           if (pendingLessonsRes.ok) {
             const pendingLessonsData = await pendingLessonsRes.json();
             pendingCount += (pendingLessonsData.items || []).length;

@@ -9,8 +9,8 @@ import { useLocation } from "wouter";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { SafetyDisclaimer } from "@/components/doctor/SafetyDisclaimer";
-import { db } from "@/lib/firebase";
-import { collection, query, where, getDocs, addDoc, serverTimestamp } from "firebase/firestore";
+import { db, auth } from "@/lib/firebase";
+import { collection, query, where, getDocs, addDoc, serverTimestamp, updateDoc, doc } from "firebase/firestore";
 
 interface Article {
   id: string;
@@ -330,6 +330,86 @@ export default function GuidanceArticles() {
                     <p className="text-sm text-muted-foreground line-clamp-2">
                       {article.content.substring(0, 200)}...
                     </p>
+                    {article.status === "draft" && (
+                      <div className="mt-4">
+                        <Button
+                          size="sm"
+                          onClick={async () => {
+                            // Check article publish limit before publishing
+                            try {
+                              if (!auth.currentUser) {
+                                throw new Error("User not authenticated");
+                              }
+                              const token = await auth.currentUser.getIdToken();
+                              const limitResponse = await fetch("/api/doctor/check-article-limit", {
+                                headers: {
+                                  Authorization: `Bearer ${token}`,
+                                },
+                              });
+
+                              if (!limitResponse.ok) {
+                                const errorData = await limitResponse.json();
+                                toast({
+                                  title: "Article Limit Reached",
+                                  description: errorData.error || "You've reached your article publishing limit for this month. Upgrade your plan to publish more articles.",
+                                  variant: "destructive",
+                                });
+                                return;
+                              }
+
+                              const limitData = await limitResponse.json();
+                              if (!limitData.canPublish) {
+                                toast({
+                                  title: "Article Limit Reached",
+                                  description: limitData.error || "You've reached your article publishing limit for this month. Upgrade your plan to publish more articles.",
+                                  variant: "destructive",
+                                });
+                                return;
+                              }
+
+                              // Update article status to published
+                              await updateDoc(doc(db, "guidanceArticles", article.id), {
+                                status: "published",
+                                updatedAt: serverTimestamp(),
+                              });
+
+                              // Increment article count after successful publish
+                              try {
+                                if (auth.currentUser) {
+                                  const token = await auth.currentUser.getIdToken();
+                                  await fetch("/api/doctor/increment-article-count", {
+                                    method: "POST",
+                                    headers: {
+                                      Authorization: `Bearer ${token}`,
+                                    },
+                                  });
+                                }
+                              } catch (error: any) {
+                                console.error("Error incrementing article count:", error);
+                                // Don't fail the publish if increment fails
+                              }
+
+                              toast({
+                                title: "Success",
+                                description: "Article published successfully!",
+                              });
+
+                              fetchArticles();
+                            } catch (error: any) {
+                              console.error("Error publishing article:", error);
+                              toast({
+                                title: "Error",
+                                description: error.message || "Failed to publish article",
+                                variant: "destructive",
+                              });
+                            }
+                          }}
+                          disabled={isLocked}
+                        >
+                          Publish
+                        </Button>
+                      </div>
+                    )}
                   </CardContent>
                 </Card>
               ))}

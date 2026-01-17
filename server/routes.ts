@@ -24,6 +24,8 @@ import { autoAllocateStudentToTeacher, reassignStudentToTeacher } from "./studen
 import { checkArtistTrackUploadLimit, checkArtistAlbumPublishLimit, incrementArtistTrackUploadCount, incrementArtistAlbumPublishCount } from "./artist-limits";
 import { checkDirectorProjectLimit, checkDirectorDiscoveryLimit, checkDirectorShortlistLimit, incrementDirectorDiscoveryCount, incrementDirectorShortlistCount } from "./director-limits";
 import { checkStudentEnrollmentLimit } from "./student-limits";
+import { checkDoctorProgramLimit, checkDoctorTemplateLimit, checkDoctorArticleLimit, incrementDoctorProgramCount, incrementDoctorTemplateCount, incrementDoctorArticleCount } from "./doctor-limits";
+import { checkAstrologerClientLimit, checkAstrologerReadingLimit, checkAstrologerTemplateLimit, checkAstrologerRasiLimit, checkAstrologerPostLimit, incrementAstrologerReadingCount, incrementAstrologerTemplateCount, incrementAstrologerRasiCount, incrementAstrologerPostCount, validateHoroscopePostContent } from "./astrologer-limits";
 import { checkSubscriptionStatus } from "./expiry-handler";
 
 // Admin session storage (in-memory, use Redis in production)
@@ -326,6 +328,47 @@ export async function registerRoutes(app: Express): Promise<Server> {
         response.artistDiscoveryRemainingToday = discoveryLimitCheck.dailyRemaining;
         response.artistDiscoveryRemainingThisMonth = discoveryLimitCheck.monthlyRemaining;
         response.shortlistsRemainingThisMonth = shortlistLimitCheck.remaining;
+      }
+
+      // Add doctor-specific fields if user is a doctor
+      if (userData?.role === "doctor") {
+        const programLimitCheck = await checkDoctorProgramLimit(userId);
+        const templateLimitCheck = await checkDoctorTemplateLimit(userId);
+        const articleLimitCheck = await checkDoctorArticleLimit(userId);
+        response.maxProgramsCreatePerMonth = userData?.maxProgramsCreatePerMonth || 0;
+        response.maxTemplatesCreatePerMonth = userData?.maxTemplatesCreatePerMonth || 0;
+        response.maxArticlesPublishPerMonth = userData?.maxArticlesPublishPerMonth || 0;
+        response.programsCreatedThisMonth = userData?.programsCreatedThisMonth || 0;
+        response.templatesCreatedThisMonth = userData?.templatesCreatedThisMonth || 0;
+        response.articlesPublishedThisMonth = userData?.articlesPublishedThisMonth || 0;
+        response.programsRemainingThisMonth = programLimitCheck.remaining;
+        response.templatesRemainingThisMonth = templateLimitCheck.remaining;
+        response.articlesRemainingThisMonth = articleLimitCheck.remaining;
+      }
+
+      // Add astrologer-specific fields if user is an astrologer
+      if (userData?.role === "astrologer") {
+        const clientLimitCheck = await checkAstrologerClientLimit(userId);
+        const readingLimitCheck = await checkAstrologerReadingLimit(userId);
+        const templateLimitCheck = await checkAstrologerTemplateLimit(userId);
+        const rasiLimitCheck = await checkAstrologerRasiLimit(userId);
+        const postLimitCheck = await checkAstrologerPostLimit(userId);
+        response.maxClientsActive = userData?.maxClientsActive || 0;
+        response.maxReadingsPerMonth = userData?.maxReadingsPerMonth || 0;
+        response.maxAstroTemplatesCreatePerMonth = userData?.maxAstroTemplatesCreatePerMonth || 0;
+        response.maxRasiRecommendationsCreatePerMonth = userData?.maxRasiRecommendationsCreatePerMonth || 0;
+        response.maxHoroscopePostsPublishPerMonth = userData?.maxHoroscopePostsPublishPerMonth || 0;
+        response.clientsActiveCount = userData?.clientsActiveCount || 0;
+        response.readingsCreatedThisMonth = userData?.readingsCreatedThisMonth || 0;
+        response.astroTemplatesCreatedThisMonth = userData?.astroTemplatesCreatedThisMonth || 0;
+        response.rasiRecommendationsCreatedThisMonth = userData?.rasiRecommendationsCreatedThisMonth || 0;
+        response.horoscopePostsPublishedThisMonth = userData?.horoscopePostsPublishedThisMonth || 0;
+        response.clientsRemaining = clientLimitCheck.remaining;
+        response.readingsRemainingThisMonth = readingLimitCheck.remaining;
+        response.templatesRemainingThisMonth = templateLimitCheck.remaining;
+        response.rasiRecommendationsRemainingThisMonth = rasiLimitCheck.remaining;
+        response.postsRemainingThisMonth = postLimitCheck.remaining;
+        response.astrologerPlanExpiryDate = subscriptionEndDate?.toISOString() || null;
       }
 
       res.json(response);
@@ -1064,6 +1107,577 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error: any) {
       console.error("Error creating enrollment:", error);
       res.status(500).json({ error: "Failed to create enrollment: " + error.message });
+    }
+  });
+
+  // ========== DOCTOR LIMIT CHECKS ==========
+  
+  // Check doctor program creation limit
+  app.get("/api/doctor/check-program-limit", async (req, res) => {
+    try {
+      const authHeader = req.headers.authorization;
+      let doctorId: string | null = null;
+      
+      if (authHeader && authHeader.startsWith("Bearer ")) {
+        const token = authHeader.replace("Bearer ", "");
+        try {
+          const decodedToken = await adminAuth.verifyIdToken(token);
+          doctorId = decodedToken.uid;
+        } catch (error) {
+          return res.status(401).json({ error: "Invalid authentication token" });
+        }
+      } else {
+        return res.status(401).json({ error: "Authentication required" });
+      }
+
+      const limitCheck = await checkDoctorProgramLimit(doctorId);
+      
+      if (!limitCheck.canCreate) {
+        return res.status(403).json({
+          canCreate: false,
+          error: limitCheck.error,
+          remaining: limitCheck.remaining,
+          maxPrograms: limitCheck.maxPrograms,
+          currentCount: limitCheck.currentCount,
+          subscriptionStatus: limitCheck.subscriptionStatus,
+          isExpired: limitCheck.isExpired,
+        });
+      }
+
+      res.json({
+        canCreate: true,
+        remaining: limitCheck.remaining,
+        maxPrograms: limitCheck.maxPrograms,
+        currentCount: limitCheck.currentCount,
+        subscriptionStatus: limitCheck.subscriptionStatus,
+      });
+    } catch (error: any) {
+      console.error("Error checking doctor program limit:", error);
+      res.status(500).json({ error: "Failed to check program limits: " + error.message });
+    }
+  });
+
+  // Check doctor template creation limit
+  app.get("/api/doctor/check-template-limit", async (req, res) => {
+    try {
+      const authHeader = req.headers.authorization;
+      let doctorId: string | null = null;
+      
+      if (authHeader && authHeader.startsWith("Bearer ")) {
+        const token = authHeader.replace("Bearer ", "");
+        try {
+          const decodedToken = await adminAuth.verifyIdToken(token);
+          doctorId = decodedToken.uid;
+        } catch (error) {
+          return res.status(401).json({ error: "Invalid authentication token" });
+        }
+      } else {
+        return res.status(401).json({ error: "Authentication required" });
+      }
+
+      const limitCheck = await checkDoctorTemplateLimit(doctorId);
+      
+      if (!limitCheck.canCreate) {
+        return res.status(403).json({
+          canCreate: false,
+          error: limitCheck.error,
+          remaining: limitCheck.remaining,
+          maxTemplates: limitCheck.maxTemplates,
+          currentCount: limitCheck.currentCount,
+          subscriptionStatus: limitCheck.subscriptionStatus,
+          isExpired: limitCheck.isExpired,
+        });
+      }
+
+      res.json({
+        canCreate: true,
+        remaining: limitCheck.remaining,
+        maxTemplates: limitCheck.maxTemplates,
+        currentCount: limitCheck.currentCount,
+        subscriptionStatus: limitCheck.subscriptionStatus,
+      });
+    } catch (error: any) {
+      console.error("Error checking doctor template limit:", error);
+      res.status(500).json({ error: "Failed to check template limits: " + error.message });
+    }
+  });
+
+  // Check doctor article publish limit
+  app.get("/api/doctor/check-article-limit", async (req, res) => {
+    try {
+      const authHeader = req.headers.authorization;
+      let doctorId: string | null = null;
+      
+      if (authHeader && authHeader.startsWith("Bearer ")) {
+        const token = authHeader.replace("Bearer ", "");
+        try {
+          const decodedToken = await adminAuth.verifyIdToken(token);
+          doctorId = decodedToken.uid;
+        } catch (error) {
+          return res.status(401).json({ error: "Invalid authentication token" });
+        }
+      } else {
+        return res.status(401).json({ error: "Authentication required" });
+      }
+
+      const limitCheck = await checkDoctorArticleLimit(doctorId);
+      
+      if (!limitCheck.canPublish) {
+        return res.status(403).json({
+          canPublish: false,
+          error: limitCheck.error,
+          remaining: limitCheck.remaining,
+          maxArticles: limitCheck.maxArticles,
+          currentCount: limitCheck.currentCount,
+          subscriptionStatus: limitCheck.subscriptionStatus,
+          isExpired: limitCheck.isExpired,
+        });
+      }
+
+      res.json({
+        canPublish: true,
+        remaining: limitCheck.remaining,
+        maxArticles: limitCheck.maxArticles,
+        currentCount: limitCheck.currentCount,
+        subscriptionStatus: limitCheck.subscriptionStatus,
+      });
+    } catch (error: any) {
+      console.error("Error checking doctor article limit:", error);
+      res.status(500).json({ error: "Failed to check article limits: " + error.message });
+    }
+  });
+
+  // Increment doctor program count
+  app.post("/api/doctor/increment-program-count", async (req, res) => {
+    try {
+      const authHeader = req.headers.authorization;
+      let doctorId: string | null = null;
+      
+      if (authHeader && authHeader.startsWith("Bearer ")) {
+        const token = authHeader.replace("Bearer ", "");
+        try {
+          const decodedToken = await adminAuth.verifyIdToken(token);
+          doctorId = decodedToken.uid;
+        } catch (error) {
+          return res.status(401).json({ error: "Invalid authentication token" });
+        }
+      } else {
+        return res.status(401).json({ error: "Authentication required" });
+      }
+
+      const result = await incrementDoctorProgramCount(doctorId);
+      
+      if (!result.success) {
+        return res.status(400).json({ error: result.error });
+      }
+
+      res.json({ success: true, message: "Program count incremented" });
+    } catch (error: any) {
+      console.error("Error incrementing doctor program count:", error);
+      res.status(500).json({ error: "Failed to increment program count: " + error.message });
+    }
+  });
+
+  // Increment doctor template count
+  app.post("/api/doctor/increment-template-count", async (req, res) => {
+    try {
+      const authHeader = req.headers.authorization;
+      let doctorId: string | null = null;
+      
+      if (authHeader && authHeader.startsWith("Bearer ")) {
+        const token = authHeader.replace("Bearer ", "");
+        try {
+          const decodedToken = await adminAuth.verifyIdToken(token);
+          doctorId = decodedToken.uid;
+        } catch (error) {
+          return res.status(401).json({ error: "Invalid authentication token" });
+        }
+      } else {
+        return res.status(401).json({ error: "Authentication required" });
+      }
+
+      const result = await incrementDoctorTemplateCount(doctorId);
+      
+      if (!result.success) {
+        return res.status(400).json({ error: result.error });
+      }
+
+      res.json({ success: true, message: "Template count incremented" });
+    } catch (error: any) {
+      console.error("Error incrementing doctor template count:", error);
+      res.status(500).json({ error: "Failed to increment template count: " + error.message });
+    }
+  });
+
+  // Increment doctor article count
+  app.post("/api/doctor/increment-article-count", async (req, res) => {
+    try {
+      const authHeader = req.headers.authorization;
+      let doctorId: string | null = null;
+      
+      if (authHeader && authHeader.startsWith("Bearer ")) {
+        const token = authHeader.replace("Bearer ", "");
+        try {
+          const decodedToken = await adminAuth.verifyIdToken(token);
+          doctorId = decodedToken.uid;
+        } catch (error) {
+          return res.status(401).json({ error: "Invalid authentication token" });
+        }
+      } else {
+        return res.status(401).json({ error: "Authentication required" });
+      }
+
+      const result = await incrementDoctorArticleCount(doctorId);
+      
+      if (!result.success) {
+        return res.status(400).json({ error: result.error });
+      }
+
+      res.json({ success: true, message: "Article count incremented" });
+    } catch (error: any) {
+      console.error("Error incrementing doctor article count:", error);
+      res.status(500).json({ error: "Failed to increment article count: " + error.message });
+    }
+  });
+
+  // ========== ASTROLOGER LIMIT CHECKS ==========
+
+  // Check astrologer client limit
+  app.get("/api/astrologer/check-client-limit", async (req, res) => {
+    try {
+      const authHeader = req.headers.authorization;
+      let astrologerId: string | null = null;
+      
+      if (authHeader && authHeader.startsWith("Bearer ")) {
+        const token = authHeader.replace("Bearer ", "");
+        try {
+          const decodedToken = await adminAuth.verifyIdToken(token);
+          astrologerId = decodedToken.uid;
+        } catch (error) {
+          return res.status(401).json({ error: "Invalid authentication token" });
+        }
+      } else {
+        return res.status(401).json({ error: "Authentication required" });
+      }
+
+      const limitCheck = await checkAstrologerClientLimit(astrologerId);
+      
+      if (!limitCheck.canAdd) {
+        return res.status(403).json({
+          error: limitCheck.error || "Client limit reached",
+          remaining: limitCheck.remaining,
+          maxClients: limitCheck.maxClients,
+          subscriptionStatus: limitCheck.subscriptionStatus,
+          isExpired: limitCheck.isExpired,
+        });
+      }
+
+      res.json({
+        canAdd: true,
+        remaining: limitCheck.remaining,
+        maxClients: limitCheck.maxClients,
+        subscriptionStatus: limitCheck.subscriptionStatus,
+      });
+    } catch (error: any) {
+      console.error("Error checking astrologer client limit:", error);
+      res.status(500).json({ error: "Failed to check client limit: " + error.message });
+    }
+  });
+
+  // Check astrologer reading limit
+  app.get("/api/astrologer/check-reading-limit", async (req, res) => {
+    try {
+      const authHeader = req.headers.authorization;
+      let astrologerId: string | null = null;
+      
+      if (authHeader && authHeader.startsWith("Bearer ")) {
+        const token = authHeader.replace("Bearer ", "");
+        try {
+          const decodedToken = await adminAuth.verifyIdToken(token);
+          astrologerId = decodedToken.uid;
+        } catch (error) {
+          return res.status(401).json({ error: "Invalid authentication token" });
+        }
+      } else {
+        return res.status(401).json({ error: "Authentication required" });
+      }
+
+      const limitCheck = await checkAstrologerReadingLimit(astrologerId);
+      
+      if (!limitCheck.canCreate) {
+        return res.status(403).json({
+          error: limitCheck.error || "Reading limit reached",
+          remaining: limitCheck.remaining,
+          maxReadings: limitCheck.maxReadings,
+          subscriptionStatus: limitCheck.subscriptionStatus,
+          isExpired: limitCheck.isExpired,
+        });
+      }
+
+      res.json({
+        canCreate: true,
+        remaining: limitCheck.remaining,
+        maxReadings: limitCheck.maxReadings,
+        subscriptionStatus: limitCheck.subscriptionStatus,
+      });
+    } catch (error: any) {
+      console.error("Error checking astrologer reading limit:", error);
+      res.status(500).json({ error: "Failed to check reading limit: " + error.message });
+    }
+  });
+
+  // Increment astrologer reading count
+  app.post("/api/astrologer/increment-reading-count", async (req, res) => {
+    try {
+      const authHeader = req.headers.authorization;
+      let astrologerId: string | null = null;
+      
+      if (authHeader && authHeader.startsWith("Bearer ")) {
+        const token = authHeader.replace("Bearer ", "");
+        try {
+          const decodedToken = await adminAuth.verifyIdToken(token);
+          astrologerId = decodedToken.uid;
+        } catch (error) {
+          return res.status(401).json({ error: "Invalid authentication token" });
+        }
+      } else {
+        return res.status(401).json({ error: "Authentication required" });
+      }
+
+      await incrementAstrologerReadingCount(astrologerId);
+      res.json({ success: true, message: "Reading count incremented" });
+    } catch (error: any) {
+      console.error("Error incrementing astrologer reading count:", error);
+      res.status(500).json({ error: "Failed to increment reading count: " + error.message });
+    }
+  });
+
+  // Check astrologer template limit
+  app.get("/api/astrologer/check-template-limit", async (req, res) => {
+    try {
+      const authHeader = req.headers.authorization;
+      let astrologerId: string | null = null;
+      
+      if (authHeader && authHeader.startsWith("Bearer ")) {
+        const token = authHeader.replace("Bearer ", "");
+        try {
+          const decodedToken = await adminAuth.verifyIdToken(token);
+          astrologerId = decodedToken.uid;
+        } catch (error) {
+          return res.status(401).json({ error: "Invalid authentication token" });
+        }
+      } else {
+        return res.status(401).json({ error: "Authentication required" });
+      }
+
+      const limitCheck = await checkAstrologerTemplateLimit(astrologerId);
+      
+      if (!limitCheck.canCreate) {
+        return res.status(403).json({
+          error: limitCheck.error || "Template limit reached",
+          remaining: limitCheck.remaining,
+          maxTemplates: limitCheck.maxTemplates,
+          subscriptionStatus: limitCheck.subscriptionStatus,
+          isExpired: limitCheck.isExpired,
+        });
+      }
+
+      res.json({
+        canCreate: true,
+        remaining: limitCheck.remaining,
+        maxTemplates: limitCheck.maxTemplates,
+        subscriptionStatus: limitCheck.subscriptionStatus,
+      });
+    } catch (error: any) {
+      console.error("Error checking astrologer template limit:", error);
+      res.status(500).json({ error: "Failed to check template limit: " + error.message });
+    }
+  });
+
+  // Increment astrologer template count
+  app.post("/api/astrologer/increment-template-count", async (req, res) => {
+    try {
+      const authHeader = req.headers.authorization;
+      let astrologerId: string | null = null;
+      
+      if (authHeader && authHeader.startsWith("Bearer ")) {
+        const token = authHeader.replace("Bearer ", "");
+        try {
+          const decodedToken = await adminAuth.verifyIdToken(token);
+          astrologerId = decodedToken.uid;
+        } catch (error) {
+          return res.status(401).json({ error: "Invalid authentication token" });
+        }
+      } else {
+        return res.status(401).json({ error: "Authentication required" });
+      }
+
+      await incrementAstrologerTemplateCount(astrologerId);
+      res.json({ success: true, message: "Template count incremented" });
+    } catch (error: any) {
+      console.error("Error incrementing astrologer template count:", error);
+      res.status(500).json({ error: "Failed to increment template count: " + error.message });
+    }
+  });
+
+  // Check astrologer rasi limit
+  app.get("/api/astrologer/check-rasi-limit", async (req, res) => {
+    try {
+      const authHeader = req.headers.authorization;
+      let astrologerId: string | null = null;
+      
+      if (authHeader && authHeader.startsWith("Bearer ")) {
+        const token = authHeader.replace("Bearer ", "");
+        try {
+          const decodedToken = await adminAuth.verifyIdToken(token);
+          astrologerId = decodedToken.uid;
+        } catch (error) {
+          return res.status(401).json({ error: "Invalid authentication token" });
+        }
+      } else {
+        return res.status(401).json({ error: "Authentication required" });
+      }
+
+      const limitCheck = await checkAstrologerRasiLimit(astrologerId);
+      
+      if (!limitCheck.canCreate) {
+        return res.status(403).json({
+          error: limitCheck.error || "Rasi recommendation limit reached",
+          remaining: limitCheck.remaining,
+          maxRasi: limitCheck.maxRasi,
+          subscriptionStatus: limitCheck.subscriptionStatus,
+          isExpired: limitCheck.isExpired,
+        });
+      }
+
+      res.json({
+        canCreate: true,
+        remaining: limitCheck.remaining,
+        maxRasi: limitCheck.maxRasi,
+        subscriptionStatus: limitCheck.subscriptionStatus,
+      });
+    } catch (error: any) {
+      console.error("Error checking astrologer rasi limit:", error);
+      res.status(500).json({ error: "Failed to check rasi limit: " + error.message });
+    }
+  });
+
+  // Increment astrologer rasi count
+  app.post("/api/astrologer/increment-rasi-count", async (req, res) => {
+    try {
+      const authHeader = req.headers.authorization;
+      let astrologerId: string | null = null;
+      
+      if (authHeader && authHeader.startsWith("Bearer ")) {
+        const token = authHeader.replace("Bearer ", "");
+        try {
+          const decodedToken = await adminAuth.verifyIdToken(token);
+          astrologerId = decodedToken.uid;
+        } catch (error) {
+          return res.status(401).json({ error: "Invalid authentication token" });
+        }
+      } else {
+        return res.status(401).json({ error: "Authentication required" });
+      }
+
+      await incrementAstrologerRasiCount(astrologerId);
+      res.json({ success: true, message: "Rasi count incremented" });
+    } catch (error: any) {
+      console.error("Error incrementing astrologer rasi count:", error);
+      res.status(500).json({ error: "Failed to increment rasi count: " + error.message });
+    }
+  });
+
+  // Check astrologer post limit
+  app.get("/api/astrologer/check-post-limit", async (req, res) => {
+    try {
+      const authHeader = req.headers.authorization;
+      let astrologerId: string | null = null;
+      
+      if (authHeader && authHeader.startsWith("Bearer ")) {
+        const token = authHeader.replace("Bearer ", "");
+        try {
+          const decodedToken = await adminAuth.verifyIdToken(token);
+          astrologerId = decodedToken.uid;
+        } catch (error) {
+          return res.status(401).json({ error: "Invalid authentication token" });
+        }
+      } else {
+        return res.status(401).json({ error: "Authentication required" });
+      }
+
+      const limitCheck = await checkAstrologerPostLimit(astrologerId);
+      
+      if (!limitCheck.canPublish) {
+        return res.status(403).json({
+          error: limitCheck.error || "Post publishing limit reached",
+          remaining: limitCheck.remaining,
+          maxPosts: limitCheck.maxPosts,
+          subscriptionStatus: limitCheck.subscriptionStatus,
+          isExpired: limitCheck.isExpired,
+        });
+      }
+
+      res.json({
+        canPublish: true,
+        remaining: limitCheck.remaining,
+        maxPosts: limitCheck.maxPosts,
+        subscriptionStatus: limitCheck.subscriptionStatus,
+      });
+    } catch (error: any) {
+      console.error("Error checking astrologer post limit:", error);
+      res.status(500).json({ error: "Failed to check post limit: " + error.message });
+    }
+  });
+
+  // Increment astrologer post count
+  app.post("/api/astrologer/increment-post-count", async (req, res) => {
+    try {
+      const authHeader = req.headers.authorization;
+      let astrologerId: string | null = null;
+      
+      if (authHeader && authHeader.startsWith("Bearer ")) {
+        const token = authHeader.replace("Bearer ", "");
+        try {
+          const decodedToken = await adminAuth.verifyIdToken(token);
+          astrologerId = decodedToken.uid;
+        } catch (error) {
+          return res.status(401).json({ error: "Invalid authentication token" });
+        }
+      } else {
+        return res.status(401).json({ error: "Authentication required" });
+      }
+
+      await incrementAstrologerPostCount(astrologerId);
+      res.json({ success: true, message: "Post count incremented" });
+    } catch (error: any) {
+      console.error("Error incrementing astrologer post count:", error);
+      res.status(500).json({ error: "Failed to increment post count: " + error.message });
+    }
+  });
+
+  // Validate horoscope post content
+  app.post("/api/astrologer/validate-post-content", async (req, res) => {
+    try {
+      const { content } = req.body;
+      
+      if (!content || typeof content !== "string") {
+        return res.status(400).json({ error: "Content is required and must be a string" });
+      }
+
+      const validation = validateHoroscopePostContent(content);
+      
+      if (!validation.isValid) {
+        return res.status(400).json({
+          isValid: false,
+          error: validation.error || "Content validation failed",
+        });
+      }
+
+      res.json({ isValid: true });
+    } catch (error: any) {
+      console.error("Error validating horoscope post content:", error);
+      res.status(500).json({ error: "Failed to validate content: " + error.message });
     }
   });
 
@@ -2451,6 +3065,43 @@ export async function registerRoutes(app: Express): Promise<Server> {
         updateData.lastDiscoveryMonthlyReset = admin.firestore.Timestamp.fromDate(firstOfMonth);
         updateData.lastShortlistMonthlyReset = admin.firestore.Timestamp.fromDate(firstOfMonth);
       }
+
+      // Doctor-specific fields
+      if (userRole === "doctor" && planData?.role === "doctor") {
+        // Store doctor plan limits
+        updateData.maxProgramsCreatePerMonth = planData?.maxProgramsCreatePerMonth || 0;
+        updateData.maxTemplatesCreatePerMonth = planData?.maxTemplatesCreatePerMonth || 0;
+        updateData.maxArticlesPublishPerMonth = planData?.maxArticlesPublishPerMonth || 0;
+        // Reset doctor usage counters
+        updateData.programsCreatedThisMonth = 0;
+        updateData.templatesCreatedThisMonth = 0;
+        updateData.articlesPublishedThisMonth = 0;
+        const firstOfMonth = new Date(subscriptionStart.getFullYear(), subscriptionStart.getMonth(), 1);
+        updateData.lastProgramMonthlyReset = admin.firestore.Timestamp.fromDate(firstOfMonth);
+        updateData.lastTemplateMonthlyReset = admin.firestore.Timestamp.fromDate(firstOfMonth);
+        updateData.lastArticleMonthlyReset = admin.firestore.Timestamp.fromDate(firstOfMonth);
+      }
+
+      // Astrologer-specific fields
+      if (userRole === "astrologer" && planData?.role === "astrologer") {
+        // Store astrologer plan limits
+        updateData.maxClientsActive = planData?.maxClientsActive || 0;
+        updateData.maxReadingsPerMonth = planData?.maxReadingsPerMonth || 0;
+        updateData.maxAstroTemplatesCreatePerMonth = planData?.maxAstroTemplatesCreatePerMonth || 0;
+        updateData.maxRasiRecommendationsCreatePerMonth = planData?.maxRasiRecommendationsCreatePerMonth || 0;
+        updateData.maxHoroscopePostsPublishPerMonth = planData?.maxHoroscopePostsPublishPerMonth || 0;
+        // Reset astrologer usage counters
+        updateData.clientsActiveCount = 0;
+        updateData.readingsCreatedThisMonth = 0;
+        updateData.astroTemplatesCreatedThisMonth = 0;
+        updateData.rasiRecommendationsCreatedThisMonth = 0;
+        updateData.horoscopePostsPublishedThisMonth = 0;
+        const firstOfMonth = new Date(subscriptionStart.getFullYear(), subscriptionStart.getMonth(), 1);
+        updateData.lastReadingsMonthlyReset = admin.firestore.Timestamp.fromDate(firstOfMonth);
+        updateData.lastTemplatesMonthlyReset = admin.firestore.Timestamp.fromDate(firstOfMonth);
+        updateData.lastRasiMonthlyReset = admin.firestore.Timestamp.fromDate(firstOfMonth);
+        updateData.lastPostsMonthlyReset = admin.firestore.Timestamp.fromDate(firstOfMonth);
+      }
       
       // Update user with plan assignment
       await userRef.update(updateData);
@@ -2908,6 +3559,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
           artistDiscoveryPerDay: data.artistDiscoveryPerDay !== undefined ? data.artistDiscoveryPerDay : null,
           artistDiscoveryPerMonth: data.artistDiscoveryPerMonth !== undefined ? data.artistDiscoveryPerMonth : null,
           maxShortlistsCreatePerMonth: data.maxShortlistsCreatePerMonth !== undefined ? data.maxShortlistsCreatePerMonth : null,
+          // Doctor plan fields
+          maxProgramsCreatePerMonth: data.maxProgramsCreatePerMonth !== undefined ? data.maxProgramsCreatePerMonth : null,
+          maxTemplatesCreatePerMonth: data.maxTemplatesCreatePerMonth !== undefined ? data.maxTemplatesCreatePerMonth : null,
+          maxArticlesPublishPerMonth: data.maxArticlesPublishPerMonth !== undefined ? data.maxArticlesPublishPerMonth : null,
+          // Astrologer plan fields
+          maxClientsActive: data.maxClientsActive !== undefined ? data.maxClientsActive : null,
+          maxReadingsPerMonth: data.maxReadingsPerMonth !== undefined ? data.maxReadingsPerMonth : null,
+          maxAstroTemplatesCreatePerMonth: data.maxAstroTemplatesCreatePerMonth !== undefined ? data.maxAstroTemplatesCreatePerMonth : null,
+          maxRasiRecommendationsCreatePerMonth: data.maxRasiRecommendationsCreatePerMonth !== undefined ? data.maxRasiRecommendationsCreatePerMonth : null,
+          maxHoroscopePostsPublishPerMonth: data.maxHoroscopePostsPublishPerMonth !== undefined ? data.maxHoroscopePostsPublishPerMonth : null,
           // Trial fields
           trialDurationDays: data.trialDurationDays !== undefined ? data.trialDurationDays : null,
           // Timestamps
@@ -2974,7 +3635,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         maxActiveProjects,
         artistDiscoveryPerDay,
         artistDiscoveryPerMonth,
-        maxShortlistsCreatePerMonth
+        maxShortlistsCreatePerMonth,
+        // Doctor plan fields
+        maxProgramsCreatePerMonth,
+        maxTemplatesCreatePerMonth,
+        maxArticlesPublishPerMonth
       } = req.body;
       
       // Required field validations
@@ -3130,6 +3795,102 @@ export async function registerRoutes(app: Express): Promise<Server> {
           return res.status(400).json({ error: "maxShortlistsCreatePerMonth must be a non-negative integer" });
         }
       }
+
+      // Doctor-specific plan validation
+      if (role === "doctor") {
+        // validityDays is required for doctor plans (or use duration if provided)
+        if (!validityDays && !duration && !validUntil) {
+          return res.status(400).json({ error: "validityDays (or duration/validUntil) is required for doctor plans" });
+        }
+
+        // Max programs validation
+        if (maxProgramsCreatePerMonth === undefined || maxProgramsCreatePerMonth === null || maxProgramsCreatePerMonth === "") {
+          return res.status(400).json({ error: "maxProgramsCreatePerMonth is required for doctor plans" });
+        }
+        const programsLimit = parseInt(maxProgramsCreatePerMonth);
+        if (isNaN(programsLimit) || programsLimit < 0) {
+          return res.status(400).json({ error: "maxProgramsCreatePerMonth must be a non-negative integer" });
+        }
+
+        // Max templates validation
+        if (maxTemplatesCreatePerMonth === undefined || maxTemplatesCreatePerMonth === null || maxTemplatesCreatePerMonth === "") {
+          return res.status(400).json({ error: "maxTemplatesCreatePerMonth is required for doctor plans" });
+        }
+        const templatesLimit = parseInt(maxTemplatesCreatePerMonth);
+        if (isNaN(templatesLimit) || templatesLimit < 0) {
+          return res.status(400).json({ error: "maxTemplatesCreatePerMonth must be a non-negative integer" });
+        }
+
+        // Max articles validation
+        if (maxArticlesPublishPerMonth === undefined || maxArticlesPublishPerMonth === null || maxArticlesPublishPerMonth === "") {
+          return res.status(400).json({ error: "maxArticlesPublishPerMonth is required for doctor plans" });
+        }
+        const articlesLimit = parseInt(maxArticlesPublishPerMonth);
+        if (isNaN(articlesLimit) || articlesLimit < 0) {
+          return res.status(400).json({ error: "maxArticlesPublishPerMonth must be a non-negative integer" });
+        }
+      }
+
+      // Astrologer-specific plan validation
+      if (role === "astrologer") {
+        // validityDays is required for astrologer plans (or use duration if provided)
+        if (!validityDays && !duration && !validUntil) {
+          return res.status(400).json({ error: "validityDays (or duration/validUntil) is required for astrologer plans" });
+        }
+
+        const {
+          maxClientsActive,
+          maxReadingsPerMonth,
+          maxAstroTemplatesCreatePerMonth,
+          maxRasiRecommendationsCreatePerMonth,
+          maxHoroscopePostsPublishPerMonth
+        } = req.body;
+
+        // Max clients validation
+        if (maxClientsActive === undefined || maxClientsActive === null || maxClientsActive === "") {
+          return res.status(400).json({ error: "maxClientsActive is required for astrologer plans" });
+        }
+        const clientsLimit = parseInt(maxClientsActive);
+        if (isNaN(clientsLimit) || clientsLimit < 0) {
+          return res.status(400).json({ error: "maxClientsActive must be a non-negative integer" });
+        }
+
+        // Max readings validation
+        if (maxReadingsPerMonth === undefined || maxReadingsPerMonth === null || maxReadingsPerMonth === "") {
+          return res.status(400).json({ error: "maxReadingsPerMonth is required for astrologer plans" });
+        }
+        const readingsLimit = parseInt(maxReadingsPerMonth);
+        if (isNaN(readingsLimit) || readingsLimit < 0) {
+          return res.status(400).json({ error: "maxReadingsPerMonth must be a non-negative integer" });
+        }
+
+        // Max templates validation
+        if (maxAstroTemplatesCreatePerMonth === undefined || maxAstroTemplatesCreatePerMonth === null || maxAstroTemplatesCreatePerMonth === "") {
+          return res.status(400).json({ error: "maxAstroTemplatesCreatePerMonth is required for astrologer plans" });
+        }
+        const templatesLimit = parseInt(maxAstroTemplatesCreatePerMonth);
+        if (isNaN(templatesLimit) || templatesLimit < 0) {
+          return res.status(400).json({ error: "maxAstroTemplatesCreatePerMonth must be a non-negative integer" });
+        }
+
+        // Max rasi recommendations validation
+        if (maxRasiRecommendationsCreatePerMonth === undefined || maxRasiRecommendationsCreatePerMonth === null || maxRasiRecommendationsCreatePerMonth === "") {
+          return res.status(400).json({ error: "maxRasiRecommendationsCreatePerMonth is required for astrologer plans" });
+        }
+        const rasiLimit = parseInt(maxRasiRecommendationsCreatePerMonth);
+        if (isNaN(rasiLimit) || rasiLimit < 0) {
+          return res.status(400).json({ error: "maxRasiRecommendationsCreatePerMonth must be a non-negative integer" });
+        }
+
+        // Max posts validation
+        if (maxHoroscopePostsPublishPerMonth === undefined || maxHoroscopePostsPublishPerMonth === null || maxHoroscopePostsPublishPerMonth === "") {
+          return res.status(400).json({ error: "maxHoroscopePostsPublishPerMonth is required for astrologer plans" });
+        }
+        const postsLimit = parseInt(maxHoroscopePostsPublishPerMonth);
+        if (isNaN(postsLimit) || postsLimit < 0) {
+          return res.status(400).json({ error: "maxHoroscopePostsPublishPerMonth must be a non-negative integer" });
+        }
+      }
       
       // Calculate duration from validUntil if duration not provided
       let calculatedDuration = duration ? parseInt(duration) : null;
@@ -3221,6 +3982,36 @@ export async function registerRoutes(app: Express): Promise<Server> {
         planData.autoAllocateTeacher = null;
         planData.allocationStrategy = null;
         planData.preferredTeacherCategory = null;
+      } else if (role === "doctor") {
+        // For doctors, set generation limits to 0 (they use program/template/article limits instead)
+        planData.usageLimits = {
+          dailyGenerations: 0,
+          monthlyGenerations: 0,
+        };
+        planData.validityDays = calculatedDuration || 0;
+        // Doctor-specific limits
+        planData.maxProgramsCreatePerMonth = parseInt(maxProgramsCreatePerMonth) || 0;
+        planData.maxTemplatesCreatePerMonth = parseInt(maxTemplatesCreatePerMonth) || 0;
+        planData.maxArticlesPublishPerMonth = parseInt(maxArticlesPublishPerMonth) || 0;
+        // Set teacher fields to null for doctor plans
+        planData.teacherMaxStudents = null;
+        planData.teacherMaxCourses = null;
+        planData.teacherMaxLessons = null;
+        planData.trialTeacherMaxStudents = null;
+        // Set student fields to null for doctor plans
+        planData.autoAllocateTeacher = null;
+        planData.allocationStrategy = null;
+        planData.preferredTeacherCategory = null;
+        planData.studentMaxEnrollments = null;
+        // Set artist fields to null for doctor plans
+        planData.maxTrackUploadsPerDay = null;
+        planData.maxTrackUploadsPerMonth = null;
+        planData.maxAlbumsPublishedPerMonth = null;
+        // Set director fields to null for doctor plans
+        planData.maxActiveProjects = null;
+        planData.artistDiscoveryPerDay = null;
+        planData.artistDiscoveryPerMonth = null;
+        planData.maxShortlistsCreatePerMonth = null;
       } else if (role === "music_director") {
         // For directors, set generation limits to 0 (they use project/discovery/shortlist limits instead)
         planData.usageLimits = {
@@ -3246,6 +4037,46 @@ export async function registerRoutes(app: Express): Promise<Server> {
         planData.maxTrackUploadsPerDay = null;
         planData.maxTrackUploadsPerMonth = null;
         planData.maxAlbumsPublishedPerMonth = null;
+        // Set doctor fields to null for director plans
+        planData.maxProgramsCreatePerMonth = null;
+        planData.maxTemplatesCreatePerMonth = null;
+        planData.maxArticlesPublishPerMonth = null;
+      } else if (role === "astrologer") {
+        // For astrologers, set generation limits to 0 (they use client/reading/template/rasi/post limits instead)
+        planData.usageLimits = {
+          dailyGenerations: 0,
+          monthlyGenerations: 0,
+        };
+        planData.validityDays = calculatedDuration || 0;
+        // Astrologer-specific limits
+        planData.maxClientsActive = parseInt(req.body.maxClientsActive) || 0;
+        planData.maxReadingsPerMonth = parseInt(req.body.maxReadingsPerMonth) || 0;
+        planData.maxAstroTemplatesCreatePerMonth = parseInt(req.body.maxAstroTemplatesCreatePerMonth) || 0;
+        planData.maxRasiRecommendationsCreatePerMonth = parseInt(req.body.maxRasiRecommendationsCreatePerMonth) || 0;
+        planData.maxHoroscopePostsPublishPerMonth = parseInt(req.body.maxHoroscopePostsPublishPerMonth) || 0;
+        // Set teacher fields to null for astrologer plans
+        planData.teacherMaxStudents = null;
+        planData.teacherMaxCourses = null;
+        planData.teacherMaxLessons = null;
+        planData.trialTeacherMaxStudents = null;
+        // Set student fields to null for astrologer plans
+        planData.autoAllocateTeacher = null;
+        planData.allocationStrategy = null;
+        planData.preferredTeacherCategory = null;
+        planData.studentMaxEnrollments = null;
+        // Set artist fields to null for astrologer plans
+        planData.maxTrackUploadsPerDay = null;
+        planData.maxTrackUploadsPerMonth = null;
+        planData.maxAlbumsPublishedPerMonth = null;
+        // Set director fields to null for astrologer plans
+        planData.maxActiveProjects = null;
+        planData.artistDiscoveryPerDay = null;
+        planData.artistDiscoveryPerMonth = null;
+        planData.maxShortlistsCreatePerMonth = null;
+        // Set doctor fields to null for astrologer plans
+        planData.maxProgramsCreatePerMonth = null;
+        planData.maxTemplatesCreatePerMonth = null;
+        planData.maxArticlesPublishPerMonth = null;
       } else {
         // For other roles, use generation limits
         planData.usageLimits = {
@@ -3271,6 +4102,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
         planData.artistDiscoveryPerDay = null;
         planData.artistDiscoveryPerMonth = null;
         planData.maxShortlistsCreatePerMonth = null;
+        // Set doctor fields to null for non-doctor plans
+        planData.maxProgramsCreatePerMonth = null;
+        planData.maxTemplatesCreatePerMonth = null;
+        planData.maxArticlesPublishPerMonth = null;
+        // Set astrologer fields to null for non-astrologer plans
+        planData.maxClientsActive = null;
+        planData.maxReadingsPerMonth = null;
+        planData.maxAstroTemplatesCreatePerMonth = null;
+        planData.maxRasiRecommendationsCreatePerMonth = null;
+        planData.maxHoroscopePostsPublishPerMonth = null;
       }
       
       // Handle trial duration - always set it, even if null
@@ -3333,7 +4174,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
         maxActiveProjects,
         artistDiscoveryPerDay,
         artistDiscoveryPerMonth,
-        maxShortlistsCreatePerMonth
+        maxShortlistsCreatePerMonth,
+        // Doctor plan fields
+        maxProgramsCreatePerMonth,
+        maxTemplatesCreatePerMonth,
+        maxArticlesPublishPerMonth,
+        // Astrologer plan fields
+        maxClientsActive,
+        maxReadingsPerMonth,
+        maxAstroTemplatesCreatePerMonth,
+        maxRasiRecommendationsCreatePerMonth,
+        maxHoroscopePostsPublishPerMonth
       } = req.body;
       
       const planRef = adminDb.collection("subscriptionPlans").doc(planId);
@@ -3658,6 +4509,124 @@ export async function registerRoutes(app: Express): Promise<Server> {
           updateData.maxShortlistsCreatePerMonth = 0;
         }
       }
+
+      // Doctor-specific fields update
+      if (finalRole === "doctor") {
+        if (validityDays !== undefined) {
+          const validity = parseInt(validityDays);
+          if (isNaN(validity) || validity <= 0) {
+            return res.status(400).json({ error: "validityDays must be a positive integer" });
+          }
+          updateData.validityDays = validity;
+        } else if (duration !== undefined) {
+          updateData.validityDays = parseInt(duration);
+        } else if (validUntil !== undefined && updateData.duration) {
+          updateData.validityDays = updateData.duration;
+        }
+
+        // Max programs validation
+        if (maxProgramsCreatePerMonth !== undefined && maxProgramsCreatePerMonth !== null && maxProgramsCreatePerMonth !== "") {
+          const programsLimit = parseInt(maxProgramsCreatePerMonth);
+          if (isNaN(programsLimit) || programsLimit < 0) {
+            return res.status(400).json({ error: "maxProgramsCreatePerMonth must be a non-negative integer" });
+          }
+          updateData.maxProgramsCreatePerMonth = programsLimit;
+        } else if (maxProgramsCreatePerMonth === "" || maxProgramsCreatePerMonth === null) {
+          updateData.maxProgramsCreatePerMonth = 0;
+        }
+
+        // Max templates validation
+        if (maxTemplatesCreatePerMonth !== undefined && maxTemplatesCreatePerMonth !== null && maxTemplatesCreatePerMonth !== "") {
+          const templatesLimit = parseInt(maxTemplatesCreatePerMonth);
+          if (isNaN(templatesLimit) || templatesLimit < 0) {
+            return res.status(400).json({ error: "maxTemplatesCreatePerMonth must be a non-negative integer" });
+          }
+          updateData.maxTemplatesCreatePerMonth = templatesLimit;
+        } else if (maxTemplatesCreatePerMonth === "" || maxTemplatesCreatePerMonth === null) {
+          updateData.maxTemplatesCreatePerMonth = 0;
+        }
+
+        // Max articles validation
+        if (maxArticlesPublishPerMonth !== undefined && maxArticlesPublishPerMonth !== null && maxArticlesPublishPerMonth !== "") {
+          const articlesLimit = parseInt(maxArticlesPublishPerMonth);
+          if (isNaN(articlesLimit) || articlesLimit < 0) {
+            return res.status(400).json({ error: "maxArticlesPublishPerMonth must be a non-negative integer" });
+          }
+          updateData.maxArticlesPublishPerMonth = articlesLimit;
+        } else if (maxArticlesPublishPerMonth === "" || maxArticlesPublishPerMonth === null) {
+          updateData.maxArticlesPublishPerMonth = 0;
+        }
+      }
+
+      // Astrologer-specific fields update
+      if (finalRole === "astrologer") {
+        if (validityDays !== undefined) {
+          const validity = parseInt(validityDays);
+          if (isNaN(validity) || validity <= 0) {
+            return res.status(400).json({ error: "validityDays must be a positive integer" });
+          }
+          updateData.validityDays = validity;
+        } else if (duration !== undefined) {
+          updateData.validityDays = parseInt(duration);
+        } else if (validUntil !== undefined && updateData.duration) {
+          updateData.validityDays = updateData.duration;
+        }
+
+        // Max clients validation
+        if (maxClientsActive !== undefined && maxClientsActive !== null && maxClientsActive !== "") {
+          const clientsLimit = parseInt(maxClientsActive);
+          if (isNaN(clientsLimit) || clientsLimit < 0) {
+            return res.status(400).json({ error: "maxClientsActive must be a non-negative integer" });
+          }
+          updateData.maxClientsActive = clientsLimit;
+        } else if (maxClientsActive === "" || maxClientsActive === null) {
+          updateData.maxClientsActive = 0;
+        }
+
+        // Max readings validation
+        if (maxReadingsPerMonth !== undefined && maxReadingsPerMonth !== null && maxReadingsPerMonth !== "") {
+          const readingsLimit = parseInt(maxReadingsPerMonth);
+          if (isNaN(readingsLimit) || readingsLimit < 0) {
+            return res.status(400).json({ error: "maxReadingsPerMonth must be a non-negative integer" });
+          }
+          updateData.maxReadingsPerMonth = readingsLimit;
+        } else if (maxReadingsPerMonth === "" || maxReadingsPerMonth === null) {
+          updateData.maxReadingsPerMonth = 0;
+        }
+
+        // Max templates validation
+        if (maxAstroTemplatesCreatePerMonth !== undefined && maxAstroTemplatesCreatePerMonth !== null && maxAstroTemplatesCreatePerMonth !== "") {
+          const templatesLimit = parseInt(maxAstroTemplatesCreatePerMonth);
+          if (isNaN(templatesLimit) || templatesLimit < 0) {
+            return res.status(400).json({ error: "maxAstroTemplatesCreatePerMonth must be a non-negative integer" });
+          }
+          updateData.maxAstroTemplatesCreatePerMonth = templatesLimit;
+        } else if (maxAstroTemplatesCreatePerMonth === "" || maxAstroTemplatesCreatePerMonth === null) {
+          updateData.maxAstroTemplatesCreatePerMonth = 0;
+        }
+
+        // Max rasi recommendations validation
+        if (maxRasiRecommendationsCreatePerMonth !== undefined && maxRasiRecommendationsCreatePerMonth !== null && maxRasiRecommendationsCreatePerMonth !== "") {
+          const rasiLimit = parseInt(maxRasiRecommendationsCreatePerMonth);
+          if (isNaN(rasiLimit) || rasiLimit < 0) {
+            return res.status(400).json({ error: "maxRasiRecommendationsCreatePerMonth must be a non-negative integer" });
+          }
+          updateData.maxRasiRecommendationsCreatePerMonth = rasiLimit;
+        } else if (maxRasiRecommendationsCreatePerMonth === "" || maxRasiRecommendationsCreatePerMonth === null) {
+          updateData.maxRasiRecommendationsCreatePerMonth = 0;
+        }
+
+        // Max posts validation
+        if (maxHoroscopePostsPublishPerMonth !== undefined && maxHoroscopePostsPublishPerMonth !== null && maxHoroscopePostsPublishPerMonth !== "") {
+          const postsLimit = parseInt(maxHoroscopePostsPublishPerMonth);
+          if (isNaN(postsLimit) || postsLimit < 0) {
+            return res.status(400).json({ error: "maxHoroscopePostsPublishPerMonth must be a non-negative integer" });
+          }
+          updateData.maxHoroscopePostsPublishPerMonth = postsLimit;
+        } else if (maxHoroscopePostsPublishPerMonth === "" || maxHoroscopePostsPublishPerMonth === null) {
+          updateData.maxHoroscopePostsPublishPerMonth = 0;
+        }
+      }
       
       // If role is changing, clean up role-specific fields
       if (role !== undefined && role !== existingPlan?.role) {
@@ -3687,6 +4656,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
           updateData.artistDiscoveryPerDay = admin.firestore.FieldValue.delete();
           updateData.artistDiscoveryPerMonth = admin.firestore.FieldValue.delete();
           updateData.maxShortlistsCreatePerMonth = admin.firestore.FieldValue.delete();
+        }
+        // If changing to non-doctor, set doctor fields to null
+        if (role !== "doctor") {
+          updateData.maxProgramsCreatePerMonth = admin.firestore.FieldValue.delete();
+          updateData.maxTemplatesCreatePerMonth = admin.firestore.FieldValue.delete();
+          updateData.maxArticlesPublishPerMonth = admin.firestore.FieldValue.delete();
+        }
+        // If changing to non-astrologer, set astrologer fields to null
+        if (role !== "astrologer") {
+          updateData.maxClientsActive = admin.firestore.FieldValue.delete();
+          updateData.maxReadingsPerMonth = admin.firestore.FieldValue.delete();
+          updateData.maxAstroTemplatesCreatePerMonth = admin.firestore.FieldValue.delete();
+          updateData.maxRasiRecommendationsCreatePerMonth = admin.firestore.FieldValue.delete();
+          updateData.maxHoroscopePostsPublishPerMonth = admin.firestore.FieldValue.delete();
         }
       }
 

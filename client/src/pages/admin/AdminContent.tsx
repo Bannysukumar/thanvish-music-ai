@@ -58,6 +58,17 @@ export default function AdminContent() {
         },
       });
 
+      if (coursesResponse.status === 401) {
+        localStorage.removeItem("adminSession");
+        toast({
+          title: "Session Expired",
+          description: "Your session has expired. Please log in again.",
+          variant: "destructive",
+        });
+        window.location.href = "/admin/login";
+        return;
+      }
+
       if (coursesResponse.ok) {
         const coursesData = await coursesResponse.json();
         setPendingCourses(coursesData.items || []);
@@ -69,6 +80,17 @@ export default function AdminContent() {
           Authorization: `Bearer ${sessionId}`,
         },
       });
+
+      if (lessonsResponse.status === 401) {
+        localStorage.removeItem("adminSession");
+        toast({
+          title: "Session Expired",
+          description: "Your session has expired. Please log in again.",
+          variant: "destructive",
+        });
+        window.location.href = "/admin/login";
+        return;
+      }
 
       if (lessonsResponse.ok) {
         const lessonsData = await lessonsResponse.json();

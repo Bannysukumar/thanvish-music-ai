@@ -10,7 +10,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Plus, Star, Lock, AlertCircle } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { AstrologyDisclaimer } from "@/components/astrologer/AstrologyDisclaimer";
-import { db } from "@/lib/firebase";
+import { db, auth } from "@/lib/firebase";
+import { useToast } from "@/hooks/use-toast";
 import { collection, query, where, getDocs, addDoc, updateDoc, doc, deleteDoc } from "firebase/firestore";
 
 // 12 Rasis (Zodiac signs)
@@ -50,6 +51,7 @@ interface RasiRecommendation {
 
 export default function RasiRecommendations() {
   const { user } = useAuth();
+  const { toast } = useToast();
   const [, params] = useRoute("/dashboard/astrologer/recommendations/:id");
   const [, setLocation] = useLocation();
   const [recommendations, setRecommendations] = useState<RasiRecommendation[]>([]);
@@ -106,6 +108,53 @@ export default function RasiRecommendations() {
     e.preventDefault();
     if (!user || isLocked) return;
 
+    // Check rasi limit before creating
+    try {
+      if (!auth.currentUser) {
+        toast({
+          title: "Error",
+          description: "Authentication required",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      const token = await auth.currentUser.getIdToken();
+      const limitResponse = await fetch("/api/astrologer/check-rasi-limit", {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (!limitResponse.ok) {
+        const errorData = await limitResponse.json();
+        toast({
+          title: "Rasi Recommendation Limit Reached",
+          description: errorData.error || "You've reached your rasi recommendation limit for this month. Upgrade your plan to create more.",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      const limitData = await limitResponse.json();
+      if (!limitData.canCreate) {
+        toast({
+          title: "Rasi Recommendation Limit Reached",
+          description: limitData.error || "You've reached your rasi recommendation limit for this month. Upgrade your plan to create more.",
+          variant: "destructive",
+        });
+        return;
+      }
+    } catch (error: any) {
+      console.error("Error checking rasi limits:", error);
+      toast({
+        title: "Error",
+        description: "Failed to check rasi limits. Please try again.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     try {
       setIsCreating(true);
       const recommendationData: Omit<RasiRecommendation, "id"> = {
@@ -124,6 +173,17 @@ export default function RasiRecommendations() {
 
       await addDoc(collection(db, "rasiRecommendations"), recommendationData);
       
+      // Increment rasi count after successful creation
+      if (auth.currentUser) {
+        const token = await auth.currentUser.getIdToken();
+        await fetch("/api/astrologer/increment-rasi-count", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        });
+      }
+      
       // Reset form
       setFormData({
         rasiName: "",
@@ -138,9 +198,18 @@ export default function RasiRecommendations() {
       
       fetchRecommendations();
       setLocation("/dashboard/astrologer/recommendations");
+      
+      toast({
+        title: "Success",
+        description: "Rasi recommendation created successfully",
+      });
     } catch (error) {
       console.error("Error creating recommendation:", error);
-      alert("Failed to create recommendation. Please try again.");
+      toast({
+        title: "Error",
+        description: "Failed to create recommendation. Please try again.",
+        variant: "destructive",
+      });
     } finally {
       setIsCreating(false);
     }

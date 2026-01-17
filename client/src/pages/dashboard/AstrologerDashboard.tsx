@@ -19,8 +19,9 @@ import {
 } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { AstrologyDisclaimer } from "@/components/astrologer/AstrologyDisclaimer";
-import { db } from "@/lib/firebase";
+import { db, auth } from "@/lib/firebase";
 import { collection, query, where, getDocs, doc, getDoc } from "firebase/firestore";
+import { Progress } from "@/components/ui/progress";
 
 export default function AstrologerDashboard() {
   const { user } = useAuth();
@@ -36,6 +37,8 @@ export default function AstrologerDashboard() {
   const [isLoading, setIsLoading] = useState(true);
   const [isLocked, setIsLocked] = useState(false);
   const [isVerified, setIsVerified] = useState(false);
+  const [subscriptionDetails, setSubscriptionDetails] = useState<any>(null);
+  const [isLoadingSubscription, setIsLoadingSubscription] = useState(true);
 
   useEffect(() => {
     // Check if user is astrologer
@@ -128,8 +131,30 @@ export default function AstrologerDashboard() {
       }
     };
 
+    const fetchSubscriptionDetails = async () => {
+      try {
+        if (!auth.currentUser) return;
+        const token = await auth.currentUser.getIdToken();
+        const response = await fetch("/api/user/subscription-details", {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          setSubscriptionDetails(data);
+        }
+      } catch (error) {
+        console.error("Error fetching subscription details:", error);
+      } finally {
+        setIsLoadingSubscription(false);
+      }
+    };
+
     checkVerification();
     fetchStats();
+    fetchSubscriptionDetails();
   }, [user, setLocation]);
 
   if (isLoading) {
@@ -299,7 +324,7 @@ export default function AstrologerDashboard() {
             <Button
               variant="outline"
               className="h-auto flex-col gap-2 py-6"
-              onClick={() => setLocation("/dashboard/astrologer/templates/new")}
+              onClick={() => setLocation("/dashboard/astrologer/templates")}
               disabled={isLocked}
             >
               {isLocked ? (
@@ -313,7 +338,7 @@ export default function AstrologerDashboard() {
             <Button
               variant="outline"
               className="h-auto flex-col gap-2 py-6"
-              onClick={() => setLocation("/dashboard/astrologer/recommendations/new")}
+              onClick={() => setLocation("/dashboard/astrologer/recommendations")}
               disabled={isLocked}
             >
               {isLocked ? (
@@ -327,7 +352,7 @@ export default function AstrologerDashboard() {
             <Button
               variant="outline"
               className="h-auto flex-col gap-2 py-6"
-              onClick={() => setLocation("/dashboard/astrologer/posts/new")}
+              onClick={() => setLocation("/dashboard/astrologer/posts")}
               disabled={isLocked}
             >
               {isLocked ? (
@@ -349,6 +374,215 @@ export default function AstrologerDashboard() {
           </div>
         </CardContent>
       </Card>
+
+      {/* Astrologer Plan & Limits Card */}
+      {!isLoadingSubscription && subscriptionDetails && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <CheckCircle2 className="h-5 w-5" />
+              Astrologer Plan & Limits
+            </CardTitle>
+            <CardDescription>
+              Your current plan details and usage limits
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {subscriptionDetails.planName ? (
+              <>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="font-semibold">{subscriptionDetails.planName}</p>
+                    <Badge 
+                      variant={subscriptionDetails.subscriptionStatus === "active" ? "default" : 
+                               subscriptionDetails.subscriptionStatus === "trial" ? "secondary" : 
+                               "destructive"}
+                      className="mt-1"
+                    >
+                      {subscriptionDetails.subscriptionStatus?.toUpperCase() || "INACTIVE"}
+                    </Badge>
+                  </div>
+                  {subscriptionDetails.astrologerPlanExpiryDate && (
+                    <div className="text-right text-sm">
+                      <p className="text-muted-foreground">End Date</p>
+                      <p className="font-semibold">
+                        {new Date(subscriptionDetails.astrologerPlanExpiryDate).toLocaleDateString()}
+                      </p>
+                      {subscriptionDetails.daysRemaining !== undefined && (
+                        <p className="text-xs text-muted-foreground mt-1">
+                          {subscriptionDetails.daysRemaining} days remaining
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {/* Clients Limit */}
+                {subscriptionDetails.maxClientsActive !== undefined && (
+                  <div className="p-4 border rounded-lg space-y-2">
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-muted-foreground">Active Clients</span>
+                      <span className="font-semibold">
+                        {subscriptionDetails.clientsActiveCount || 0} / {subscriptionDetails.maxClientsActive || 0}
+                      </span>
+                    </div>
+                    <Progress 
+                      value={subscriptionDetails.maxClientsActive > 0 
+                        ? ((subscriptionDetails.clientsActiveCount || 0) / subscriptionDetails.maxClientsActive) * 100 
+                        : 0} 
+                      className="h-2" 
+                    />
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-muted-foreground">Remaining</span>
+                      <span className={`font-semibold ${(subscriptionDetails.clientsRemaining || 0) === 0 ? "text-destructive" : ""}`}>
+                        {subscriptionDetails.clientsRemaining !== undefined ? (subscriptionDetails.clientsRemaining === -1 ? "Unlimited" : subscriptionDetails.clientsRemaining) : 0}
+                      </span>
+                    </div>
+                    {subscriptionDetails.clientsRemaining === 0 && subscriptionDetails.maxClientsActive > 0 && (
+                      <p className="text-xs text-destructive mt-2">
+                        Client limit reached. Upgrade your plan to add more clients.
+                      </p>
+                    )}
+                  </div>
+                )}
+
+                {/* Readings Limit */}
+                {subscriptionDetails.maxReadingsPerMonth !== undefined && (
+                  <div className="p-4 border rounded-lg space-y-2">
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-muted-foreground">Readings This Month</span>
+                      <span className="font-semibold">
+                        {subscriptionDetails.readingsCreatedThisMonth || 0} / {subscriptionDetails.maxReadingsPerMonth || 0}
+                      </span>
+                    </div>
+                    <Progress 
+                      value={subscriptionDetails.maxReadingsPerMonth > 0 
+                        ? ((subscriptionDetails.readingsCreatedThisMonth || 0) / subscriptionDetails.maxReadingsPerMonth) * 100 
+                        : 0} 
+                      className="h-2" 
+                    />
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-muted-foreground">Remaining</span>
+                      <span className={`font-semibold ${(subscriptionDetails.readingsRemainingThisMonth || 0) === 0 ? "text-destructive" : ""}`}>
+                        {subscriptionDetails.readingsRemainingThisMonth !== undefined ? (subscriptionDetails.readingsRemainingThisMonth === -1 ? "Unlimited" : subscriptionDetails.readingsRemainingThisMonth) : 0}
+                      </span>
+                    </div>
+                    {subscriptionDetails.readingsRemainingThisMonth === 0 && subscriptionDetails.maxReadingsPerMonth > 0 && (
+                      <p className="text-xs text-destructive mt-2">
+                        Reading limit reached. Upgrade your plan to create more readings.
+                      </p>
+                    )}
+                  </div>
+                )}
+
+                {/* Templates Limit */}
+                {subscriptionDetails.maxAstroTemplatesCreatePerMonth !== undefined && (
+                  <div className="p-4 border rounded-lg space-y-2">
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-muted-foreground">Templates This Month</span>
+                      <span className="font-semibold">
+                        {subscriptionDetails.astroTemplatesCreatedThisMonth || 0} / {subscriptionDetails.maxAstroTemplatesCreatePerMonth || 0}
+                      </span>
+                    </div>
+                    <Progress 
+                      value={subscriptionDetails.maxAstroTemplatesCreatePerMonth > 0 
+                        ? ((subscriptionDetails.astroTemplatesCreatedThisMonth || 0) / subscriptionDetails.maxAstroTemplatesCreatePerMonth) * 100 
+                        : 0} 
+                      className="h-2" 
+                    />
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-muted-foreground">Remaining</span>
+                      <span className={`font-semibold ${(subscriptionDetails.templatesRemainingThisMonth || 0) === 0 ? "text-destructive" : ""}`}>
+                        {subscriptionDetails.templatesRemainingThisMonth !== undefined ? (subscriptionDetails.templatesRemainingThisMonth === -1 ? "Unlimited" : subscriptionDetails.templatesRemainingThisMonth) : 0}
+                      </span>
+                    </div>
+                    {subscriptionDetails.templatesRemainingThisMonth === 0 && subscriptionDetails.maxAstroTemplatesCreatePerMonth > 0 && (
+                      <p className="text-xs text-destructive mt-2">
+                        Template limit reached. Upgrade your plan to create more templates.
+                      </p>
+                    )}
+                  </div>
+                )}
+
+                {/* Rasi Recommendations Limit */}
+                {subscriptionDetails.maxRasiRecommendationsCreatePerMonth !== undefined && (
+                  <div className="p-4 border rounded-lg space-y-2">
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-muted-foreground">Rasi Recommendations This Month</span>
+                      <span className="font-semibold">
+                        {subscriptionDetails.rasiRecommendationsCreatedThisMonth || 0} / {subscriptionDetails.maxRasiRecommendationsCreatePerMonth || 0}
+                      </span>
+                    </div>
+                    <Progress 
+                      value={subscriptionDetails.maxRasiRecommendationsCreatePerMonth > 0 
+                        ? ((subscriptionDetails.rasiRecommendationsCreatedThisMonth || 0) / subscriptionDetails.maxRasiRecommendationsCreatePerMonth) * 100 
+                        : 0} 
+                      className="h-2" 
+                    />
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-muted-foreground">Remaining</span>
+                      <span className={`font-semibold ${(subscriptionDetails.rasiRecommendationsRemainingThisMonth || 0) === 0 ? "text-destructive" : ""}`}>
+                        {subscriptionDetails.rasiRecommendationsRemainingThisMonth !== undefined ? (subscriptionDetails.rasiRecommendationsRemainingThisMonth === -1 ? "Unlimited" : subscriptionDetails.rasiRecommendationsRemainingThisMonth) : 0}
+                      </span>
+                    </div>
+                    {subscriptionDetails.rasiRecommendationsRemainingThisMonth === 0 && subscriptionDetails.maxRasiRecommendationsCreatePerMonth > 0 && (
+                      <p className="text-xs text-destructive mt-2">
+                        Rasi recommendation limit reached. Upgrade your plan to create more.
+                      </p>
+                    )}
+                  </div>
+                )}
+
+                {/* Posts Limit */}
+                {subscriptionDetails.maxHoroscopePostsPublishPerMonth !== undefined && (
+                  <div className="p-4 border rounded-lg space-y-2">
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-muted-foreground">Posts Published This Month</span>
+                      <span className="font-semibold">
+                        {subscriptionDetails.horoscopePostsPublishedThisMonth || 0} / {subscriptionDetails.maxHoroscopePostsPublishPerMonth || 0}
+                      </span>
+                    </div>
+                    <Progress 
+                      value={subscriptionDetails.maxHoroscopePostsPublishPerMonth > 0 
+                        ? ((subscriptionDetails.horoscopePostsPublishedThisMonth || 0) / subscriptionDetails.maxHoroscopePostsPublishPerMonth) * 100 
+                        : 0} 
+                      className="h-2" 
+                    />
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-muted-foreground">Remaining</span>
+                      <span className={`font-semibold ${(subscriptionDetails.postsRemainingThisMonth || 0) === 0 ? "text-destructive" : ""}`}>
+                        {subscriptionDetails.postsRemainingThisMonth !== undefined ? (subscriptionDetails.postsRemainingThisMonth === -1 ? "Unlimited" : subscriptionDetails.postsRemainingThisMonth) : 0}
+                      </span>
+                    </div>
+                    {subscriptionDetails.postsRemainingThisMonth === 0 && subscriptionDetails.maxHoroscopePostsPublishPerMonth > 0 && (
+                      <p className="text-xs text-destructive mt-2">
+                        Post publishing limit reached. Upgrade your plan to publish more posts.
+                      </p>
+                    )}
+                  </div>
+                )}
+
+                {(subscriptionDetails.subscriptionStatus === "expired" || 
+                  (subscriptionDetails.clientsRemaining === 0 && subscriptionDetails.maxClientsActive > 0) ||
+                  (subscriptionDetails.readingsRemainingThisMonth === 0 && subscriptionDetails.maxReadingsPerMonth > 0) ||
+                  (subscriptionDetails.templatesRemainingThisMonth === 0 && subscriptionDetails.maxAstroTemplatesCreatePerMonth > 0) ||
+                  (subscriptionDetails.rasiRecommendationsRemainingThisMonth === 0 && subscriptionDetails.maxRasiRecommendationsCreatePerMonth > 0) ||
+                  (subscriptionDetails.postsRemainingThisMonth === 0 && subscriptionDetails.maxHoroscopePostsPublishPerMonth > 0)) && (
+                  <Button onClick={() => setLocation("/dashboard/upgrade")} className="w-full">
+                    Upgrade Plan
+                  </Button>
+                )}
+              </>
+            ) : (
+              <div className="p-4 border rounded-lg">
+                <p className="text-sm text-muted-foreground">
+                  No subscription plan assigned. Please contact support.
+                </p>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       {/* Subscription Status */}
       {user.subscriptionStatus && (

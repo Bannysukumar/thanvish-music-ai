@@ -55,6 +55,16 @@ interface SubscriptionPlan {
   artistDiscoveryPerDay?: number;
   artistDiscoveryPerMonth?: number;
   maxShortlistsCreatePerMonth?: number;
+  // Doctor plan fields
+  maxProgramsCreatePerMonth?: number;
+  maxTemplatesCreatePerMonth?: number;
+  maxArticlesPublishPerMonth?: number;
+  // Astrologer plan fields
+  maxClientsActive?: number;
+  maxReadingsPerMonth?: number;
+  maxAstroTemplatesCreatePerMonth?: number;
+  maxRasiRecommendationsCreatePerMonth?: number;
+  maxHoroscopePostsPublishPerMonth?: number;
 }
 
 interface UserSubscription {
@@ -140,6 +150,16 @@ export default function AdminSubscriptions() {
     artistDiscoveryPerDay: "",
     artistDiscoveryPerMonth: "",
     maxShortlistsCreatePerMonth: "",
+    // Doctor plan fields
+    maxProgramsCreatePerMonth: "",
+    maxTemplatesCreatePerMonth: "",
+    maxArticlesPublishPerMonth: "",
+    // Astrologer plan fields
+    maxClientsActive: "",
+    maxReadingsPerMonth: "",
+    maxAstroTemplatesCreatePerMonth: "",
+    maxRasiRecommendationsCreatePerMonth: "",
+    maxHoroscopePostsPublishPerMonth: "",
   });
 
   const fetchPlans = async () => {
@@ -155,6 +175,18 @@ export default function AdminSubscriptions() {
           Authorization: `Bearer ${sessionId}`,
         },
       });
+
+      if (response.status === 401) {
+        localStorage.removeItem("adminSession");
+        toast({
+          title: "Session Expired",
+          description: "Your session has expired. Please log in again.",
+          variant: "destructive",
+        });
+        window.location.href = "/admin/login";
+        setIsLoading(false);
+        return;
+      }
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({ error: "Failed to fetch plans" }));
@@ -196,6 +228,18 @@ export default function AdminSubscriptions() {
         },
       });
 
+      if (response.status === 401) {
+        localStorage.removeItem("adminSession");
+        toast({
+          title: "Session Expired",
+          description: "Your session has expired. Please log in again.",
+          variant: "destructive",
+        });
+        window.location.href = "/admin/login";
+        setIsLoadingUsers(false);
+        return;
+      }
+
       if (!response.ok) {
         throw new Error("Failed to fetch users");
       }
@@ -209,6 +253,19 @@ export default function AdminSubscriptions() {
           Authorization: `Bearer ${sessionId}`,
         },
       });
+      
+      if (plansResponse.status === 401) {
+        localStorage.removeItem("adminSession");
+        toast({
+          title: "Session Expired",
+          description: "Your session has expired. Please log in again.",
+          variant: "destructive",
+        });
+        window.location.href = "/admin/login";
+        setIsLoadingUsers(false);
+        return;
+      }
+      
       const plansData = plansResponse.ok ? await plansResponse.json() : { plans: [] };
       const allPlans = plansData.plans || [];
       
@@ -342,6 +399,16 @@ export default function AdminSubscriptions() {
         artistDiscoveryPerDay: plan.artistDiscoveryPerDay !== undefined && plan.artistDiscoveryPerDay !== null ? plan.artistDiscoveryPerDay.toString() : "",
         artistDiscoveryPerMonth: plan.artistDiscoveryPerMonth !== undefined && plan.artistDiscoveryPerMonth !== null ? plan.artistDiscoveryPerMonth.toString() : "",
         maxShortlistsCreatePerMonth: plan.maxShortlistsCreatePerMonth !== undefined && plan.maxShortlistsCreatePerMonth !== null ? plan.maxShortlistsCreatePerMonth.toString() : "",
+        // Doctor plan fields
+        maxProgramsCreatePerMonth: plan.maxProgramsCreatePerMonth !== undefined && plan.maxProgramsCreatePerMonth !== null ? plan.maxProgramsCreatePerMonth.toString() : "",
+        maxTemplatesCreatePerMonth: plan.maxTemplatesCreatePerMonth !== undefined && plan.maxTemplatesCreatePerMonth !== null ? plan.maxTemplatesCreatePerMonth.toString() : "",
+        maxArticlesPublishPerMonth: plan.maxArticlesPublishPerMonth !== undefined && plan.maxArticlesPublishPerMonth !== null ? plan.maxArticlesPublishPerMonth.toString() : "",
+        // Astrologer plan fields
+        maxClientsActive: plan.maxClientsActive !== undefined && plan.maxClientsActive !== null ? plan.maxClientsActive.toString() : "",
+        maxReadingsPerMonth: plan.maxReadingsPerMonth !== undefined && plan.maxReadingsPerMonth !== null ? plan.maxReadingsPerMonth.toString() : "",
+        maxAstroTemplatesCreatePerMonth: plan.maxAstroTemplatesCreatePerMonth !== undefined && plan.maxAstroTemplatesCreatePerMonth !== null ? plan.maxAstroTemplatesCreatePerMonth.toString() : "",
+        maxRasiRecommendationsCreatePerMonth: plan.maxRasiRecommendationsCreatePerMonth !== undefined && plan.maxRasiRecommendationsCreatePerMonth !== null ? plan.maxRasiRecommendationsCreatePerMonth.toString() : "",
+        maxHoroscopePostsPublishPerMonth: plan.maxHoroscopePostsPublishPerMonth !== undefined && plan.maxHoroscopePostsPublishPerMonth !== null ? plan.maxHoroscopePostsPublishPerMonth.toString() : "",
       };
       
       setPlanFormData(formData);
@@ -382,6 +449,16 @@ export default function AdminSubscriptions() {
         artistDiscoveryPerDay: "",
         artistDiscoveryPerMonth: "",
         maxShortlistsCreatePerMonth: "",
+        // Doctor plan fields
+        maxProgramsCreatePerMonth: "",
+        maxTemplatesCreatePerMonth: "",
+        maxArticlesPublishPerMonth: "",
+        // Astrologer plan fields
+        maxClientsActive: "",
+        maxReadingsPerMonth: "",
+        maxAstroTemplatesCreatePerMonth: "",
+        maxRasiRecommendationsCreatePerMonth: "",
+        maxHoroscopePostsPublishPerMonth: "",
       });
     }
     setShowPlanModal(true);
@@ -491,9 +568,15 @@ export default function AdminSubscriptions() {
       } else if (planFormData.role === "music_director") {
         // Music director plans don't require generation limits - they use project/discovery/shortlist limits instead
         // Validation for director plans is handled in the director-specific validation section
+      } else if (planFormData.role === "doctor") {
+        // Doctor plans don't require generation limits - they use program/template/article limits instead
+        // Validation for doctor plans is handled in the doctor-specific validation section
+      } else if (planFormData.role === "astrologer") {
+        // Astrologer plans don't require generation limits - they use client/reading/template/rasi/post limits instead
+        // Validation for astrologer plans is handled in the astrologer-specific validation section
       } else {
         // Validate usage limits only for roles that require generation limits
-        // Only: user, doctor, astrologer require generation limits
+        // Only: user requires generation limits
         if (!planFormData.usageLimits.dailyGenerations || !planFormData.usageLimits.monthlyGenerations) {
           toast({
             title: "Error",
@@ -743,6 +826,184 @@ export default function AdminSubscriptions() {
         }
       }
 
+      // Doctor-specific validation
+      if (planFormData.role === "doctor") {
+        // ValidityDays is required for doctor plans (or use duration/validUntil)
+        if (!planFormData.validityDays && !planFormData.duration && !planFormData.validUntil) {
+          toast({
+            title: "Error",
+            description: "Validity Days (or Duration/Valid Until) is required for doctor plans",
+            variant: "destructive",
+          });
+          return;
+        }
+
+        // Max Programs Create Per Month is required
+        if (!planFormData.maxProgramsCreatePerMonth || planFormData.maxProgramsCreatePerMonth === "") {
+          toast({
+            title: "Error",
+            description: "Max Programs Create Per Month is required for doctor plans",
+            variant: "destructive",
+          });
+          return;
+        }
+        const programsLimit = parseInt(planFormData.maxProgramsCreatePerMonth);
+        if (isNaN(programsLimit) || programsLimit < 0) {
+          toast({
+            title: "Error",
+            description: "Max Programs Create Per Month must be a non-negative integer",
+            variant: "destructive",
+          });
+          return;
+        }
+
+        // Max Templates Create Per Month is required
+        if (!planFormData.maxTemplatesCreatePerMonth || planFormData.maxTemplatesCreatePerMonth === "") {
+          toast({
+            title: "Error",
+            description: "Max Templates Create Per Month is required for doctor plans",
+            variant: "destructive",
+          });
+          return;
+        }
+        const templatesLimit = parseInt(planFormData.maxTemplatesCreatePerMonth);
+        if (isNaN(templatesLimit) || templatesLimit < 0) {
+          toast({
+            title: "Error",
+            description: "Max Templates Create Per Month must be a non-negative integer",
+            variant: "destructive",
+          });
+          return;
+        }
+
+        // Max Articles Publish Per Month is required
+        if (!planFormData.maxArticlesPublishPerMonth || planFormData.maxArticlesPublishPerMonth === "") {
+          toast({
+            title: "Error",
+            description: "Max Articles Publish Per Month is required for doctor plans",
+            variant: "destructive",
+          });
+          return;
+        }
+        const articlesLimit = parseInt(planFormData.maxArticlesPublishPerMonth);
+        if (isNaN(articlesLimit) || articlesLimit < 0) {
+          toast({
+            title: "Error",
+            description: "Max Articles Publish Per Month must be a non-negative integer",
+            variant: "destructive",
+          });
+          return;
+        }
+      }
+
+      // Astrologer-specific validations
+      if (planFormData.role === "astrologer") {
+        // Validity Days is required (can be provided via validityDays, duration, or validUntil)
+        if (!planFormData.validityDays && !planFormData.duration && !planFormData.validUntil) {
+          toast({
+            title: "Error",
+            description: "Validity Days (or Duration/Valid Until) is required for astrologer plans",
+            variant: "destructive",
+          });
+          return;
+        }
+
+        // Max Clients Active is required
+        if (!planFormData.maxClientsActive || planFormData.maxClientsActive === "") {
+          toast({
+            title: "Error",
+            description: "Max Clients Active is required for astrologer plans",
+            variant: "destructive",
+          });
+          return;
+        }
+        const clientsLimit = parseInt(planFormData.maxClientsActive);
+        if (isNaN(clientsLimit) || clientsLimit < 0) {
+          toast({
+            title: "Error",
+            description: "Max Clients Active must be a non-negative integer",
+            variant: "destructive",
+          });
+          return;
+        }
+
+        // Max Readings Per Month is required
+        if (!planFormData.maxReadingsPerMonth || planFormData.maxReadingsPerMonth === "") {
+          toast({
+            title: "Error",
+            description: "Max Readings Per Month is required for astrologer plans",
+            variant: "destructive",
+          });
+          return;
+        }
+        const readingsLimit = parseInt(planFormData.maxReadingsPerMonth);
+        if (isNaN(readingsLimit) || readingsLimit < 0) {
+          toast({
+            title: "Error",
+            description: "Max Readings Per Month must be a non-negative integer",
+            variant: "destructive",
+          });
+          return;
+        }
+
+        // Max Astro Templates Create Per Month is required
+        if (!planFormData.maxAstroTemplatesCreatePerMonth || planFormData.maxAstroTemplatesCreatePerMonth === "") {
+          toast({
+            title: "Error",
+            description: "Max Astro Templates Create Per Month is required for astrologer plans",
+            variant: "destructive",
+          });
+          return;
+        }
+        const templatesLimit = parseInt(planFormData.maxAstroTemplatesCreatePerMonth);
+        if (isNaN(templatesLimit) || templatesLimit < 0) {
+          toast({
+            title: "Error",
+            description: "Max Astro Templates Create Per Month must be a non-negative integer",
+            variant: "destructive",
+          });
+          return;
+        }
+
+        // Max Rasi Recommendations Create Per Month is required
+        if (!planFormData.maxRasiRecommendationsCreatePerMonth || planFormData.maxRasiRecommendationsCreatePerMonth === "") {
+          toast({
+            title: "Error",
+            description: "Max Rasi Recommendations Create Per Month is required for astrologer plans",
+            variant: "destructive",
+          });
+          return;
+        }
+        const rasiLimit = parseInt(planFormData.maxRasiRecommendationsCreatePerMonth);
+        if (isNaN(rasiLimit) || rasiLimit < 0) {
+          toast({
+            title: "Error",
+            description: "Max Rasi Recommendations Create Per Month must be a non-negative integer",
+            variant: "destructive",
+          });
+          return;
+        }
+
+        // Max Horoscope Posts Publish Per Month is required
+        if (!planFormData.maxHoroscopePostsPublishPerMonth || planFormData.maxHoroscopePostsPublishPerMonth === "") {
+          toast({
+            title: "Error",
+            description: "Max Horoscope Posts Publish Per Month is required for astrologer plans",
+            variant: "destructive",
+          });
+          return;
+        }
+        const postsLimit = parseInt(planFormData.maxHoroscopePostsPublishPerMonth);
+        if (isNaN(postsLimit) || postsLimit < 0) {
+          toast({
+            title: "Error",
+            description: "Max Horoscope Posts Publish Per Month must be a non-negative integer",
+            variant: "destructive",
+          });
+          return;
+        }
+      }
+
       const sessionId = localStorage.getItem("adminSession");
       if (!sessionId) {
         toast({
@@ -802,6 +1063,12 @@ export default function AdminSubscriptions() {
         };
       } else if (planFormData.role === "music_director") {
         // For directors, set generation limits to 0 (directors use project/discovery/shortlist limits instead)
+        planData.usageLimits = {
+          dailyGenerations: 0,
+          monthlyGenerations: 0,
+        };
+      } else if (planFormData.role === "doctor") {
+        // For doctors, set generation limits to 0 (doctors use program/template/article limits instead)
         planData.usageLimits = {
           dailyGenerations: 0,
           monthlyGenerations: 0,
@@ -889,6 +1156,74 @@ export default function AdminSubscriptions() {
         const maxShortlistsStr = planFormData.maxShortlistsCreatePerMonth?.trim() || "0";
         const maxShortlists = parseInt(maxShortlistsStr);
         planData.maxShortlistsCreatePerMonth = isNaN(maxShortlists) ? 0 : maxShortlists;
+      }
+
+      // Doctor-specific fields
+      if (planFormData.role === "doctor") {
+        // ValidityDays is required for doctor plans
+        if (planFormData.validityDays && planFormData.validityDays.trim() !== "") {
+          planData.validityDays = parseInt(planFormData.validityDays);
+        } else if (planFormData.duration && planFormData.duration.trim() !== "") {
+          planData.validityDays = parseInt(planFormData.duration);
+        } else if (planFormData.validUntil && planFormData.validUntil.trim() !== "") {
+          // Calculate validityDays from validUntil
+          const validUntilDate = new Date(planFormData.validUntil);
+          const now = new Date();
+          const daysDiff = Math.ceil((validUntilDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+          if (daysDiff > 0) {
+            planData.validityDays = daysDiff;
+          }
+        }
+        // Program limit - always include, even if 0
+        const maxProgramsStr = planFormData.maxProgramsCreatePerMonth?.trim() || "0";
+        const maxPrograms = parseInt(maxProgramsStr);
+        planData.maxProgramsCreatePerMonth = isNaN(maxPrograms) ? 0 : maxPrograms;
+        // Template limit - always include, even if 0
+        const maxTemplatesStr = planFormData.maxTemplatesCreatePerMonth?.trim() || "0";
+        const maxTemplates = parseInt(maxTemplatesStr);
+        planData.maxTemplatesCreatePerMonth = isNaN(maxTemplates) ? 0 : maxTemplates;
+        // Article limit - always include, even if 0
+        const maxArticlesStr = planFormData.maxArticlesPublishPerMonth?.trim() || "0";
+        const maxArticles = parseInt(maxArticlesStr);
+        planData.maxArticlesPublishPerMonth = isNaN(maxArticles) ? 0 : maxArticles;
+      }
+
+      // Astrologer-specific plan data
+      if (planFormData.role === "astrologer") {
+        // Validity Days - prefer validityDays if provided, otherwise use duration or validUntil
+        if (planFormData.validityDays && planFormData.validityDays.trim() !== "") {
+          planData.validityDays = parseInt(planFormData.validityDays);
+        } else if (planFormData.duration && planFormData.duration.trim() !== "") {
+          planData.validityDays = parseInt(planFormData.duration);
+        } else if (planFormData.validUntil && planFormData.validUntil.trim() !== "") {
+          // Calculate validityDays from validUntil
+          const validUntilDate = new Date(planFormData.validUntil);
+          const now = new Date();
+          const daysDiff = Math.ceil((validUntilDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+          if (daysDiff > 0) {
+            planData.validityDays = daysDiff;
+          }
+        }
+        // Client limit - always include, even if 0
+        const maxClientsStr = planFormData.maxClientsActive?.trim() || "0";
+        const maxClients = parseInt(maxClientsStr);
+        planData.maxClientsActive = isNaN(maxClients) ? 0 : maxClients;
+        // Reading limit - always include, even if 0
+        const maxReadingsStr = planFormData.maxReadingsPerMonth?.trim() || "0";
+        const maxReadings = parseInt(maxReadingsStr);
+        planData.maxReadingsPerMonth = isNaN(maxReadings) ? 0 : maxReadings;
+        // Template limit - always include, even if 0
+        const maxTemplatesStr = planFormData.maxAstroTemplatesCreatePerMonth?.trim() || "0";
+        const maxTemplates = parseInt(maxTemplatesStr);
+        planData.maxAstroTemplatesCreatePerMonth = isNaN(maxTemplates) ? 0 : maxTemplates;
+        // Rasi limit - always include, even if 0
+        const maxRasiStr = planFormData.maxRasiRecommendationsCreatePerMonth?.trim() || "0";
+        const maxRasi = parseInt(maxRasiStr);
+        planData.maxRasiRecommendationsCreatePerMonth = isNaN(maxRasi) ? 0 : maxRasi;
+        // Post limit - always include, even if 0
+        const maxPostsStr = planFormData.maxHoroscopePostsPublishPerMonth?.trim() || "0";
+        const maxPosts = parseInt(maxPostsStr);
+        planData.maxHoroscopePostsPublishPerMonth = isNaN(maxPosts) ? 0 : maxPosts;
       }
       
       if (planFormData.planType === "free_trial" && planFormData.trialDurationDays) {
@@ -2068,6 +2403,156 @@ export default function AdminSubscriptions() {
                     />
                     <p className="text-xs text-muted-foreground">
                       Maximum shortlists the director can create per month. Set to 0 to disable.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            ) : planFormData.role === "doctor" ? (
+              <div className="space-y-4 border-t pt-4">
+                <div className="space-y-2">
+                  <Label className="text-base font-semibold">Doctor Plan Settings *</Label>
+                  <p className="text-xs text-muted-foreground">
+                    These fields are required for doctor plans
+                  </p>
+                </div>
+                
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="maxProgramsCreatePerMonth">Max Programs Create Per Month *</Label>
+                    <Input
+                      id="maxProgramsCreatePerMonth"
+                      type="number"
+                      min="0"
+                      value={planFormData.maxProgramsCreatePerMonth}
+                      onChange={(e) => setPlanFormData({ ...planFormData, maxProgramsCreatePerMonth: e.target.value })}
+                      placeholder="0"
+                      required
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Maximum therapy programs the doctor can create per month. Set to 0 to disable.
+                    </p>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="maxTemplatesCreatePerMonth">Max Templates Create Per Month *</Label>
+                    <Input
+                      id="maxTemplatesCreatePerMonth"
+                      type="number"
+                      min="0"
+                      value={planFormData.maxTemplatesCreatePerMonth}
+                      onChange={(e) => setPlanFormData({ ...planFormData, maxTemplatesCreatePerMonth: e.target.value })}
+                      placeholder="0"
+                      required
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Maximum session templates the doctor can create per month. Set to 0 to disable.
+                    </p>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="maxArticlesPublishPerMonth">Max Articles Publish Per Month *</Label>
+                    <Input
+                      id="maxArticlesPublishPerMonth"
+                      type="number"
+                      min="0"
+                      value={planFormData.maxArticlesPublishPerMonth}
+                      onChange={(e) => setPlanFormData({ ...planFormData, maxArticlesPublishPerMonth: e.target.value })}
+                      placeholder="0"
+                      required
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Maximum guidance articles the doctor can publish per month. Set to 0 to disable.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            ) : planFormData.role === "astrologer" ? (
+              <div className="space-y-4 border-t pt-4">
+                <div className="space-y-2">
+                  <Label className="text-base font-semibold">Astrologer Plan Settings *</Label>
+                  <p className="text-xs text-muted-foreground">
+                    These fields are required for astrologer plans
+                  </p>
+                </div>
+                
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="maxClientsActive">Max Clients Active *</Label>
+                    <Input
+                      id="maxClientsActive"
+                      type="number"
+                      min="0"
+                      value={planFormData.maxClientsActive}
+                      onChange={(e) => setPlanFormData({ ...planFormData, maxClientsActive: e.target.value })}
+                      placeholder="0"
+                      required
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Maximum client profiles the astrologer can have active at a time. Set to 0 to disable.
+                    </p>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="maxReadingsPerMonth">Max Readings Per Month *</Label>
+                    <Input
+                      id="maxReadingsPerMonth"
+                      type="number"
+                      min="0"
+                      value={planFormData.maxReadingsPerMonth}
+                      onChange={(e) => setPlanFormData({ ...planFormData, maxReadingsPerMonth: e.target.value })}
+                      placeholder="0"
+                      required
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Maximum readings the astrologer can create per month. Set to 0 to disable.
+                    </p>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="maxAstroTemplatesCreatePerMonth">Max Astro Templates Create Per Month *</Label>
+                    <Input
+                      id="maxAstroTemplatesCreatePerMonth"
+                      type="number"
+                      min="0"
+                      value={planFormData.maxAstroTemplatesCreatePerMonth}
+                      onChange={(e) => setPlanFormData({ ...planFormData, maxAstroTemplatesCreatePerMonth: e.target.value })}
+                      placeholder="0"
+                      required
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Maximum astro music templates the astrologer can create per month. Set to 0 to disable.
+                    </p>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="maxRasiRecommendationsCreatePerMonth">Max Rasi Recommendations Create Per Month *</Label>
+                    <Input
+                      id="maxRasiRecommendationsCreatePerMonth"
+                      type="number"
+                      min="0"
+                      value={planFormData.maxRasiRecommendationsCreatePerMonth}
+                      onChange={(e) => setPlanFormData({ ...planFormData, maxRasiRecommendationsCreatePerMonth: e.target.value })}
+                      placeholder="0"
+                      required
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Maximum rasi recommendation sets the astrologer can create per month. Set to 0 to disable.
+                    </p>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="maxHoroscopePostsPublishPerMonth">Max Horoscope Posts Publish Per Month *</Label>
+                    <Input
+                      id="maxHoroscopePostsPublishPerMonth"
+                      type="number"
+                      min="0"
+                      value={planFormData.maxHoroscopePostsPublishPerMonth}
+                      onChange={(e) => setPlanFormData({ ...planFormData, maxHoroscopePostsPublishPerMonth: e.target.value })}
+                      placeholder="0"
+                      required
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Maximum horoscope content posts the astrologer can publish per month. Set to 0 to disable. Draft posts don't count.
                     </p>
                   </div>
                 </div>

@@ -9,8 +9,9 @@ import { Textarea } from "@/components/ui/textarea";
 import { Plus, BookOpen, Lock } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { AstrologyDisclaimer } from "@/components/astrologer/AstrologyDisclaimer";
-import { db } from "@/lib/firebase";
-import { collection, query, where, getDocs, addDoc } from "firebase/firestore";
+import { db, auth } from "@/lib/firebase";
+import { useToast } from "@/hooks/use-toast";
+import { collection, query, where, getDocs, addDoc, doc, updateDoc } from "firebase/firestore";
 
 interface HoroscopePost {
   id?: string;
@@ -25,6 +26,7 @@ interface HoroscopePost {
 
 export default function HoroscopeContentPosts() {
   const { user } = useAuth();
+  const { toast } = useToast();
   const [, params] = useRoute("/dashboard/astrologer/posts/:id");
   const [, setLocation] = useLocation();
   const [posts, setPosts] = useState<HoroscopePost[]>([]);
@@ -77,23 +79,6 @@ export default function HoroscopeContentPosts() {
     e.preventDefault();
     if (!user || isLocked) return;
 
-    // Content moderation: Check for prohibited medical claims
-    const prohibitedTerms = [
-      "guaranteed",
-      "will cure",
-      "will heal",
-      "medical treatment",
-      "prescription",
-      "diagnosis",
-    ];
-    const contentLower = formData.content?.toLowerCase() || "";
-    const hasProhibitedContent = prohibitedTerms.some((term) => contentLower.includes(term));
-
-    if (hasProhibitedContent) {
-      alert("Content cannot contain medical claims or guarantees. Please revise your content.");
-      return;
-    }
-
     try {
       setIsCreating(true);
       const postData: Omit<HoroscopePost, "id"> = {
@@ -118,9 +103,177 @@ export default function HoroscopeContentPosts() {
       
       fetchPosts();
       setLocation("/dashboard/astrologer/posts");
+      
+      toast({
+        title: "Success",
+        description: "Post saved as draft",
+      });
     } catch (error) {
       console.error("Error creating post:", error);
-      alert("Failed to create post. Please try again.");
+      toast({
+        title: "Error",
+        description: "Failed to create post. Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsCreating(false);
+    }
+  };
+
+  const handlePublish = async () => {
+    if (!user || isLocked || !formData.title || !formData.content) {
+      toast({
+        title: "Error",
+        description: "Please fill in all required fields",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    // Validate content safety first
+    try {
+      if (!auth.currentUser) {
+        toast({
+          title: "Error",
+          description: "Authentication required",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      const token = await auth.currentUser.getIdToken();
+      const validationResponse = await fetch("/api/astrologer/validate-post-content", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ content: formData.content }),
+      });
+
+      if (!validationResponse.ok) {
+        const errorData = await validationResponse.json();
+        toast({
+          title: "Content Validation Failed",
+          description: errorData.error || "This post violates content guidelines (no guaranteed predictions or fear-based content). Please edit and try again.",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      const validationData = await validationResponse.json();
+      if (!validationData.isValid) {
+        toast({
+          title: "Content Validation Failed",
+          description: validationData.error || "This post violates content guidelines (no guaranteed predictions or fear-based content). Please edit and try again.",
+          variant: "destructive",
+        });
+        return;
+      }
+    } catch (error: any) {
+      console.error("Error validating content:", error);
+      toast({
+        title: "Error",
+        description: "Failed to validate content. Please try again.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    // Check post publish limit
+    try {
+      if (!auth.currentUser) {
+        toast({
+          title: "Error",
+          description: "Authentication required",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      const token = await auth.currentUser.getIdToken();
+      const limitResponse = await fetch("/api/astrologer/check-post-limit", {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (!limitResponse.ok) {
+        const errorData = await limitResponse.json();
+        toast({
+          title: "Post Publishing Limit Reached",
+          description: errorData.error || "You've reached your horoscope post publishing limit for this month. Upgrade your plan to publish more posts.",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      const limitData = await limitResponse.json();
+      if (!limitData.canPublish) {
+        toast({
+          title: "Post Publishing Limit Reached",
+          description: limitData.error || "You've reached your horoscope post publishing limit for this month. Upgrade your plan to publish more posts.",
+          variant: "destructive",
+        });
+        return;
+      }
+    } catch (error: any) {
+      console.error("Error checking post limits:", error);
+      toast({
+        title: "Error",
+        description: "Failed to check post limits. Please try again.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      setIsCreating(true);
+      const postData: Omit<HoroscopePost, "id"> = {
+        title: formData.title!,
+        content: formData.content!,
+        postType: formData.postType!,
+        status: "published",
+        astrologerId: user.id,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+
+      await addDoc(collection(db, "horoscopeContentPosts"), postData);
+      
+      // Increment post count after successful publishing
+      if (auth.currentUser) {
+        const token = await auth.currentUser.getIdToken();
+        await fetch("/api/astrologer/increment-post-count", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        });
+      }
+      
+      // Reset form
+      setFormData({
+        title: "",
+        content: "",
+        postType: "weekly_rasi_guidance",
+        status: "draft",
+      });
+      
+      fetchPosts();
+      setLocation("/dashboard/astrologer/posts");
+      
+      toast({
+        title: "Success",
+        description: "Post published successfully",
+      });
+    } catch (error) {
+      console.error("Error publishing post:", error);
+      toast({
+        title: "Error",
+        description: "Failed to publish post. Please try again.",
+        variant: "destructive",
+      });
     } finally {
       setIsCreating(false);
     }
@@ -237,8 +390,15 @@ export default function HoroscopeContentPosts() {
               </div>
 
               <div className="flex gap-4">
-                <Button type="submit" disabled={isLocked || isCreating}>
-                  {isCreating ? "Creating..." : "Save as Draft"}
+                <Button type="submit" variant="outline" disabled={isLocked || isCreating}>
+                  {isCreating ? "Saving..." : "Save as Draft"}
+                </Button>
+                <Button
+                  type="button"
+                  disabled={isLocked || isCreating || !formData.title || !formData.content}
+                  onClick={handlePublish}
+                >
+                  {isCreating ? "Publishing..." : "Publish Post"}
                 </Button>
                 <Button
                   type="button"
@@ -336,13 +496,115 @@ export default function HoroscopeContentPosts() {
                 <p className="text-sm text-muted-foreground line-clamp-3 mb-4">
                   {post.content}
                 </p>
-                <Button
-                  variant="outline"
-                  className="w-full"
-                  onClick={() => setLocation(`/dashboard/astrologer/posts/${post.id}`)}
-                >
-                  View Details
-                </Button>
+                <div className="flex gap-2">
+                  {post.status === "draft" && (
+                    <Button
+                      variant="default"
+                      size="sm"
+                      className="flex-1"
+                      disabled={isLocked}
+                      onClick={async () => {
+                        // Check post limit and validate content before publishing
+                        try {
+                          if (!auth.currentUser) {
+                            toast({
+                              title: "Error",
+                              description: "Authentication required",
+                              variant: "destructive",
+                            });
+                            return;
+                          }
+
+                          const token = await auth.currentUser.getIdToken();
+                          
+                          // Validate content
+                          const validationResponse = await fetch("/api/astrologer/validate-post-content", {
+                            method: "POST",
+                            headers: {
+                              "Content-Type": "application/json",
+                              Authorization: `Bearer ${token}`,
+                            },
+                            body: JSON.stringify({ content: post.content }),
+                          });
+
+                          if (!validationResponse.ok) {
+                            const errorData = await validationResponse.json();
+                            toast({
+                              title: "Content Validation Failed",
+                              description: errorData.error || "This post violates content guidelines. Please edit and try again.",
+                              variant: "destructive",
+                            });
+                            return;
+                          }
+
+                          // Check limit
+                          const limitResponse = await fetch("/api/astrologer/check-post-limit", {
+                            headers: {
+                              Authorization: `Bearer ${token}`,
+                            },
+                          });
+
+                          if (!limitResponse.ok) {
+                            const errorData = await limitResponse.json();
+                            toast({
+                              title: "Post Publishing Limit Reached",
+                              description: errorData.error || "You've reached your horoscope post publishing limit for this month.",
+                              variant: "destructive",
+                            });
+                            return;
+                          }
+
+                          const limitData = await limitResponse.json();
+                          if (!limitData.canPublish) {
+                            toast({
+                              title: "Post Publishing Limit Reached",
+                              description: limitData.error || "You've reached your horoscope post publishing limit for this month.",
+                              variant: "destructive",
+                            });
+                            return;
+                          }
+
+                          // Update post status to published
+                          await updateDoc(doc(db, "horoscopeContentPosts", post.id!), {
+                            status: "published",
+                            updatedAt: new Date(),
+                          });
+
+                          // Increment post count
+                          await fetch("/api/astrologer/increment-post-count", {
+                            method: "POST",
+                            headers: {
+                              Authorization: `Bearer ${token}`,
+                            },
+                          });
+
+                          fetchPosts();
+                          toast({
+                            title: "Success",
+                            description: "Post published successfully",
+                          });
+                        } catch (error: any) {
+                          console.error("Error publishing post:", error);
+                          toast({
+                            title: "Error",
+                            description: "Failed to publish post. Please try again.",
+                            variant: "destructive",
+                          });
+                        }
+                      }}
+                    >
+                      Publish
+                    </Button>
+                  )}
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className={post.status === "draft" ? "flex-1" : "w-full"}
+                    onClick={() => setLocation(`/dashboard/astrologer/posts/${post.id}`)}
+                  >
+                    {post.status === "draft" ? "Edit" : "View Details"}
+                  </Button>
+                </div>
               </CardContent>
             </Card>
           ))}

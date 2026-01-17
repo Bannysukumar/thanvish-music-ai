@@ -10,7 +10,7 @@ import { useLocation } from "wouter";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { SafetyDisclaimer } from "@/components/doctor/SafetyDisclaimer";
-import { db } from "@/lib/firebase";
+import { db, auth } from "@/lib/firebase";
 import { collection, query, where, getDocs, addDoc, serverTimestamp } from "firebase/firestore";
 
 interface Template {
@@ -105,6 +105,47 @@ export default function SessionTemplates() {
       return;
     }
 
+    // Check template creation limit before proceeding
+    try {
+      if (!auth.currentUser) {
+        throw new Error("User not authenticated");
+      }
+      const token = await auth.currentUser.getIdToken();
+      const limitResponse = await fetch("/api/doctor/check-template-limit", {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (!limitResponse.ok) {
+        const errorData = await limitResponse.json();
+        toast({
+          title: "Template Limit Reached",
+          description: errorData.error || "You've reached your template creation limit for this month. Upgrade your plan to create more templates.",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      const limitData = await limitResponse.json();
+      if (!limitData.canCreate) {
+        toast({
+          title: "Template Limit Reached",
+          description: limitData.error || "You've reached your template creation limit for this month. Upgrade your plan to create more templates.",
+          variant: "destructive",
+        });
+        return;
+      }
+    } catch (error: any) {
+      console.error("Error checking template limits:", error);
+      toast({
+        title: "Error",
+        description: "Failed to check template limits. Please try again.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     setIsLoading(true);
 
     try {
@@ -124,6 +165,22 @@ export default function SessionTemplates() {
       };
 
       await addDoc(collection(db, "sessionTemplates"), templateData);
+
+      // Increment template count after successful creation
+      try {
+        if (auth.currentUser) {
+          const token = await auth.currentUser.getIdToken();
+          await fetch("/api/doctor/increment-template-count", {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${token}`,
+            },
+          });
+        }
+      } catch (error: any) {
+        console.error("Error incrementing template count:", error);
+        // Don't fail the creation if increment fails
+      }
 
       toast({
         title: "Success",

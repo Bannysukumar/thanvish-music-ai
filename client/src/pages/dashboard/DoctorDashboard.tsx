@@ -18,8 +18,9 @@ import {
 } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { SafetyDisclaimer } from "@/components/doctor/SafetyDisclaimer";
-import { db } from "@/lib/firebase";
+import { db, auth } from "@/lib/firebase";
 import { collection, query, where, getDocs, doc, getDoc } from "firebase/firestore";
+import { Progress } from "@/components/ui/progress";
 
 export default function DoctorDashboard() {
   const { user } = useAuth();
@@ -34,6 +35,8 @@ export default function DoctorDashboard() {
   const [isLoading, setIsLoading] = useState(true);
   const [isLocked, setIsLocked] = useState(false);
   const [isVerified, setIsVerified] = useState(false);
+  const [subscriptionDetails, setSubscriptionDetails] = useState<any>(null);
+  const [isLoadingSubscription, setIsLoadingSubscription] = useState(true);
 
   useEffect(() => {
     // Check if user is doctor
@@ -114,8 +117,30 @@ export default function DoctorDashboard() {
       }
     };
 
+    const fetchSubscriptionDetails = async () => {
+      try {
+        if (!auth.currentUser) return;
+        const token = await auth.currentUser.getIdToken();
+        const response = await fetch("/api/user/subscription-details", {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          setSubscriptionDetails(data);
+        }
+      } catch (error) {
+        console.error("Error fetching subscription details:", error);
+      } finally {
+        setIsLoadingSubscription(false);
+      }
+    };
+
     checkVerification();
     fetchStats();
+    fetchSubscriptionDetails();
   }, [user, setLocation]);
 
   if (isLoading) {
@@ -187,6 +212,158 @@ export default function DoctorDashboard() {
                 </Button>
               </div>
             </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Doctor Plan & Limits Card */}
+      {!isLoadingSubscription && subscriptionDetails && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <CheckCircle2 className="h-5 w-5" />
+              Doctor Plan & Limits
+            </CardTitle>
+            <CardDescription>
+              Your current plan details and usage limits
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {subscriptionDetails.planName ? (
+              <>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="font-semibold">{subscriptionDetails.planName}</p>
+                    <Badge 
+                      variant={subscriptionDetails.subscriptionStatus === "active" ? "default" : 
+                               subscriptionDetails.subscriptionStatus === "trial" ? "secondary" : 
+                               "destructive"}
+                      className="mt-1"
+                    >
+                      {subscriptionDetails.subscriptionStatus?.toUpperCase() || "INACTIVE"}
+                    </Badge>
+                  </div>
+                  {subscriptionDetails.subscriptionEndDate && (
+                    <div className="text-right text-sm">
+                      <p className="text-muted-foreground">End Date</p>
+                      <p className="font-semibold">
+                        {new Date(subscriptionDetails.subscriptionEndDate).toLocaleDateString()}
+                      </p>
+                      {subscriptionDetails.daysRemaining !== undefined && (
+                        <p className="text-xs text-muted-foreground mt-1">
+                          {subscriptionDetails.daysRemaining} days remaining
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {/* Programs Limit */}
+                {subscriptionDetails.maxProgramsCreatePerMonth !== undefined && (
+                  <div className="p-4 border rounded-lg space-y-2">
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-muted-foreground">Programs This Month</span>
+                      <span className="font-semibold">
+                        {subscriptionDetails.programsCreatedThisMonth || 0} / {subscriptionDetails.maxProgramsCreatePerMonth || 0}
+                      </span>
+                    </div>
+                    <Progress 
+                      value={subscriptionDetails.maxProgramsCreatePerMonth > 0 
+                        ? ((subscriptionDetails.programsCreatedThisMonth || 0) / subscriptionDetails.maxProgramsCreatePerMonth) * 100 
+                        : 0} 
+                      className="h-2" 
+                    />
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-muted-foreground">Remaining</span>
+                      <span className={`font-semibold ${(subscriptionDetails.programsRemainingThisMonth || 0) === 0 ? "text-destructive" : ""}`}>
+                        {subscriptionDetails.programsRemainingThisMonth || 0}
+                      </span>
+                    </div>
+                    {subscriptionDetails.programsRemainingThisMonth === 0 && subscriptionDetails.maxProgramsCreatePerMonth > 0 && (
+                      <p className="text-xs text-destructive mt-2">
+                        Program limit reached. Upgrade your plan to create more programs.
+                      </p>
+                    )}
+                  </div>
+                )}
+
+                {/* Templates Limit */}
+                {subscriptionDetails.maxTemplatesCreatePerMonth !== undefined && (
+                  <div className="p-4 border rounded-lg space-y-2">
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-muted-foreground">Templates This Month</span>
+                      <span className="font-semibold">
+                        {subscriptionDetails.templatesCreatedThisMonth || 0} / {subscriptionDetails.maxTemplatesCreatePerMonth || 0}
+                      </span>
+                    </div>
+                    <Progress 
+                      value={subscriptionDetails.maxTemplatesCreatePerMonth > 0 
+                        ? ((subscriptionDetails.templatesCreatedThisMonth || 0) / subscriptionDetails.maxTemplatesCreatePerMonth) * 100 
+                        : 0} 
+                      className="h-2" 
+                    />
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-muted-foreground">Remaining</span>
+                      <span className={`font-semibold ${(subscriptionDetails.templatesRemainingThisMonth || 0) === 0 ? "text-destructive" : ""}`}>
+                        {subscriptionDetails.templatesRemainingThisMonth || 0}
+                      </span>
+                    </div>
+                    {subscriptionDetails.templatesRemainingThisMonth === 0 && subscriptionDetails.maxTemplatesCreatePerMonth > 0 && (
+                      <p className="text-xs text-destructive mt-2">
+                        Template limit reached. Upgrade your plan to create more templates.
+                      </p>
+                    )}
+                  </div>
+                )}
+
+                {/* Articles Limit */}
+                {subscriptionDetails.maxArticlesPublishPerMonth !== undefined && (
+                  <div className="p-4 border rounded-lg space-y-2">
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-muted-foreground">Articles Published This Month</span>
+                      <span className="font-semibold">
+                        {subscriptionDetails.articlesPublishedThisMonth || 0} / {subscriptionDetails.maxArticlesPublishPerMonth || 0}
+                      </span>
+                    </div>
+                    <Progress 
+                      value={subscriptionDetails.maxArticlesPublishPerMonth > 0 
+                        ? ((subscriptionDetails.articlesPublishedThisMonth || 0) / subscriptionDetails.maxArticlesPublishPerMonth) * 100 
+                        : 0} 
+                      className="h-2" 
+                    />
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-muted-foreground">Remaining</span>
+                      <span className={`font-semibold ${(subscriptionDetails.articlesRemainingThisMonth || 0) === 0 ? "text-destructive" : ""}`}>
+                        {subscriptionDetails.articlesRemainingThisMonth || 0}
+                      </span>
+                    </div>
+                    {subscriptionDetails.articlesRemainingThisMonth === 0 && subscriptionDetails.maxArticlesPublishPerMonth > 0 && (
+                      <p className="text-xs text-destructive mt-2">
+                        Article limit reached. Upgrade your plan to publish more articles.
+                      </p>
+                    )}
+                  </div>
+                )}
+
+                {(subscriptionDetails.subscriptionStatus === "expired" || 
+                  (subscriptionDetails.programsRemainingThisMonth === 0 && subscriptionDetails.maxProgramsCreatePerMonth > 0) ||
+                  (subscriptionDetails.templatesRemainingThisMonth === 0 && subscriptionDetails.maxTemplatesCreatePerMonth > 0) ||
+                  (subscriptionDetails.articlesRemainingThisMonth === 0 && subscriptionDetails.maxArticlesPublishPerMonth > 0)) && (
+                  <Button onClick={() => setLocation("/dashboard/upgrade")} className="w-full">
+                    Upgrade Plan
+                  </Button>
+                )}
+              </>
+            ) : (
+              <div className="p-4 border rounded-lg">
+                <p className="text-sm text-muted-foreground">
+                  No subscription plan assigned. Please contact support.
+                </p>
+                <Button onClick={() => setLocation("/dashboard/upgrade")} className="mt-4">
+                  View Plans
+                </Button>
+              </div>
+            )}
           </CardContent>
         </Card>
       )}
