@@ -64,6 +64,7 @@ function Router() {
       <Route path="/admin/analytics" component={AdminRouter} />
       <Route path="/admin/system" component={AdminRouter} />
       <Route path="/admin/access-control" component={AdminRouter} />
+      <Route path="/admin/role-menu-management" component={AdminRouter} />
       <Route path="/admin/notifications" component={AdminRouter} />
       <Route path="/admin/security" component={AdminRouter} />
       <Route path="/admin/logs" component={AdminRouter} />

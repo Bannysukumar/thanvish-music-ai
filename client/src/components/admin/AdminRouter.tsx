@@ -22,6 +22,7 @@ import AdminAuditLogs from "@/pages/admin/AdminAuditLogs";
 import AdminLogs from "@/pages/admin/AdminLogs";
 import AdminCredits from "@/pages/admin/AdminCredits";
 import AdminSettings from "@/pages/admin/AdminSettings";
+import AdminRoleMenuManagement from "@/pages/admin/AdminRoleMenuManagement";
 
 function ProtectedAdminRoute({ children }: { children: React.ReactNode }) {
   const [location, setLocation] = useLocation();
@@ -195,6 +196,13 @@ export function AdminRouter() {
         <ProtectedAdminRoute>
           <AdminLayout>
             <AdminSettings />
+          </AdminLayout>
+        </ProtectedAdminRoute>
+      </Route>
+      <Route path="/admin/role-menu-management">
+        <ProtectedAdminRoute>
+          <AdminLayout>
+            <AdminRoleMenuManagement />
           </AdminLayout>
         </ProtectedAdminRoute>
       </Route>

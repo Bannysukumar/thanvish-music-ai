@@ -46,6 +46,7 @@ const menuItems = [
   { path: "/admin/analytics", label: "Analytics & Insights", icon: BarChart3 },
   { path: "/admin/system", label: "System Settings", icon: Wrench },
   { path: "/admin/access-control", label: "Dashboard Access Control", icon: Shield },
+  { path: "/admin/role-menu-management", label: "Role Menu Management", icon: Menu },
   { path: "/admin/notifications", label: "Notifications", icon: Bell },
   { path: "/admin/security", label: "Security & Logging", icon: Shield },
   { path: "/admin/logs", label: "Generation Logs", icon: FileText },

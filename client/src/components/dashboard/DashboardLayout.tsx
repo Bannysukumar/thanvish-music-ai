@@ -35,15 +35,64 @@ import {
   Sparkles as AstrologyIcon,
   Play
 } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 
+// Icon mapping for dynamic icon loading
+const iconMap: Record<string, LucideIcon> = {
+  Home: HomeIcon,
+  Sparkles: Sparkles,
+  Library: Library,
+  User: User,
+  Crown: Crown,
+  HoroscopeIcon: HoroscopeIcon,
+  MusicTherapyIcon: MusicTherapyIcon,
+  Music: MusicTherapyIcon, // Alias for Music
+  Star: Star,
+  BookOpen: BookOpen,
+  GraduationCap: GraduationCap,
+  Users: UsersIcon,
+  DollarSign: DollarSign,
+  Settings: SettingsIcon,
+  Music2: Music2,
+  Disc: Disc,
+  Upload: Upload,
+  FileText: FileText,
+  BarChart3: BarChart3,
+  FolderOpen: FolderOpen,
+  Search: Search,
+  CheckCircle: CheckCircle,
+  Film: Film,
+  Heart: Heart,
+  FileEdit: FileEdit,
+  Stethoscope: Stethoscope,
+  AstrologyIcon: AstrologyIcon,
+  Play: Play,
+};
+
+interface MenuItemConfig {
+  path: string;
+  label: string;
+  icon?: string;
+  emoji?: string;
+  enabled: boolean;
+  order: number;
+}
+
+interface MenuItem {
+  path: string;
+  label: string;
+  icon: LucideIcon;
+  emoji?: string;
+}
+
 /**
- * Get menu items based on user role
+ * Get menu items based on user role (fallback function)
  */
-function getMenuItems(userRole?: string) {
-  const baseItems = [
+function getMenuItemsFallback(userRole?: string): MenuItem[] {
+  const baseItems: MenuItem[] = [
     { path: "/dashboard", label: "Home", icon: HomeIcon },
     { path: "/dashboard/generate", label: "Generate", icon: Sparkles },
     { path: "/dashboard/library", label: "My Library", icon: Library },
@@ -55,7 +104,7 @@ function getMenuItems(userRole?: string) {
 
   // Add teacher-specific items if user is music_teacher
   if (userRole === "music_teacher") {
-    const teacherItems = [
+    const teacherItems: MenuItem[] = [
       { path: "/dashboard/teacher", label: "Teacher Dashboard", icon: GraduationCap },
       { path: "/dashboard/teacher/courses", label: "Course Builder", icon: BookOpen },
       { path: "/dashboard/teacher/lessons", label: "My Lessons", icon: Library },
@@ -63,7 +112,6 @@ function getMenuItems(userRole?: string) {
       { path: "/dashboard/teacher/earnings", label: "Earnings", icon: DollarSign },
       { path: "/dashboard/teacher/settings", label: "Teacher Settings", icon: SettingsIcon },
     ];
-    // Insert teacher items after Home, before other items
     return [
       baseItems[0], // Home
       ...teacherItems,
@@ -73,7 +121,7 @@ function getMenuItems(userRole?: string) {
 
   // Add artist-specific items if user is artist
   if (userRole === "artist") {
-    const artistItems = [
+    const artistItems: MenuItem[] = [
       { path: "/dashboard/artist", label: "Artist Dashboard", icon: Music2 },
       { path: "/dashboard/artist/library", label: "My Library", icon: Library },
       { path: "/dashboard/artist/upload", label: "Upload Track", icon: Upload },
@@ -83,7 +131,6 @@ function getMenuItems(userRole?: string) {
       { path: "/dashboard/artist/analytics", label: "Analytics", icon: BarChart3 },
       { path: "/dashboard/artist/settings", label: "Artist Settings", icon: SettingsIcon },
     ];
-    // Insert artist items after Home, before other items
     return [
       baseItems[0], // Home
       ...artistItems,
@@ -93,7 +140,7 @@ function getMenuItems(userRole?: string) {
 
   // Add director-specific items if user is music_director
   if (userRole === "music_director") {
-    const directorItems = [
+    const directorItems: MenuItem[] = [
       { path: "/dashboard/director", label: "Director Dashboard", icon: Film },
       { path: "/dashboard/director/projects", label: "Projects", icon: FolderOpen },
       { path: "/dashboard/director/discovery", label: "Artist Discovery", icon: Search },
@@ -103,7 +150,6 @@ function getMenuItems(userRole?: string) {
       { path: "/dashboard/director/settings", label: "Director Settings", icon: SettingsIcon },
       { path: "/dashboard/director/analytics", label: "Analytics", icon: BarChart3 },
     ];
-    // Insert director items after Home, before other items
     return [
       baseItems[0], // Home
       ...directorItems,
@@ -113,7 +159,7 @@ function getMenuItems(userRole?: string) {
 
   // Add doctor-specific items if user is doctor
   if (userRole === "doctor") {
-    const doctorItems = [
+    const doctorItems: MenuItem[] = [
       { path: "/dashboard/doctor", label: "Doctor Dashboard", icon: Stethoscope },
       { path: "/dashboard/doctor/programs", label: "Therapy Programs", icon: Heart },
       { path: "/dashboard/doctor/templates", label: "Session Templates", icon: FileEdit },
@@ -121,7 +167,6 @@ function getMenuItems(userRole?: string) {
       { path: "/dashboard/doctor/analytics", label: "Outcomes Analytics", icon: BarChart3 },
       { path: "/dashboard/doctor/settings", label: "Doctor Settings", icon: SettingsIcon },
     ];
-    // Insert doctor items after Home, before other items
     return [
       baseItems[0], // Home
       ...doctorItems,
@@ -130,6 +175,21 @@ function getMenuItems(userRole?: string) {
   }
 
   return baseItems;
+}
+
+/**
+ * Convert API menu config to MenuItem format
+ */
+function convertMenuConfig(config: MenuItemConfig[]): MenuItem[] {
+  return config
+    .filter(item => item.enabled)
+    .sort((a, b) => a.order - b.order)
+    .map(item => ({
+      path: item.path,
+      label: item.label,
+      icon: item.icon ? (iconMap[item.icon] || HomeIcon) : HomeIcon,
+      emoji: item.emoji,
+    }));
 }
 
 /**
@@ -147,11 +207,60 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
   const { user, logout } = useAuth();
   const { toast } = useToast();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
+  const [isLoadingMenu, setIsLoadingMenu] = useState(true);
   const [isCollapsed, setIsCollapsed] = useState(() => {
     // Load collapsed state from localStorage
     const saved = localStorage.getItem("dashboardMenuCollapsed");
     return saved === "true";
   });
+
+  // Fetch menu configuration from API
+  useEffect(() => {
+    const fetchMenuConfig = async () => {
+      try {
+        setIsLoadingMenu(true);
+        const userRole = user?.role || "user";
+        
+        const response = await fetch(`/api/role-menu-config/${userRole}`);
+        
+        if (response.ok) {
+          const contentType = response.headers.get("content-type");
+          if (contentType && contentType.includes("application/json")) {
+            const data = await response.json();
+            
+            if (data.menuItems && data.menuItems.length > 0) {
+              const convertedItems = convertMenuConfig(data.menuItems);
+              setMenuItems(convertedItems);
+            } else {
+              // Fallback to hardcoded menu
+              setMenuItems(getMenuItemsFallback(userRole));
+            }
+          } else {
+            // Response is not JSON, use fallback
+            console.warn("Menu config API returned non-JSON response, using fallback");
+            setMenuItems(getMenuItemsFallback(userRole));
+          }
+        } else {
+          // Fallback to hardcoded menu
+          setMenuItems(getMenuItemsFallback(userRole));
+        }
+      } catch (error) {
+        console.error("Error fetching menu config:", error);
+        // Fallback to hardcoded menu
+        setMenuItems(getMenuItemsFallback(user?.role));
+      } finally {
+        setIsLoadingMenu(false);
+      }
+    };
+
+    if (user) {
+      fetchMenuConfig();
+    } else {
+      setMenuItems(getMenuItemsFallback());
+      setIsLoadingMenu(false);
+    }
+  }, [user]);
 
   /**
    * Handle logout
@@ -256,32 +365,38 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
             "flex-1 p-4 space-y-2 transition-all duration-300",
             isCollapsed && "px-2"
           )}>
-            {getMenuItems(user?.role).map((item) => {
-              const Icon = item.icon;
-              const active = isActive(item.path);
-              return (
-                <Link key={item.path} href={item.path}>
-                  <Button
-                    variant={active ? "secondary" : "ghost"}
-                    className={cn(
-                      "w-full gap-3 transition-all duration-200",
-                      isCollapsed ? "justify-center px-2" : "justify-start",
-                      active && "bg-secondary font-medium",
-                      !isCollapsed && "group/item"
-                    )}
-                    title={isCollapsed ? item.label : undefined}
-                  >
-                    <Icon className={cn("h-5 w-5 flex-shrink-0", item.emoji && "relative")} />
-                    {!isCollapsed && (
-                      <span className="flex items-center gap-2">
-                        {item.emoji && <span>{item.emoji}</span>}
-                        <span>{item.label}</span>
-                      </span>
-                    )}
-                  </Button>
-                </Link>
-              );
-            })}
+            {isLoadingMenu ? (
+              <div className="flex items-center justify-center py-8">
+                <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary"></div>
+              </div>
+            ) : (
+              menuItems.map((item) => {
+                const Icon = item.icon;
+                const active = isActive(item.path);
+                return (
+                  <Link key={item.path} href={item.path}>
+                    <Button
+                      variant={active ? "secondary" : "ghost"}
+                      className={cn(
+                        "w-full gap-3 transition-all duration-200",
+                        isCollapsed ? "justify-center px-2" : "justify-start",
+                        active && "bg-secondary font-medium",
+                        !isCollapsed && "group/item"
+                      )}
+                      title={isCollapsed ? item.label : undefined}
+                    >
+                      <Icon className={cn("h-5 w-5 flex-shrink-0", item.emoji && "relative")} />
+                      {!isCollapsed && (
+                        <span className="flex items-center gap-2">
+                          {item.emoji && <span>{item.emoji}</span>}
+                          <span>{item.label}</span>
+                        </span>
+                      )}
+                    </Button>
+                  </Link>
+                );
+              })
+            )}
           </nav>
 
           <div className={cn(
@@ -334,28 +449,34 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
               </div>
 
               <nav className="flex-1 p-4 space-y-2 overflow-y-auto">
-                {getMenuItems(user?.role).map((item) => {
-                  const Icon = item.icon;
-                  const active = isActive(item.path);
-                  return (
-                    <Link key={item.path} href={item.path}>
-                      <Button
-                        variant={active ? "secondary" : "ghost"}
-                        className={cn(
-                          "w-full justify-start gap-3 transition-all duration-200",
-                          active && "bg-secondary font-medium"
-                        )}
-                        onClick={() => setMobileMenuOpen(false)}
-                      >
-                        <Icon className="h-5 w-5" />
-                        <span className="flex items-center gap-2">
-                          {item.emoji && <span>{item.emoji}</span>}
-                          <span>{item.label}</span>
-                        </span>
-                      </Button>
-                    </Link>
-                  );
-                })}
+                {isLoadingMenu ? (
+                  <div className="flex items-center justify-center py-8">
+                    <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary"></div>
+                  </div>
+                ) : (
+                  menuItems.map((item) => {
+                    const Icon = item.icon;
+                    const active = isActive(item.path);
+                    return (
+                      <Link key={item.path} href={item.path}>
+                        <Button
+                          variant={active ? "secondary" : "ghost"}
+                          className={cn(
+                            "w-full justify-start gap-3 transition-all duration-200",
+                            active && "bg-secondary font-medium"
+                          )}
+                          onClick={() => setMobileMenuOpen(false)}
+                        >
+                          <Icon className="h-5 w-5" />
+                          <span className="flex items-center gap-2">
+                            {item.emoji && <span>{item.emoji}</span>}
+                            <span>{item.label}</span>
+                          </span>
+                        </Button>
+                      </Link>
+                    );
+                  })
+                )}
               </nav>
 
               <div className="p-4 border-t">

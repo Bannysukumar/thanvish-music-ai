@@ -2381,6 +2381,93 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Get all role menu configurations (admin only - for management)
+  app.get("/api/admin/role-menu-configs", requireAdmin, async (req, res) => {
+    try {
+      // Explicitly set content-type to JSON
+      res.setHeader("Content-Type", "application/json");
+      
+      const snapshot = await adminDb.collection("roleMenuConfigs").get();
+      const configs = snapshot.docs.map(doc => ({
+        role: doc.id,
+        menuItems: doc.data().menuItems || [],
+      }));
+
+      // If no configs exist, return empty array (frontend will initialize defaults)
+      return res.json({ configs });
+    } catch (error: any) {
+      console.error("Error fetching role menu configs:", error);
+      res.setHeader("Content-Type", "application/json");
+      return res.status(500).json({ error: "Failed to fetch role menu configurations" });
+    }
+  });
+
+  // Get menu configuration for a specific role (public endpoint for dashboard)
+  app.get("/api/role-menu-config/:role", async (req, res) => {
+    try {
+      // Explicitly set content-type to JSON before any operations
+      res.setHeader("Content-Type", "application/json");
+      
+      const { role } = req.params;
+      console.log(`[Role Menu Config] Fetching config for role: ${role}`);
+      
+      const doc = await adminDb.collection("roleMenuConfigs").doc(role).get();
+      
+      const responseData = doc.exists 
+        ? { role, menuItems: doc.data()?.menuItems || [] }
+        : { role, menuItems: [] };
+      
+      console.log(`[Role Menu Config] Returning config for ${role}:`, responseData);
+      return res.json(responseData);
+    } catch (error: any) {
+      console.error("Error fetching role menu config:", error);
+      res.setHeader("Content-Type", "application/json");
+      return res.status(500).json({ error: "Failed to fetch role menu configuration" });
+    }
+  });
+
+  // Update role menu configuration
+  app.put("/api/admin/role-menu-configs/:role", requireAdmin, async (req, res) => {
+    try {
+      // Explicitly set content-type to JSON
+      res.setHeader("Content-Type", "application/json");
+      
+      const { role } = req.params;
+      const { menuItems } = req.body;
+
+      if (!menuItems || !Array.isArray(menuItems)) {
+        return res.status(400).json({ error: "menuItems array is required" });
+      }
+
+      // Validate menu items structure
+      for (const item of menuItems) {
+        if (!item.path || !item.label || typeof item.enabled !== "boolean" || typeof item.order !== "number") {
+          return res.status(400).json({ 
+            error: "Each menu item must have path, label, enabled (boolean), and order (number)" 
+          });
+        }
+      }
+
+      const sessionId = req.headers.authorization?.replace("Bearer ", "") || (req as any).cookies?.adminSession;
+      const session = sessionId ? adminSessions.get(sessionId) : null;
+      const adminUserId = session?.userId || "unknown";
+
+      // Save to Firestore
+      await adminDb.collection("roleMenuConfigs").doc(role).set({
+        role,
+        menuItems,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedBy: adminUserId,
+      }, { merge: true });
+
+      return res.json({ success: true, message: `Menu configuration for ${role} updated successfully` });
+    } catch (error: any) {
+      console.error("Error updating role menu config:", error);
+      res.setHeader("Content-Type", "application/json");
+      return res.status(500).json({ error: "Failed to update role menu configuration" });
+    }
+  });
+
   /**
    * Calculate Vedic Astrology (Sidereal with Lahiri Ayanamsa)
    * POST /api/calculate-vedic-astrology
