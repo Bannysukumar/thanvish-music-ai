@@ -81,9 +81,9 @@ export async function checkArtistTrackUploadLimit(artistId: string): Promise<{
     const maxDailyUploads = userData?.maxTrackUploadsPerDay || 0;
     const maxMonthlyUploads = userData?.maxTrackUploadsPerMonth || 0;
 
-    // Get current usage
-    const trackUploadsUsedToday = userData?.trackUploadsUsedToday || 0;
-    const trackUploadsUsedThisMonth = userData?.trackUploadsUsedThisMonth || 0;
+    // Get current usage (let so we can update after reset)
+    let trackUploadsUsedToday = userData?.trackUploadsUsedToday || 0;
+    let trackUploadsUsedThisMonth = userData?.trackUploadsUsedThisMonth || 0;
 
     // Check last reset dates
     const now = new Date();
