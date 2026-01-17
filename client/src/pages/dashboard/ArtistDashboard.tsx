@@ -3,6 +3,7 @@ import { useLocation } from "wouter";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Progress } from "@/components/ui/progress";
 import { 
   Music, 
   Disc, 
@@ -17,10 +18,13 @@ import {
   BarChart3,
   Lock,
   AlertCircle,
-  CheckCircle2
+  CheckCircle2,
+  Crown,
+  Calendar,
+  Loader2
 } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
-import { db } from "@/lib/firebase";
+import { db, auth } from "@/lib/firebase";
 import { collection, query, where, getDocs, doc, getDoc } from "firebase/firestore";
 
 export default function ArtistDashboard() {
@@ -38,6 +42,8 @@ export default function ArtistDashboard() {
   const [isLoading, setIsLoading] = useState(true);
   const [isLocked, setIsLocked] = useState(false);
   const [isVerified, setIsVerified] = useState(false);
+  const [subscriptionDetails, setSubscriptionDetails] = useState<any>(null);
+  const [isLoadingSubscription, setIsLoadingSubscription] = useState(true);
 
   useEffect(() => {
     // Check if user is artist
@@ -65,6 +71,33 @@ export default function ArtistDashboard() {
         }
       } catch (error) {
         console.error("Error checking artist verification:", error);
+      }
+    };
+
+    // Fetch subscription details
+    const fetchSubscriptionDetails = async () => {
+      try {
+        const currentUser = auth.currentUser;
+        if (!currentUser) {
+          setIsLoadingSubscription(false);
+          return;
+        }
+
+        const token = await currentUser.getIdToken();
+        const response = await fetch("/api/user/subscription-details", {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          setSubscriptionDetails(data);
+        }
+      } catch (error) {
+        console.error("Error fetching subscription details:", error);
+      } finally {
+        setIsLoadingSubscription(false);
       }
     };
 
@@ -137,6 +170,7 @@ export default function ArtistDashboard() {
 
     checkVerification();
     fetchStats();
+    fetchSubscriptionDetails();
   }, [user, setLocation]);
 
   if (isLoading) {
@@ -370,50 +404,181 @@ export default function ArtistDashboard() {
         </CardContent>
       </Card>
 
-      {/* Subscription Status */}
-      {user.subscriptionStatus && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Subscription Status</CardTitle>
-            <CardDescription>
-              Current subscription information
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="flex items-center justify-between">
-              <div>
-                <div className="flex items-center gap-2">
-                  <Badge 
-                    variant={
-                      user.subscriptionStatus === "active" ? "default" :
-                      user.subscriptionStatus === "trial" ? "secondary" :
-                      "outline"
-                    }
-                  >
-                    {user.subscriptionStatus}
-                  </Badge>
-                  {user.subscriptionExpiresAt && (
-                    <span className="text-sm text-muted-foreground">
-                      Expires: {new Date(user.subscriptionExpiresAt).toLocaleDateString()}
-                    </span>
-                  )}
-                  {isVerified && (
-                    <Badge variant="default" className="ml-2">
-                      <CheckCircle2 className="h-3 w-3 mr-1" />
-                      Verified Artist
-                    </Badge>
+      {/* Artist Plan Status */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Crown className="h-5 w-5" />
+            Artist Plan & Limits
+          </CardTitle>
+          <CardDescription>
+            Your current plan details and upload/publish capacity
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {isLoadingSubscription ? (
+            <div className="flex items-center justify-center py-8">
+              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+            </div>
+          ) : subscriptionDetails ? (
+            <>
+              {/* Plan Info */}
+              <div className="p-4 border rounded-lg space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2 mb-1">
+                      <p className="font-semibold">{subscriptionDetails.planName || "No Plan"}</p>
+                      <Badge 
+                        variant={
+                          subscriptionDetails.subscriptionStatus === "active" ? "default" :
+                          subscriptionDetails.subscriptionStatus === "trial" ? "secondary" :
+                          subscriptionDetails.subscriptionStatus === "expired" ? "destructive" :
+                          "outline"
+                        }
+                      >
+                        {subscriptionDetails.subscriptionStatus?.toUpperCase() || "INACTIVE"}
+                      </Badge>
+                      {isVerified && (
+                        <Badge variant="default">
+                          <CheckCircle2 className="h-3 w-3 mr-1" />
+                          Verified
+                        </Badge>
+                      )}
+                    </div>
+                    <p className="text-sm text-muted-foreground">
+                      Billing: {subscriptionDetails.billingCycle === "monthly" ? "Monthly" : "Yearly"}
+                    </p>
+                  </div>
+                  {(subscriptionDetails.subscriptionStatus === "expired" || !subscriptionDetails.planId) && (
+                    <Button onClick={() => setLocation("/dashboard/upgrade")}>
+                      <Crown className="h-4 w-4 mr-2" />
+                      Upgrade
+                    </Button>
                   )}
                 </div>
+
+                {subscriptionDetails.subscriptionEndDate && (
+                  <div className="flex items-center gap-2 text-sm">
+                    <Calendar className="h-4 w-4 text-muted-foreground" />
+                    <span className="text-muted-foreground">End Date:</span>
+                    <span>{new Date(subscriptionDetails.subscriptionEndDate).toLocaleDateString()}</span>
+                    {subscriptionDetails.daysRemaining !== null && (
+                      <span className={`ml-2 ${subscriptionDetails.daysRemaining <= 7 ? "text-destructive font-semibold" : "text-muted-foreground"}`}>
+                        ({subscriptionDetails.daysRemaining > 0 ? `${subscriptionDetails.daysRemaining} days remaining` : "Expired"})
+                      </span>
+                    )}
+                  </div>
+                )}
+
+                {/* Track Upload Limits */}
+                <div className="space-y-2 pt-2 border-t">
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-muted-foreground">Track Uploads Today</span>
+                    <span className="font-semibold">
+                      {subscriptionDetails.trackUploadsUsedToday || 0} / {subscriptionDetails.maxTrackUploadsPerDay || 0}
+                    </span>
+                  </div>
+                  <Progress 
+                    value={subscriptionDetails.maxTrackUploadsPerDay > 0 
+                      ? ((subscriptionDetails.trackUploadsUsedToday || 0) / subscriptionDetails.maxTrackUploadsPerDay) * 100 
+                      : 0} 
+                    className="h-2" 
+                  />
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-muted-foreground">Remaining Today</span>
+                    <span className="font-semibold">
+                      {subscriptionDetails.trackUploadsRemainingToday || 0}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="space-y-2 pt-2 border-t">
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-muted-foreground">Track Uploads This Month</span>
+                    <span className="font-semibold">
+                      {subscriptionDetails.trackUploadsUsedThisMonth || 0} / {subscriptionDetails.maxTrackUploadsPerMonth || 0}
+                    </span>
+                  </div>
+                  <Progress 
+                    value={subscriptionDetails.maxTrackUploadsPerMonth > 0 
+                      ? ((subscriptionDetails.trackUploadsUsedThisMonth || 0) / subscriptionDetails.maxTrackUploadsPerMonth) * 100 
+                      : 0} 
+                    className="h-2" 
+                  />
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-muted-foreground">Remaining This Month</span>
+                    <span className="font-semibold">
+                      {subscriptionDetails.trackUploadsRemainingThisMonth || 0}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Album Publish Limits */}
+                <div className="space-y-2 pt-2 border-t">
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-muted-foreground">Albums Published This Month</span>
+                    <span className="font-semibold">
+                      {subscriptionDetails.albumsPublishedThisMonth || 0} / {subscriptionDetails.maxAlbumsPublishedPerMonth || 0}
+                    </span>
+                  </div>
+                  <Progress 
+                    value={subscriptionDetails.maxAlbumsPublishedPerMonth > 0 
+                      ? ((subscriptionDetails.albumsPublishedThisMonth || 0) / subscriptionDetails.maxAlbumsPublishedPerMonth) * 100 
+                      : 0} 
+                    className="h-2" 
+                  />
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-muted-foreground">Remaining This Month</span>
+                    <span className="font-semibold">
+                      {subscriptionDetails.albumsPublishRemainingThisMonth || 0}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Status Messages */}
+                {subscriptionDetails.subscriptionStatus === "expired" && (
+                  <div className="p-3 border rounded-lg bg-destructive/10">
+                    <p className="text-sm text-destructive">
+                      Your plan validity has ended. Please renew or upgrade to upload tracks.
+                    </p>
+                  </div>
+                )}
+                {subscriptionDetails.trackUploadsRemainingToday === 0 && subscriptionDetails.maxTrackUploadsPerDay > 0 && (
+                  <div className="p-3 border rounded-lg bg-orange-50 dark:bg-orange-900/20">
+                    <p className="text-sm text-orange-800 dark:text-orange-200">
+                      You've reached today's track upload limit. Try again tomorrow or upgrade your plan.
+                    </p>
+                  </div>
+                )}
+                {subscriptionDetails.trackUploadsRemainingThisMonth === 0 && subscriptionDetails.maxTrackUploadsPerMonth > 0 && (
+                  <div className="p-3 border rounded-lg bg-orange-50 dark:bg-orange-900/20">
+                    <p className="text-sm text-orange-800 dark:text-orange-200">
+                      You've reached this month's track upload limit. It will reset next month, or upgrade now.
+                    </p>
+                  </div>
+                )}
+                {subscriptionDetails.albumsPublishRemainingThisMonth === 0 && subscriptionDetails.maxAlbumsPublishedPerMonth > 0 && (
+                  <div className="p-3 border rounded-lg bg-orange-50 dark:bg-orange-900/20">
+                    <p className="text-sm text-orange-800 dark:text-orange-200">
+                      You've reached your album publish limit for this plan. Upgrade to publish more albums.
+                    </p>
+                  </div>
+                )}
               </div>
-              {isLocked && (
-                <Button onClick={() => setLocation("/dashboard/upgrade")}>
-                  Activate Subscription
-                </Button>
-              )}
+            </>
+          ) : (
+            <div className="p-4 border rounded-lg">
+              <p className="text-sm text-muted-foreground">
+                No subscription plan assigned. Please contact support.
+              </p>
+              <Button onClick={() => setLocation("/dashboard/upgrade")} className="mt-4">
+                <Crown className="mr-2 h-4 w-4" />
+                View Plans
+              </Button>
             </div>
-          </CardContent>
-        </Card>
-      )}
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }

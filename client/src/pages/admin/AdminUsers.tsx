@@ -198,7 +198,16 @@ export default function AdminUsers() {
     setIsLoading(true);
     try {
       const sessionId = localStorage.getItem("adminSession");
-      if (!sessionId) return;
+      if (!sessionId) {
+        toast({
+          title: "Authentication Required",
+          description: "Please log in to access admin features.",
+          variant: "destructive",
+        });
+        setLocation("/admin/login");
+        setIsLoading(false);
+        return;
+      }
 
       const response = await fetch("/api/admin/users", {
         headers: {
@@ -206,18 +215,31 @@ export default function AdminUsers() {
         },
       });
 
-      if (response.ok) {
-        const data = await response.json();
-        setUsers(data.users || []);
-        setFilteredUsers(data.users || []);
-      } else {
-        throw new Error("Failed to fetch users");
+      if (response.status === 401) {
+        // Session expired or invalid
+        localStorage.removeItem("adminSession");
+        toast({
+          title: "Session Expired",
+          description: "Your session has expired. Please log in again.",
+          variant: "destructive",
+        });
+        setLocation("/admin/login");
+        setIsLoading(false);
+        return;
       }
-    } catch (error) {
+
+      if (!response.ok) {
+        throw new Error(`Failed to fetch users: ${response.statusText}`);
+      }
+
+      const data = await response.json();
+      setUsers(data.users || []);
+      setFilteredUsers(data.users || []);
+    } catch (error: any) {
       console.error("Error fetching users:", error);
       toast({
         title: "Error",
-        description: "Failed to fetch users. Firebase Admin SDK needs to be configured.",
+        description: error.message || "Failed to fetch users. Please try again.",
         variant: "destructive",
       });
       setUsers([]);

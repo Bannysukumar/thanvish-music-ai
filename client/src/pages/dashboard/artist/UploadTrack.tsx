@@ -9,7 +9,7 @@ import { ArrowLeft, Upload, Lock, Loader2, X } from "lucide-react";
 import { useLocation } from "wouter";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
-import { db, storage } from "@/lib/firebase";
+import { db, storage, auth } from "@/lib/firebase";
 import { collection, addDoc, serverTimestamp } from "firebase/firestore";
 import { ref, uploadBytesResumable, getDownloadURL } from "firebase/storage";
 
@@ -112,6 +112,47 @@ export default function UploadTrack() {
       return;
     }
 
+    // Check track upload limits before proceeding
+    try {
+      if (!auth.currentUser) {
+        throw new Error("User not authenticated");
+      }
+      const token = await auth.currentUser.getIdToken();
+      const limitResponse = await fetch("/api/artist/check-track-upload-limit", {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (!limitResponse.ok) {
+        const errorData = await limitResponse.json();
+        toast({
+          title: "Upload Limit Reached",
+          description: errorData.error || "You've reached your track upload limit",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      const limitData = await limitResponse.json();
+      if (!limitData.canUpload) {
+        toast({
+          title: "Upload Limit Reached",
+          description: limitData.error || "You've reached your track upload limit",
+          variant: "destructive",
+        });
+        return;
+      }
+    } catch (error: any) {
+      console.error("Error checking upload limits:", error);
+      toast({
+        title: "Error",
+        description: "Failed to check upload limits. Please try again.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     setIsUploading(true);
     setUploadProgress(0);
 
@@ -192,6 +233,24 @@ export default function UploadTrack() {
           setUploadProgress(85);
 
           await addDoc(collection(db, "tracks"), trackData);
+
+          // Increment track upload counter
+          try {
+            if (!auth.currentUser) {
+              throw new Error("User not authenticated");
+            }
+            const token = await auth.currentUser.getIdToken();
+            await fetch("/api/artist/increment-track-upload", {
+              method: "POST",
+              headers: {
+                Authorization: `Bearer ${token}`,
+                "Content-Type": "application/json",
+              },
+            });
+          } catch (error) {
+            console.error("Error incrementing track upload count:", error);
+            // Don't fail the upload if counter increment fails
+          }
 
           setUploadProgress(100);
 

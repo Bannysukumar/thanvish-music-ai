@@ -21,6 +21,9 @@ import { sendChatMessage, sendChatMessageStream, type ChatMessage } from "./groq
 import { checkSubscriptionLimits, incrementGenerationCounters } from "./subscription-limits";
 import { checkTeacherStudentLimit, incrementTeacherStudentCount, decrementTeacherStudentCount, checkTeacherCourseLimit, checkTeacherLessonLimit } from "./teacher-limits";
 import { autoAllocateStudentToTeacher, reassignStudentToTeacher } from "./student-allocation";
+import { checkArtistTrackUploadLimit, checkArtistAlbumPublishLimit, incrementArtistTrackUploadCount, incrementArtistAlbumPublishCount } from "./artist-limits";
+import { checkDirectorProjectLimit, checkDirectorDiscoveryLimit, checkDirectorShortlistLimit, incrementDirectorDiscoveryCount, incrementDirectorShortlistCount } from "./director-limits";
+import { checkStudentEnrollmentLimit } from "./student-limits";
 import { checkSubscriptionStatus } from "./expiry-handler";
 
 // Admin session storage (in-memory, use Redis in production)
@@ -283,6 +286,48 @@ export async function registerRoutes(app: Express): Promise<Server> {
         response.teacherPlanExpiryDate = userData?.teacherPlanExpiryDate?.toDate?.()?.toISOString() || subscriptionEndDate?.toISOString() || null;
       }
 
+      // Add student-specific fields if user is a student
+      if (userData?.role === "student") {
+        const enrollmentLimitCheck = await checkStudentEnrollmentLimit(userId);
+        response.studentMaxEnrollments = userData?.studentMaxEnrollments || 0;
+        response.currentEnrollments = enrollmentLimitCheck.currentEnrollments;
+        response.enrollmentsRemaining = enrollmentLimitCheck.remaining;
+      }
+
+      // Add artist-specific fields if user is an artist
+      if (userData?.role === "artist") {
+        const trackLimitCheck = await checkArtistTrackUploadLimit(userId);
+        const albumLimitCheck = await checkArtistAlbumPublishLimit(userId);
+        response.maxTrackUploadsPerDay = userData?.maxTrackUploadsPerDay || 0;
+        response.maxTrackUploadsPerMonth = userData?.maxTrackUploadsPerMonth || 0;
+        response.maxAlbumsPublishedPerMonth = userData?.maxAlbumsPublishedPerMonth || 0;
+        response.trackUploadsUsedToday = userData?.trackUploadsUsedToday || 0;
+        response.trackUploadsUsedThisMonth = userData?.trackUploadsUsedThisMonth || 0;
+        response.albumsPublishedThisMonth = userData?.albumsPublishedThisMonth || 0;
+        response.trackUploadsRemainingToday = trackLimitCheck.dailyRemaining;
+        response.trackUploadsRemainingThisMonth = trackLimitCheck.monthlyRemaining;
+        response.albumsPublishRemainingThisMonth = albumLimitCheck.remaining;
+      }
+
+      // Add director-specific fields if user is a music director
+      if (userData?.role === "music_director") {
+        const projectLimitCheck = await checkDirectorProjectLimit(userId);
+        const discoveryLimitCheck = await checkDirectorDiscoveryLimit(userId);
+        const shortlistLimitCheck = await checkDirectorShortlistLimit(userId);
+        response.maxActiveProjects = userData?.maxActiveProjects || 0;
+        response.artistDiscoveryPerDay = userData?.artistDiscoveryPerDay || 0;
+        response.artistDiscoveryPerMonth = userData?.artistDiscoveryPerMonth || 0;
+        response.maxShortlistsCreatePerMonth = userData?.maxShortlistsCreatePerMonth || 0;
+        response.activeProjectsCount = projectLimitCheck.activeProjectsCount;
+        response.artistDiscoveryUsedToday = userData?.artistDiscoveryUsedToday || 0;
+        response.artistDiscoveryUsedThisMonth = userData?.artistDiscoveryUsedThisMonth || 0;
+        response.shortlistsCreatedThisMonth = userData?.shortlistsCreatedThisMonth || 0;
+        response.projectsRemaining = projectLimitCheck.remaining;
+        response.artistDiscoveryRemainingToday = discoveryLimitCheck.dailyRemaining;
+        response.artistDiscoveryRemainingThisMonth = discoveryLimitCheck.monthlyRemaining;
+        response.shortlistsRemainingThisMonth = shortlistLimitCheck.remaining;
+      }
+
       res.json(response);
     } catch (error: any) {
       console.error("Error fetching subscription details:", error);
@@ -533,6 +578,351 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Check track upload limit for artist
+  app.get("/api/artist/check-track-upload-limit", async (req, res) => {
+    try {
+      const authHeader = req.headers.authorization;
+      let userId: string | null = null;
+      
+      if (authHeader && authHeader.startsWith("Bearer ")) {
+        const token = authHeader.replace("Bearer ", "");
+        try {
+          const decodedToken = await adminAuth.verifyIdToken(token);
+          userId = decodedToken.uid;
+        } catch (error) {
+          return res.status(401).json({ error: "Invalid authentication token" });
+        }
+      } else {
+        return res.status(401).json({ error: "Authentication required" });
+      }
+      
+      if (!userId) {
+        return res.status(401).json({ error: "User ID not found" });
+      }
+
+      const limitCheck = await checkArtistTrackUploadLimit(userId);
+      res.json(limitCheck);
+    } catch (error: any) {
+      console.error("Error checking artist track upload limit:", error);
+      res.status(500).json({ error: "Failed to check track upload limit: " + error.message });
+    }
+  });
+
+  // Check album publish limit for artist
+  app.get("/api/artist/check-album-publish-limit", async (req, res) => {
+    try {
+      const authHeader = req.headers.authorization;
+      let userId: string | null = null;
+      
+      if (authHeader && authHeader.startsWith("Bearer ")) {
+        const token = authHeader.replace("Bearer ", "");
+        try {
+          const decodedToken = await adminAuth.verifyIdToken(token);
+          userId = decodedToken.uid;
+        } catch (error) {
+          return res.status(401).json({ error: "Invalid authentication token" });
+        }
+      } else {
+        return res.status(401).json({ error: "Authentication required" });
+      }
+      
+      if (!userId) {
+        return res.status(401).json({ error: "User ID not found" });
+      }
+
+      const limitCheck = await checkArtistAlbumPublishLimit(userId);
+      res.json(limitCheck);
+    } catch (error: any) {
+      console.error("Error checking artist album publish limit:", error);
+      res.status(500).json({ error: "Failed to check album publish limit: " + error.message });
+    }
+  });
+
+  // Increment track upload count for artist
+  app.post("/api/artist/increment-track-upload", async (req, res) => {
+    try {
+      const authHeader = req.headers.authorization;
+      let userId: string | null = null;
+      
+      if (authHeader && authHeader.startsWith("Bearer ")) {
+        const token = authHeader.replace("Bearer ", "");
+        try {
+          const decodedToken = await adminAuth.verifyIdToken(token);
+          userId = decodedToken.uid;
+        } catch (error) {
+          return res.status(401).json({ error: "Invalid authentication token" });
+        }
+      } else {
+        return res.status(401).json({ error: "Authentication required" });
+      }
+      
+      if (!userId) {
+        return res.status(401).json({ error: "User ID not found" });
+      }
+
+      const result = await incrementArtistTrackUploadCount(userId);
+      if (result.success) {
+        res.json({ success: true });
+      } else {
+        res.status(500).json({ error: result.error || "Failed to increment track upload count" });
+      }
+    } catch (error: any) {
+      console.error("Error incrementing track upload count:", error);
+      res.status(500).json({ error: "Failed to increment track upload count: " + error.message });
+    }
+  });
+
+  // Increment album publish count for artist
+  app.post("/api/artist/increment-album-publish", async (req, res) => {
+    try {
+      const authHeader = req.headers.authorization;
+      let userId: string | null = null;
+      
+      if (authHeader && authHeader.startsWith("Bearer ")) {
+        const token = authHeader.replace("Bearer ", "");
+        try {
+          const decodedToken = await adminAuth.verifyIdToken(token);
+          userId = decodedToken.uid;
+        } catch (error) {
+          return res.status(401).json({ error: "Invalid authentication token" });
+        }
+      } else {
+        return res.status(401).json({ error: "Authentication required" });
+      }
+      
+      if (!userId) {
+        return res.status(401).json({ error: "User ID not found" });
+      }
+
+      const result = await incrementArtistAlbumPublishCount(userId);
+      if (result.success) {
+        res.json({ success: true });
+      } else {
+        res.status(500).json({ error: result.error || "Failed to increment album publish count" });
+      }
+    } catch (error: any) {
+      console.error("Error incrementing album publish count:", error);
+      res.status(500).json({ error: "Failed to increment album publish count: " + error.message });
+    }
+  });
+
+  // Check director project limit
+  app.get("/api/director/check-project-limit", async (req, res) => {
+    try {
+      const authHeader = req.headers.authorization;
+      let userId: string | null = null;
+      
+      if (authHeader && authHeader.startsWith("Bearer ")) {
+        const token = authHeader.replace("Bearer ", "");
+        try {
+          const decodedToken = await adminAuth.verifyIdToken(token);
+          userId = decodedToken.uid;
+        } catch (error) {
+          return res.status(401).json({ error: "Invalid authentication token" });
+        }
+      } else {
+        return res.status(401).json({ error: "Authentication required" });
+      }
+      
+      if (!userId) {
+        return res.status(401).json({ error: "User ID not found" });
+      }
+
+      const limitCheck = await checkDirectorProjectLimit(userId);
+      
+      if (!limitCheck.canCreate) {
+        return res.status(403).json({
+          canCreate: false,
+          error: limitCheck.error,
+          activeProjectsCount: limitCheck.activeProjectsCount,
+          maxActiveProjects: limitCheck.maxActiveProjects,
+          remaining: limitCheck.remaining,
+          subscriptionStatus: limitCheck.subscriptionStatus,
+          isExpired: limitCheck.isExpired,
+        });
+      }
+
+      res.json({
+        canCreate: true,
+        activeProjectsCount: limitCheck.activeProjectsCount,
+        maxActiveProjects: limitCheck.maxActiveProjects,
+        remaining: limitCheck.remaining,
+        subscriptionStatus: limitCheck.subscriptionStatus,
+      });
+    } catch (error: any) {
+      console.error("Error checking director project limit:", error);
+      res.status(500).json({ error: "Failed to check project limit: " + error.message });
+    }
+  });
+
+  // Check director discovery limit
+  app.get("/api/director/check-discovery-limit", async (req, res) => {
+    try {
+      const authHeader = req.headers.authorization;
+      let userId: string | null = null;
+      
+      if (authHeader && authHeader.startsWith("Bearer ")) {
+        const token = authHeader.replace("Bearer ", "");
+        try {
+          const decodedToken = await adminAuth.verifyIdToken(token);
+          userId = decodedToken.uid;
+        } catch (error) {
+          return res.status(401).json({ error: "Invalid authentication token" });
+        }
+      } else {
+        return res.status(401).json({ error: "Authentication required" });
+      }
+      
+      if (!userId) {
+        return res.status(401).json({ error: "User ID not found" });
+      }
+
+      const limitCheck = await checkDirectorDiscoveryLimit(userId);
+      
+      if (!limitCheck.canDiscover) {
+        return res.status(403).json({
+          canDiscover: false,
+          error: limitCheck.error,
+          dailyRemaining: limitCheck.dailyRemaining,
+          monthlyRemaining: limitCheck.monthlyRemaining,
+          maxDailyDiscovery: limitCheck.maxDailyDiscovery,
+          maxMonthlyDiscovery: limitCheck.maxMonthlyDiscovery,
+          subscriptionStatus: limitCheck.subscriptionStatus,
+          isExpired: limitCheck.isExpired,
+        });
+      }
+
+      res.json({
+        canDiscover: true,
+        dailyRemaining: limitCheck.dailyRemaining,
+        monthlyRemaining: limitCheck.monthlyRemaining,
+        maxDailyDiscovery: limitCheck.maxDailyDiscovery,
+        maxMonthlyDiscovery: limitCheck.maxMonthlyDiscovery,
+        subscriptionStatus: limitCheck.subscriptionStatus,
+      });
+    } catch (error: any) {
+      console.error("Error checking director discovery limit:", error);
+      res.status(500).json({ error: "Failed to check discovery limit: " + error.message });
+    }
+  });
+
+  // Check director shortlist limit
+  app.get("/api/director/check-shortlist-limit", async (req, res) => {
+    try {
+      const authHeader = req.headers.authorization;
+      let userId: string | null = null;
+      
+      if (authHeader && authHeader.startsWith("Bearer ")) {
+        const token = authHeader.replace("Bearer ", "");
+        try {
+          const decodedToken = await adminAuth.verifyIdToken(token);
+          userId = decodedToken.uid;
+        } catch (error) {
+          return res.status(401).json({ error: "Invalid authentication token" });
+        }
+      } else {
+        return res.status(401).json({ error: "Authentication required" });
+      }
+      
+      if (!userId) {
+        return res.status(401).json({ error: "User ID not found" });
+      }
+
+      const limitCheck = await checkDirectorShortlistLimit(userId);
+      
+      if (!limitCheck.canCreate) {
+        return res.status(403).json({
+          canCreate: false,
+          error: limitCheck.error,
+          shortlistsCreatedThisMonth: limitCheck.shortlistsCreatedThisMonth,
+          maxShortlistsCreatePerMonth: limitCheck.maxShortlistsCreatePerMonth,
+          remaining: limitCheck.remaining,
+          subscriptionStatus: limitCheck.subscriptionStatus,
+          isExpired: limitCheck.isExpired,
+        });
+      }
+
+      res.json({
+        canCreate: true,
+        shortlistsCreatedThisMonth: limitCheck.shortlistsCreatedThisMonth,
+        maxShortlistsCreatePerMonth: limitCheck.maxShortlistsCreatePerMonth,
+        remaining: limitCheck.remaining,
+        subscriptionStatus: limitCheck.subscriptionStatus,
+      });
+    } catch (error: any) {
+      console.error("Error checking director shortlist limit:", error);
+      res.status(500).json({ error: "Failed to check shortlist limit: " + error.message });
+    }
+  });
+
+  // Increment director discovery count
+  app.post("/api/director/increment-discovery", async (req, res) => {
+    try {
+      const authHeader = req.headers.authorization;
+      let userId: string | null = null;
+      
+      if (authHeader && authHeader.startsWith("Bearer ")) {
+        const token = authHeader.replace("Bearer ", "");
+        try {
+          const decodedToken = await adminAuth.verifyIdToken(token);
+          userId = decodedToken.uid;
+        } catch (error) {
+          return res.status(401).json({ error: "Invalid authentication token" });
+        }
+      } else {
+        return res.status(401).json({ error: "Authentication required" });
+      }
+      
+      if (!userId) {
+        return res.status(401).json({ error: "User ID not found" });
+      }
+
+      const result = await incrementDirectorDiscoveryCount(userId);
+      if (result.success) {
+        res.json({ success: true });
+      } else {
+        res.status(500).json({ error: result.error || "Failed to increment discovery count" });
+      }
+    } catch (error: any) {
+      console.error("Error incrementing discovery count:", error);
+      res.status(500).json({ error: "Failed to increment discovery count: " + error.message });
+    }
+  });
+
+  // Increment director shortlist count
+  app.post("/api/director/increment-shortlist", async (req, res) => {
+    try {
+      const authHeader = req.headers.authorization;
+      let userId: string | null = null;
+      
+      if (authHeader && authHeader.startsWith("Bearer ")) {
+        const token = authHeader.replace("Bearer ", "");
+        try {
+          const decodedToken = await adminAuth.verifyIdToken(token);
+          userId = decodedToken.uid;
+        } catch (error) {
+          return res.status(401).json({ error: "Invalid authentication token" });
+        }
+      } else {
+        return res.status(401).json({ error: "Authentication required" });
+      }
+      
+      if (!userId) {
+        return res.status(401).json({ error: "User ID not found" });
+      }
+
+      const result = await incrementDirectorShortlistCount(userId);
+      if (result.success) {
+        res.json({ success: true });
+      } else {
+        res.status(500).json({ error: result.error || "Failed to increment shortlist count" });
+      }
+    } catch (error: any) {
+      console.error("Error incrementing shortlist count:", error);
+      res.status(500).json({ error: "Failed to increment shortlist count: " + error.message });
+    }
+  });
+
   // Check teacher student allocation limit
   app.get("/api/teacher/check-student-limit", async (req, res) => {
     try {
@@ -602,6 +992,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       if (!courseId || !teacherId) {
         return res.status(400).json({ error: "courseId and teacherId are required" });
+      }
+
+      // Check if student can enroll in more courses
+      const studentLimitCheck = await checkStudentEnrollmentLimit(studentId);
+      if (!studentLimitCheck.canEnroll) {
+        return res.status(403).json({
+          error: studentLimitCheck.error || "Enrollment limit reached for student's plan",
+          code: "STUDENT_LIMIT_REACHED",
+          remaining: studentLimitCheck.remaining,
+          maxEnrollments: studentLimitCheck.maxEnrollments,
+          currentEnrollments: studentLimitCheck.currentEnrollments,
+        });
       }
 
       // Check if teacher can accept more students
@@ -1993,6 +2395,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       };
 
+      // Student-specific fields
+      if (userRole === "student" && planData?.role === "student") {
+        // Store student enrollment limit
+        updateData.studentMaxEnrollments = planData?.studentMaxEnrollments || 0;
+      }
+
       // Teacher-specific fields
       if (userRole === "music_teacher" && planData?.role === "music_teacher") {
         // Keep existing studentsAllocatedCount (default behavior to prevent abuse)
@@ -2007,6 +2415,41 @@ export async function registerRoutes(app: Express): Promise<Server> {
         // Store teacher plan limits
         updateData.teacherMaxStudents = planData?.teacherMaxStudents || 0;
         updateData.teacherPlanExpiryDate = admin.firestore.Timestamp.fromDate(subscriptionEnd);
+      }
+
+      // Artist-specific fields
+      if (userRole === "artist" && planData?.role === "artist") {
+        // Store artist plan limits
+        updateData.maxTrackUploadsPerDay = planData?.maxTrackUploadsPerDay || 0;
+        updateData.maxTrackUploadsPerMonth = planData?.maxTrackUploadsPerMonth || 0;
+        updateData.maxAlbumsPublishedPerMonth = planData?.maxAlbumsPublishedPerMonth || 0;
+        // Reset artist usage counters
+        updateData.trackUploadsUsedToday = 0;
+        updateData.trackUploadsUsedThisMonth = 0;
+        updateData.albumsPublishedThisMonth = 0;
+        const today = new Date(subscriptionStart.getFullYear(), subscriptionStart.getMonth(), subscriptionStart.getDate());
+        const firstOfMonth = new Date(subscriptionStart.getFullYear(), subscriptionStart.getMonth(), 1);
+        updateData.lastTrackUploadDailyReset = admin.firestore.Timestamp.fromDate(today);
+        updateData.lastTrackUploadMonthlyReset = admin.firestore.Timestamp.fromDate(firstOfMonth);
+        updateData.lastAlbumPublishMonthlyReset = admin.firestore.Timestamp.fromDate(firstOfMonth);
+      }
+
+      // Director-specific fields
+      if (userRole === "music_director" && planData?.role === "music_director") {
+        // Store director plan limits
+        updateData.maxActiveProjects = planData?.maxActiveProjects || 0;
+        updateData.artistDiscoveryPerDay = planData?.artistDiscoveryPerDay || 0;
+        updateData.artistDiscoveryPerMonth = planData?.artistDiscoveryPerMonth || 0;
+        updateData.maxShortlistsCreatePerMonth = planData?.maxShortlistsCreatePerMonth || 0;
+        // Reset director usage counters
+        updateData.artistDiscoveryUsedToday = 0;
+        updateData.artistDiscoveryUsedThisMonth = 0;
+        updateData.shortlistsCreatedThisMonth = 0;
+        const today = new Date(subscriptionStart.getFullYear(), subscriptionStart.getMonth(), subscriptionStart.getDate());
+        const firstOfMonth = new Date(subscriptionStart.getFullYear(), subscriptionStart.getMonth(), 1);
+        updateData.lastDiscoveryDailyReset = admin.firestore.Timestamp.fromDate(today);
+        updateData.lastDiscoveryMonthlyReset = admin.firestore.Timestamp.fromDate(firstOfMonth);
+        updateData.lastShortlistMonthlyReset = admin.firestore.Timestamp.fromDate(firstOfMonth);
       }
       
       // Update user with plan assignment
@@ -2452,9 +2895,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
           teacherMaxLessons: data.teacherMaxLessons !== undefined ? data.teacherMaxLessons : null,
           trialTeacherMaxStudents: data.trialTeacherMaxStudents !== undefined ? data.trialTeacherMaxStudents : null,
           // Student plan fields
+          studentMaxEnrollments: data.studentMaxEnrollments !== undefined ? data.studentMaxEnrollments : null,
           autoAllocateTeacher: data.autoAllocateTeacher !== undefined ? data.autoAllocateTeacher : null,
           allocationStrategy: data.allocationStrategy || null,
           preferredTeacherCategory: data.preferredTeacherCategory || null,
+          // Artist plan fields
+          maxTrackUploadsPerDay: data.maxTrackUploadsPerDay !== undefined ? data.maxTrackUploadsPerDay : null,
+          maxTrackUploadsPerMonth: data.maxTrackUploadsPerMonth !== undefined ? data.maxTrackUploadsPerMonth : null,
+          maxAlbumsPublishedPerMonth: data.maxAlbumsPublishedPerMonth !== undefined ? data.maxAlbumsPublishedPerMonth : null,
+          // Director plan fields
+          maxActiveProjects: data.maxActiveProjects !== undefined ? data.maxActiveProjects : null,
+          artistDiscoveryPerDay: data.artistDiscoveryPerDay !== undefined ? data.artistDiscoveryPerDay : null,
+          artistDiscoveryPerMonth: data.artistDiscoveryPerMonth !== undefined ? data.artistDiscoveryPerMonth : null,
+          maxShortlistsCreatePerMonth: data.maxShortlistsCreatePerMonth !== undefined ? data.maxShortlistsCreatePerMonth : null,
           // Trial fields
           trialDurationDays: data.trialDurationDays !== undefined ? data.trialDurationDays : null,
           // Timestamps
@@ -2509,9 +2962,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
         teacherMaxCourses,
         teacherMaxLessons,
         // Student plan fields
+        studentMaxEnrollments,
         autoAllocateTeacher,
         allocationStrategy,
-        preferredTeacherCategory
+        preferredTeacherCategory,
+        // Artist plan fields
+        maxTrackUploadsPerDay,
+        maxTrackUploadsPerMonth,
+        maxAlbumsPublishedPerMonth,
+        // Director plan fields
+        maxActiveProjects,
+        artistDiscoveryPerDay,
+        artistDiscoveryPerMonth,
+        maxShortlistsCreatePerMonth
       } = req.body;
       
       // Required field validations
@@ -2624,6 +3087,49 @@ export async function registerRoutes(app: Express): Promise<Server> {
           }
         }
       }
+
+      // Music Director-specific plan validation
+      if (role === "music_director") {
+        // validityDays is required for director plans (or use duration if provided)
+        if (!validityDays && !duration && !validUntil) {
+          return res.status(400).json({ error: "validityDays (or duration/validUntil) is required for music_director plans" });
+        }
+
+        // Max active projects validation
+        if (maxActiveProjects === undefined || maxActiveProjects === null || maxActiveProjects === "") {
+          return res.status(400).json({ error: "maxActiveProjects is required for music_director plans" });
+        }
+        const projectsLimit = parseInt(maxActiveProjects);
+        if (isNaN(projectsLimit) || projectsLimit < 0) {
+          return res.status(400).json({ error: "maxActiveProjects must be a non-negative integer" });
+        }
+
+        // Artist discovery limits validation
+        if (artistDiscoveryPerDay === undefined || artistDiscoveryPerDay === null || artistDiscoveryPerDay === "") {
+          return res.status(400).json({ error: "artistDiscoveryPerDay is required for music_director plans" });
+        }
+        if (artistDiscoveryPerMonth === undefined || artistDiscoveryPerMonth === null || artistDiscoveryPerMonth === "") {
+          return res.status(400).json({ error: "artistDiscoveryPerMonth is required for music_director plans" });
+        }
+        
+        const dailyDiscoveryLimit = parseInt(artistDiscoveryPerDay);
+        const monthlyDiscoveryLimit = parseInt(artistDiscoveryPerMonth);
+        if (isNaN(dailyDiscoveryLimit) || dailyDiscoveryLimit < 0) {
+          return res.status(400).json({ error: "artistDiscoveryPerDay must be a non-negative integer" });
+        }
+        if (isNaN(monthlyDiscoveryLimit) || monthlyDiscoveryLimit < 0) {
+          return res.status(400).json({ error: "artistDiscoveryPerMonth must be a non-negative integer" });
+        }
+
+        // Shortlist creation limit validation
+        if (maxShortlistsCreatePerMonth === undefined || maxShortlistsCreatePerMonth === null || maxShortlistsCreatePerMonth === "") {
+          return res.status(400).json({ error: "maxShortlistsCreatePerMonth is required for music_director plans" });
+        }
+        const shortlistLimit = parseInt(maxShortlistsCreatePerMonth);
+        if (isNaN(shortlistLimit) || shortlistLimit < 0) {
+          return res.status(400).json({ error: "maxShortlistsCreatePerMonth must be a non-negative integer" });
+        }
+      }
       
       // Calculate duration from validUntil if duration not provided
       let calculatedDuration = duration ? parseInt(duration) : null;
@@ -2682,6 +3188,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           monthlyGenerations: parseInt(usageLimits?.monthlyGenerations) || 0,
         };
         planData.validityDays = calculatedDuration || 0;
+        // Student enrollment limit (default to 0 = unlimited if not provided)
+        planData.studentMaxEnrollments = parseInt(req.body.studentMaxEnrollments) || 0;
         // Student auto-allocation settings
         planData.autoAllocateTeacher = autoAllocateTeacher !== false; // Default to true
         planData.allocationStrategy = allocationStrategy || "LeastStudentsFirst";
@@ -2693,6 +3201,51 @@ export async function registerRoutes(app: Express): Promise<Server> {
         planData.teacherMaxCourses = null;
         planData.teacherMaxLessons = null;
         planData.trialTeacherMaxStudents = null;
+      } else if (role === "artist") {
+        // For artists, set generation limits to 0 (they use track/album limits instead)
+        planData.usageLimits = {
+          dailyGenerations: 0,
+          monthlyGenerations: 0,
+        };
+        planData.validityDays = calculatedDuration || 0;
+        // Artist-specific limits
+        planData.maxTrackUploadsPerDay = parseInt(req.body.maxTrackUploadsPerDay) || 0;
+        planData.maxTrackUploadsPerMonth = parseInt(req.body.maxTrackUploadsPerMonth) || 0;
+        planData.maxAlbumsPublishedPerMonth = parseInt(req.body.maxAlbumsPublishedPerMonth) || 0;
+        // Set teacher fields to null for artist plans
+        planData.teacherMaxStudents = null;
+        planData.teacherMaxCourses = null;
+        planData.teacherMaxLessons = null;
+        planData.trialTeacherMaxStudents = null;
+        // Set student fields to null for artist plans
+        planData.autoAllocateTeacher = null;
+        planData.allocationStrategy = null;
+        planData.preferredTeacherCategory = null;
+      } else if (role === "music_director") {
+        // For directors, set generation limits to 0 (they use project/discovery/shortlist limits instead)
+        planData.usageLimits = {
+          dailyGenerations: 0,
+          monthlyGenerations: 0,
+        };
+        planData.validityDays = calculatedDuration || 0;
+        // Director-specific limits
+        planData.maxActiveProjects = parseInt(req.body.maxActiveProjects) || 0;
+        planData.artistDiscoveryPerDay = parseInt(req.body.artistDiscoveryPerDay) || 0;
+        planData.artistDiscoveryPerMonth = parseInt(req.body.artistDiscoveryPerMonth) || 0;
+        planData.maxShortlistsCreatePerMonth = parseInt(req.body.maxShortlistsCreatePerMonth) || 0;
+        // Set teacher fields to null for director plans
+        planData.teacherMaxStudents = null;
+        planData.teacherMaxCourses = null;
+        planData.teacherMaxLessons = null;
+        planData.trialTeacherMaxStudents = null;
+        // Set student fields to null for director plans
+        planData.autoAllocateTeacher = null;
+        planData.allocationStrategy = null;
+        planData.preferredTeacherCategory = null;
+        // Set artist fields to null for director plans
+        planData.maxTrackUploadsPerDay = null;
+        planData.maxTrackUploadsPerMonth = null;
+        planData.maxAlbumsPublishedPerMonth = null;
       } else {
         // For other roles, use generation limits
         planData.usageLimits = {
@@ -2709,6 +3262,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
         planData.autoAllocateTeacher = null;
         planData.allocationStrategy = null;
         planData.preferredTeacherCategory = null;
+        // Set artist fields to null for non-artist plans
+        planData.maxTrackUploadsPerDay = null;
+        planData.maxTrackUploadsPerMonth = null;
+        planData.maxAlbumsPublishedPerMonth = null;
+        // Set director fields to null for non-director plans
+        planData.maxActiveProjects = null;
+        planData.artistDiscoveryPerDay = null;
+        planData.artistDiscoveryPerMonth = null;
+        planData.maxShortlistsCreatePerMonth = null;
       }
       
       // Handle trial duration - always set it, even if null
@@ -2757,7 +3319,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
         validityDays,
         trialTeacherMaxStudents,
         teacherMaxCourses,
-        teacherMaxLessons
+        teacherMaxLessons,
+        // Student plan fields
+        studentMaxEnrollments,
+        autoAllocateTeacher,
+        allocationStrategy,
+        preferredTeacherCategory,
+        // Artist plan fields
+        maxTrackUploadsPerDay,
+        maxTrackUploadsPerMonth,
+        maxAlbumsPublishedPerMonth,
+        // Director plan fields
+        maxActiveProjects,
+        artistDiscoveryPerDay,
+        artistDiscoveryPerMonth,
+        maxShortlistsCreatePerMonth
       } = req.body;
       
       const planRef = adminDb.collection("subscriptionPlans").doc(planId);
@@ -2851,6 +3427,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
           };
         } else if (finalRole === "student") {
           // For students, set generation limits to 0 (they don't use generation limits)
+          updateData.usageLimits = {
+            dailyGenerations: 0,
+            monthlyGenerations: 0,
+          };
+        } else if (finalRole === "artist") {
+          // For artists, set generation limits to 0 (they use track/album limits instead)
           updateData.usageLimits = {
             dailyGenerations: 0,
             monthlyGenerations: 0,
@@ -2949,6 +3531,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
           }
           updateData.validityDays = validity;
         }
+        if (req.body.studentMaxEnrollments !== undefined && req.body.studentMaxEnrollments !== null && req.body.studentMaxEnrollments !== "") {
+          const maxEnrollments = parseInt(req.body.studentMaxEnrollments);
+          if (isNaN(maxEnrollments) || maxEnrollments < 0) {
+            return res.status(400).json({ error: "studentMaxEnrollments must be a non-negative integer" });
+          }
+          updateData.studentMaxEnrollments = maxEnrollments;
+        } else if (req.body.studentMaxEnrollments === "" || req.body.studentMaxEnrollments === null) {
+          updateData.studentMaxEnrollments = 0; // 0 means unlimited
+        }
         if (autoAllocateTeacher !== undefined) {
           updateData.autoAllocateTeacher = autoAllocateTeacher !== false;
         }
@@ -2962,7 +3553,143 @@ export async function registerRoutes(app: Express): Promise<Server> {
           updateData.preferredTeacherCategory = preferredTeacherCategory || null;
         }
       }
+
+      // Artist-specific fields update
+      if (finalRole === "artist") {
+        if (validityDays !== undefined) {
+          const validity = parseInt(validityDays);
+          if (isNaN(validity) || validity <= 0) {
+            return res.status(400).json({ error: "validityDays must be a positive integer" });
+          }
+          updateData.validityDays = validity;
+        } else if (duration !== undefined) {
+          updateData.validityDays = parseInt(duration);
+        } else if (validUntil !== undefined && updateData.duration) {
+          updateData.validityDays = updateData.duration;
+        }
+
+        // Track upload limits
+        if (maxTrackUploadsPerDay !== undefined && maxTrackUploadsPerDay !== null && maxTrackUploadsPerDay !== "") {
+          const dailyLimit = parseInt(maxTrackUploadsPerDay);
+          if (isNaN(dailyLimit) || dailyLimit < 0) {
+            return res.status(400).json({ error: "maxTrackUploadsPerDay must be a non-negative integer" });
+          }
+          updateData.maxTrackUploadsPerDay = dailyLimit;
+        } else if (maxTrackUploadsPerDay === "" || maxTrackUploadsPerDay === null) {
+          updateData.maxTrackUploadsPerDay = 0;
+        }
+
+        if (maxTrackUploadsPerMonth !== undefined && maxTrackUploadsPerMonth !== null && maxTrackUploadsPerMonth !== "") {
+          const monthlyLimit = parseInt(maxTrackUploadsPerMonth);
+          if (isNaN(monthlyLimit) || monthlyLimit < 0) {
+            return res.status(400).json({ error: "maxTrackUploadsPerMonth must be a non-negative integer" });
+          }
+          updateData.maxTrackUploadsPerMonth = monthlyLimit;
+        } else if (maxTrackUploadsPerMonth === "" || maxTrackUploadsPerMonth === null) {
+          updateData.maxTrackUploadsPerMonth = 0;
+        }
+
+        // Album publish limit
+        if (maxAlbumsPublishedPerMonth !== undefined && maxAlbumsPublishedPerMonth !== null && maxAlbumsPublishedPerMonth !== "") {
+          const albumLimit = parseInt(maxAlbumsPublishedPerMonth);
+          if (isNaN(albumLimit) || albumLimit < 0) {
+            return res.status(400).json({ error: "maxAlbumsPublishedPerMonth must be a non-negative integer" });
+          }
+          updateData.maxAlbumsPublishedPerMonth = albumLimit;
+        } else if (maxAlbumsPublishedPerMonth === "" || maxAlbumsPublishedPerMonth === null) {
+          updateData.maxAlbumsPublishedPerMonth = 0;
+        }
+      }
+
+      // Director-specific fields update
+      if (finalRole === "music_director") {
+        if (validityDays !== undefined) {
+          const validity = parseInt(validityDays);
+          if (isNaN(validity) || validity <= 0) {
+            return res.status(400).json({ error: "validityDays must be a positive integer" });
+          }
+          updateData.validityDays = validity;
+        } else if (duration !== undefined) {
+          updateData.validityDays = parseInt(duration);
+        } else if (validUntil !== undefined && updateData.duration) {
+          updateData.validityDays = updateData.duration;
+        }
+
+        // Max active projects
+        if (maxActiveProjects !== undefined && maxActiveProjects !== null && maxActiveProjects !== "") {
+          const projectsLimit = parseInt(maxActiveProjects);
+          if (isNaN(projectsLimit) || projectsLimit < 0) {
+            return res.status(400).json({ error: "maxActiveProjects must be a non-negative integer" });
+          }
+          updateData.maxActiveProjects = projectsLimit;
+        } else if (maxActiveProjects === "" || maxActiveProjects === null) {
+          updateData.maxActiveProjects = 0;
+        }
+
+        // Artist discovery limits
+        if (artistDiscoveryPerDay !== undefined && artistDiscoveryPerDay !== null && artistDiscoveryPerDay !== "") {
+          const dailyLimit = parseInt(artistDiscoveryPerDay);
+          if (isNaN(dailyLimit) || dailyLimit < 0) {
+            return res.status(400).json({ error: "artistDiscoveryPerDay must be a non-negative integer" });
+          }
+          updateData.artistDiscoveryPerDay = dailyLimit;
+        } else if (artistDiscoveryPerDay === "" || artistDiscoveryPerDay === null) {
+          updateData.artistDiscoveryPerDay = 0;
+        }
+
+        if (artistDiscoveryPerMonth !== undefined && artistDiscoveryPerMonth !== null && artistDiscoveryPerMonth !== "") {
+          const monthlyLimit = parseInt(artistDiscoveryPerMonth);
+          if (isNaN(monthlyLimit) || monthlyLimit < 0) {
+            return res.status(400).json({ error: "artistDiscoveryPerMonth must be a non-negative integer" });
+          }
+          updateData.artistDiscoveryPerMonth = monthlyLimit;
+        } else if (artistDiscoveryPerMonth === "" || artistDiscoveryPerMonth === null) {
+          updateData.artistDiscoveryPerMonth = 0;
+        }
+
+        // Shortlist creation limit
+        if (maxShortlistsCreatePerMonth !== undefined && maxShortlistsCreatePerMonth !== null && maxShortlistsCreatePerMonth !== "") {
+          const shortlistLimit = parseInt(maxShortlistsCreatePerMonth);
+          if (isNaN(shortlistLimit) || shortlistLimit < 0) {
+            return res.status(400).json({ error: "maxShortlistsCreatePerMonth must be a non-negative integer" });
+          }
+          updateData.maxShortlistsCreatePerMonth = shortlistLimit;
+        } else if (maxShortlistsCreatePerMonth === "" || maxShortlistsCreatePerMonth === null) {
+          updateData.maxShortlistsCreatePerMonth = 0;
+        }
+      }
       
+      // If role is changing, clean up role-specific fields
+      if (role !== undefined && role !== existingPlan?.role) {
+        // If changing to non-artist, set artist fields to null
+        if (role !== "artist") {
+          updateData.maxTrackUploadsPerDay = admin.firestore.FieldValue.delete();
+          updateData.maxTrackUploadsPerMonth = admin.firestore.FieldValue.delete();
+          updateData.maxAlbumsPublishedPerMonth = admin.firestore.FieldValue.delete();
+        }
+        // If changing to non-teacher, set teacher fields to null
+        if (role !== "music_teacher") {
+          updateData.teacherMaxStudents = admin.firestore.FieldValue.delete();
+          updateData.teacherMaxCourses = admin.firestore.FieldValue.delete();
+          updateData.teacherMaxLessons = admin.firestore.FieldValue.delete();
+          updateData.trialTeacherMaxStudents = admin.firestore.FieldValue.delete();
+        }
+        // If changing to non-student, set student fields to null
+        if (role !== "student") {
+          updateData.studentMaxEnrollments = admin.firestore.FieldValue.delete();
+          updateData.autoAllocateTeacher = admin.firestore.FieldValue.delete();
+          updateData.allocationStrategy = admin.firestore.FieldValue.delete();
+          updateData.preferredTeacherCategory = admin.firestore.FieldValue.delete();
+        }
+        // If changing to non-director, set director fields to null
+        if (role !== "music_director") {
+          updateData.maxActiveProjects = admin.firestore.FieldValue.delete();
+          updateData.artistDiscoveryPerDay = admin.firestore.FieldValue.delete();
+          updateData.artistDiscoveryPerMonth = admin.firestore.FieldValue.delete();
+          updateData.maxShortlistsCreatePerMonth = admin.firestore.FieldValue.delete();
+        }
+      }
+
       if (features !== undefined) updateData.features = Array.isArray(features) ? features : [];
       if (displayOnUpgradePage !== undefined) updateData.displayOnUpgradePage = displayOnUpgradePage === true;
       

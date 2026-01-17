@@ -8,7 +8,7 @@ import { Plus, Star, Lock, Loader2, X, Music, User } from "lucide-react";
 import { useLocation } from "wouter";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
-import { db } from "@/lib/firebase";
+import { db, auth } from "@/lib/firebase";
 import { collection, query, where, getDocs, addDoc, deleteDoc, doc, serverTimestamp } from "firebase/firestore";
 import {
   DropdownMenu,
@@ -115,6 +115,47 @@ export default function Shortlists() {
     setIsLoading(true);
 
     try {
+      // Check shortlist limit before creating
+      if (!auth.currentUser) {
+        toast({
+          title: "Error",
+          description: "Authentication required",
+          variant: "destructive",
+        });
+        setIsLoading(false);
+        return;
+      }
+
+      const token = await auth.currentUser.getIdToken();
+      const limitCheckResponse = await fetch("/api/director/check-shortlist-limit", {
+        method: "GET",
+        headers: {
+          "Authorization": `Bearer ${token}`,
+        },
+      });
+
+      if (!limitCheckResponse.ok) {
+        const errorData = await limitCheckResponse.json();
+        toast({
+          title: "Shortlist Limit Reached",
+          description: errorData.error || "Cannot create more shortlists. Please upgrade your plan.",
+          variant: "destructive",
+        });
+        setIsLoading(false);
+        return;
+      }
+
+      const limitData = await limitCheckResponse.json();
+      if (!limitData.canCreate) {
+        toast({
+          title: "Shortlist Limit Reached",
+          description: limitData.error || `You've reached your shortlist creation limit (${limitData.maxShortlists} per month). Please upgrade your plan or wait until next month.`,
+          variant: "destructive",
+        });
+        setIsLoading(false);
+        return;
+      }
+
       const shortlistData = {
         name: formData.name,
         description: formData.description || "",
@@ -128,6 +169,18 @@ export default function Shortlists() {
       };
 
       await addDoc(collection(db, "shortlists"), shortlistData);
+      
+      // Increment shortlist creation counter
+      try {
+        await fetch("/api/director/increment-shortlist-count", {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${token}`,
+          },
+        });
+      } catch (error) {
+        console.error("Error incrementing shortlist count:", error);
+      }
 
       toast({
         title: "Success",

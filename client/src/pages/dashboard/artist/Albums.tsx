@@ -10,7 +10,7 @@ import { Disc, Plus, ArrowLeft, Lock, Loader2, X, Music } from "lucide-react";
 import { useLocation } from "wouter";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
-import { db, storage } from "@/lib/firebase";
+import { db, storage, auth } from "@/lib/firebase";
 import { collection, query, where, getDocs, addDoc, serverTimestamp, doc, getDoc } from "firebase/firestore";
 import { ref, uploadBytesResumable, getDownloadURL } from "firebase/storage";
 
@@ -213,6 +213,47 @@ export default function Albums() {
       return;
     }
 
+    // Check album publish limits before proceeding
+    try {
+      if (!auth.currentUser) {
+        throw new Error("User not authenticated");
+      }
+      const token = await auth.currentUser.getIdToken();
+      const limitResponse = await fetch("/api/artist/check-album-publish-limit", {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (!limitResponse.ok) {
+        const errorData = await limitResponse.json();
+        toast({
+          title: "Publish Limit Reached",
+          description: errorData.error || "You've reached your album publish limit",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      const limitData = await limitResponse.json();
+      if (!limitData.canPublish) {
+        toast({
+          title: "Publish Limit Reached",
+          description: limitData.error || "You've reached your album publish limit",
+          variant: "destructive",
+        });
+        return;
+      }
+    } catch (error: any) {
+      console.error("Error checking publish limits:", error);
+      toast({
+        title: "Error",
+        description: "Failed to check publish limits. Please try again.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     setIsUploading(true);
 
     try {
@@ -251,6 +292,24 @@ export default function Albums() {
       };
 
       await addDoc(collection(db, "albums"), albumData);
+
+      // Increment album publish counter
+      try {
+        if (!auth.currentUser) {
+          throw new Error("User not authenticated");
+        }
+        const token = await auth.currentUser.getIdToken();
+        await fetch("/api/artist/increment-album-publish", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+        });
+      } catch (error) {
+        console.error("Error incrementing album publish count:", error);
+        // Don't fail the album creation if counter increment fails
+      }
 
       toast({
         title: "Success",

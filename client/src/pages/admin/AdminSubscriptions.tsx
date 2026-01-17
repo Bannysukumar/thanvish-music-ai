@@ -42,9 +42,19 @@ interface SubscriptionPlan {
   teacherMaxCourses?: number;
   teacherMaxLessons?: number;
   // Student plan fields
+  studentMaxEnrollments?: number;
   autoAllocateTeacher?: boolean;
   allocationStrategy?: "LeastStudentsFirst" | "RoundRobin" | "NewestTeacherFirst";
   preferredTeacherCategory?: string;
+  // Artist plan fields
+  maxTrackUploadsPerDay?: number;
+  maxTrackUploadsPerMonth?: number;
+  maxAlbumsPublishedPerMonth?: number;
+  // Director plan fields
+  maxActiveProjects?: number;
+  artistDiscoveryPerDay?: number;
+  artistDiscoveryPerMonth?: number;
+  maxShortlistsCreatePerMonth?: number;
 }
 
 interface UserSubscription {
@@ -117,9 +127,19 @@ export default function AdminSubscriptions() {
     teacherMaxCourses: "",
     teacherMaxLessons: "",
     // Student plan fields
+    studentMaxEnrollments: "",
     autoAllocateTeacher: true,
     allocationStrategy: "LeastStudentsFirst" as "LeastStudentsFirst" | "RoundRobin" | "NewestTeacherFirst",
     preferredTeacherCategory: "",
+    // Artist plan fields
+    maxTrackUploadsPerDay: "",
+    maxTrackUploadsPerMonth: "",
+    maxAlbumsPublishedPerMonth: "",
+    // Director plan fields
+    maxActiveProjects: "",
+    artistDiscoveryPerDay: "",
+    artistDiscoveryPerMonth: "",
+    maxShortlistsCreatePerMonth: "",
   });
 
   const fetchPlans = async () => {
@@ -260,7 +280,6 @@ export default function AdminSubscriptions() {
 
   const handleOpenPlanModal = (plan?: SubscriptionPlan) => {
     if (plan) {
-      console.log("Loading plan for editing:", plan);
       setEditingPlan(plan);
       // Handle validUntil - could be a string, Date, or Firestore Timestamp
       let validUntilDate = "";
@@ -309,9 +328,22 @@ export default function AdminSubscriptions() {
         trialTeacherMaxStudents: plan.trialTeacherMaxStudents !== undefined && plan.trialTeacherMaxStudents !== null ? plan.trialTeacherMaxStudents.toString() : "",
         teacherMaxCourses: plan.teacherMaxCourses !== undefined && plan.teacherMaxCourses !== null ? plan.teacherMaxCourses.toString() : "",
         teacherMaxLessons: plan.teacherMaxLessons !== undefined && plan.teacherMaxLessons !== null ? plan.teacherMaxLessons.toString() : "",
+        // Student plan fields
+        studentMaxEnrollments: plan.studentMaxEnrollments !== undefined && plan.studentMaxEnrollments !== null ? plan.studentMaxEnrollments.toString() : "",
+        autoAllocateTeacher: plan.autoAllocateTeacher !== undefined ? plan.autoAllocateTeacher : true,
+        allocationStrategy: plan.allocationStrategy || "LeastStudentsFirst",
+        preferredTeacherCategory: plan.preferredTeacherCategory || "",
+        // Artist plan fields
+        maxTrackUploadsPerDay: plan.maxTrackUploadsPerDay !== undefined && plan.maxTrackUploadsPerDay !== null ? plan.maxTrackUploadsPerDay.toString() : "",
+        maxTrackUploadsPerMonth: plan.maxTrackUploadsPerMonth !== undefined && plan.maxTrackUploadsPerMonth !== null ? plan.maxTrackUploadsPerMonth.toString() : "",
+        maxAlbumsPublishedPerMonth: plan.maxAlbumsPublishedPerMonth !== undefined && plan.maxAlbumsPublishedPerMonth !== null ? plan.maxAlbumsPublishedPerMonth.toString() : "",
+        // Director plan fields
+        maxActiveProjects: plan.maxActiveProjects !== undefined && plan.maxActiveProjects !== null ? plan.maxActiveProjects.toString() : "",
+        artistDiscoveryPerDay: plan.artistDiscoveryPerDay !== undefined && plan.artistDiscoveryPerDay !== null ? plan.artistDiscoveryPerDay.toString() : "",
+        artistDiscoveryPerMonth: plan.artistDiscoveryPerMonth !== undefined && plan.artistDiscoveryPerMonth !== null ? plan.artistDiscoveryPerMonth.toString() : "",
+        maxShortlistsCreatePerMonth: plan.maxShortlistsCreatePerMonth !== undefined && plan.maxShortlistsCreatePerMonth !== null ? plan.maxShortlistsCreatePerMonth.toString() : "",
       };
       
-      console.log("Form data being set:", formData);
       setPlanFormData(formData);
     } else {
       setEditingPlan(null);
@@ -337,9 +369,19 @@ export default function AdminSubscriptions() {
         teacherMaxCourses: "",
         teacherMaxLessons: "",
         // Student plan fields
+        studentMaxEnrollments: "",
         autoAllocateTeacher: true,
         allocationStrategy: "LeastStudentsFirst",
         preferredTeacherCategory: "",
+        // Artist plan fields
+        maxTrackUploadsPerDay: "",
+        maxTrackUploadsPerMonth: "",
+        maxAlbumsPublishedPerMonth: "",
+        // Director plan fields
+        maxActiveProjects: "",
+        artistDiscoveryPerDay: "",
+        artistDiscoveryPerMonth: "",
+        maxShortlistsCreatePerMonth: "",
       });
     }
     setShowPlanModal(true);
@@ -443,8 +485,15 @@ export default function AdminSubscriptions() {
       } else if (planFormData.role === "student") {
         // Student plans don't require generation limits - they use teacher allocation instead
         // Validation for student plans is handled in the student-specific validation section
+      } else if (planFormData.role === "artist") {
+        // Artist plans don't require generation limits - they use track/album limits instead
+        // Validation for artist plans is handled in the artist-specific validation section
+      } else if (planFormData.role === "music_director") {
+        // Music director plans don't require generation limits - they use project/discovery/shortlist limits instead
+        // Validation for director plans is handled in the director-specific validation section
       } else {
-        // Validate usage limits for other non-teacher roles (user, artist, etc.)
+        // Validate usage limits only for roles that require generation limits
+        // Only: user, doctor, astrologer require generation limits
         if (!planFormData.usageLimits.dailyGenerations || !planFormData.usageLimits.monthlyGenerations) {
           toast({
             title: "Error",
@@ -509,6 +558,19 @@ export default function AdminSubscriptions() {
           });
           return;
         }
+        
+        // Validate studentMaxEnrollments if provided (must be non-negative integer)
+        if (planFormData.studentMaxEnrollments && planFormData.studentMaxEnrollments.trim() !== "") {
+          const maxEnrollments = parseInt(planFormData.studentMaxEnrollments);
+          if (isNaN(maxEnrollments) || maxEnrollments < 0) {
+            toast({
+              title: "Error",
+              description: "Max Course Enrollments must be a non-negative integer (0 = unlimited)",
+              variant: "destructive",
+            });
+            return;
+          }
+        }
 
         // If trial plan, validate trial teacher max students (optional, can be same as normal)
         if (planFormData.planType === "free_trial" && planFormData.trialTeacherMaxStudents) {
@@ -521,6 +583,163 @@ export default function AdminSubscriptions() {
             });
             return;
           }
+        }
+      }
+
+      // Artist-specific validation
+      if (planFormData.role === "artist") {
+        // ValidityDays is required for artist plans (or use duration/validUntil)
+        if (!planFormData.validityDays && !planFormData.duration && !planFormData.validUntil) {
+          toast({
+            title: "Error",
+            description: "Validity Days (or Duration/Valid Until) is required for artist plans",
+            variant: "destructive",
+          });
+          return;
+        }
+
+        // Track upload limits are required
+        if (!planFormData.maxTrackUploadsPerDay || planFormData.maxTrackUploadsPerDay === "") {
+          toast({
+            title: "Error",
+            description: "Max Track Uploads Per Day is required for artist plans",
+            variant: "destructive",
+          });
+          return;
+        }
+        if (!planFormData.maxTrackUploadsPerMonth || planFormData.maxTrackUploadsPerMonth === "") {
+          toast({
+            title: "Error",
+            description: "Max Track Uploads Per Month is required for artist plans",
+            variant: "destructive",
+          });
+          return;
+        }
+
+        const dailyLimit = parseInt(planFormData.maxTrackUploadsPerDay);
+        const monthlyLimit = parseInt(planFormData.maxTrackUploadsPerMonth);
+        if (isNaN(dailyLimit) || dailyLimit < 0) {
+          toast({
+            title: "Error",
+            description: "Max Track Uploads Per Day must be a non-negative integer",
+            variant: "destructive",
+          });
+          return;
+        }
+        if (isNaN(monthlyLimit) || monthlyLimit < 0) {
+          toast({
+            title: "Error",
+            description: "Max Track Uploads Per Month must be a non-negative integer",
+            variant: "destructive",
+          });
+          return;
+        }
+
+        // Album publish limit is required
+        if (!planFormData.maxAlbumsPublishedPerMonth || planFormData.maxAlbumsPublishedPerMonth === "") {
+          toast({
+            title: "Error",
+            description: "Max Albums Published Per Month is required for artist plans",
+            variant: "destructive",
+          });
+          return;
+        }
+
+        const albumLimit = parseInt(planFormData.maxAlbumsPublishedPerMonth);
+        if (isNaN(albumLimit) || albumLimit < 0) {
+          toast({
+            title: "Error",
+            description: "Max Albums Published Per Month must be a non-negative integer",
+            variant: "destructive",
+          });
+          return;
+        }
+      }
+
+      // Director-specific validation
+      if (planFormData.role === "music_director") {
+        // ValidityDays is required for director plans (or use duration/validUntil)
+        if (!planFormData.validityDays && !planFormData.duration && !planFormData.validUntil) {
+          toast({
+            title: "Error",
+            description: "Validity Days (or Duration/Valid Until) is required for music_director plans",
+            variant: "destructive",
+          });
+          return;
+        }
+
+        // Max Active Projects is required
+        if (!planFormData.maxActiveProjects || planFormData.maxActiveProjects === "") {
+          toast({
+            title: "Error",
+            description: "Max Active Projects is required for music_director plans",
+            variant: "destructive",
+          });
+          return;
+        }
+        const projectLimit = parseInt(planFormData.maxActiveProjects);
+        if (isNaN(projectLimit) || projectLimit < 0) {
+          toast({
+            title: "Error",
+            description: "Max Active Projects must be a non-negative integer",
+            variant: "destructive",
+          });
+          return;
+        }
+
+        // Artist Discovery limits are required
+        if (!planFormData.artistDiscoveryPerDay || planFormData.artistDiscoveryPerDay === "") {
+          toast({
+            title: "Error",
+            description: "Artist Discovery Per Day is required for music_director plans",
+            variant: "destructive",
+          });
+          return;
+        }
+        if (!planFormData.artistDiscoveryPerMonth || planFormData.artistDiscoveryPerMonth === "") {
+          toast({
+            title: "Error",
+            description: "Artist Discovery Per Month is required for music_director plans",
+            variant: "destructive",
+          });
+          return;
+        }
+        const discoveryDailyLimit = parseInt(planFormData.artistDiscoveryPerDay);
+        const discoveryMonthlyLimit = parseInt(planFormData.artistDiscoveryPerMonth);
+        if (isNaN(discoveryDailyLimit) || discoveryDailyLimit < 0) {
+          toast({
+            title: "Error",
+            description: "Artist Discovery Per Day must be a non-negative integer",
+            variant: "destructive",
+          });
+          return;
+        }
+        if (isNaN(discoveryMonthlyLimit) || discoveryMonthlyLimit < 0) {
+          toast({
+            title: "Error",
+            description: "Artist Discovery Per Month must be a non-negative integer",
+            variant: "destructive",
+          });
+          return;
+        }
+
+        // Max Shortlists Create Per Month is required
+        if (!planFormData.maxShortlistsCreatePerMonth || planFormData.maxShortlistsCreatePerMonth === "") {
+          toast({
+            title: "Error",
+            description: "Max Shortlists Create Per Month is required for music_director plans",
+            variant: "destructive",
+          });
+          return;
+        }
+        const shortlistLimit = parseInt(planFormData.maxShortlistsCreatePerMonth);
+        if (isNaN(shortlistLimit) || shortlistLimit < 0) {
+          toast({
+            title: "Error",
+            description: "Max Shortlists Create Per Month must be a non-negative integer",
+            variant: "destructive",
+          });
+          return;
         }
       }
 
@@ -575,8 +794,20 @@ export default function AdminSubscriptions() {
           dailyGenerations: 0,
           monthlyGenerations: 0,
         };
+      } else if (planFormData.role === "artist") {
+        // For artists, set generation limits to 0 (artists use track/album limits instead)
+        planData.usageLimits = {
+          dailyGenerations: 0,
+          monthlyGenerations: 0,
+        };
+      } else if (planFormData.role === "music_director") {
+        // For directors, set generation limits to 0 (directors use project/discovery/shortlist limits instead)
+        planData.usageLimits = {
+          dailyGenerations: 0,
+          monthlyGenerations: 0,
+        };
       } else {
-        // For other roles, use generation limits
+        // For other roles (user, doctor, astrologer), use generation limits
         planData.usageLimits = {
           dailyGenerations: parseInt(planFormData.usageLimits.dailyGenerations) || 0,
           monthlyGenerations: parseInt(planFormData.usageLimits.monthlyGenerations) || 0,
@@ -602,12 +833,62 @@ export default function AdminSubscriptions() {
         } else if (planFormData.duration) {
           planData.validityDays = parseInt(planFormData.duration);
         }
+        // Enrollment limit (0 means unlimited)
+        planData.studentMaxEnrollments = parseInt(planFormData.studentMaxEnrollments) || 0;
         // Auto-allocation settings
         planData.autoAllocateTeacher = planFormData.autoAllocateTeacher !== false; // Default to true
         planData.allocationStrategy = planFormData.allocationStrategy || "LeastStudentsFirst";
         if (planFormData.preferredTeacherCategory) {
           planData.preferredTeacherCategory = planFormData.preferredTeacherCategory;
         }
+      }
+
+      // Artist-specific fields
+      if (planFormData.role === "artist") {
+        // ValidityDays is required for artist plans
+        if (planFormData.validityDays) {
+          planData.validityDays = parseInt(planFormData.validityDays);
+        } else if (planFormData.duration) {
+          planData.validityDays = parseInt(planFormData.duration);
+        }
+        // Track upload limits
+        planData.maxTrackUploadsPerDay = parseInt(planFormData.maxTrackUploadsPerDay) || 0;
+        planData.maxTrackUploadsPerMonth = parseInt(planFormData.maxTrackUploadsPerMonth) || 0;
+        // Album publish limit
+        planData.maxAlbumsPublishedPerMonth = parseInt(planFormData.maxAlbumsPublishedPerMonth) || 0;
+      }
+
+      // Director-specific fields
+      if (planFormData.role === "music_director") {
+        // ValidityDays is required for director plans
+        if (planFormData.validityDays && planFormData.validityDays.trim() !== "") {
+          planData.validityDays = parseInt(planFormData.validityDays);
+        } else if (planFormData.duration && planFormData.duration.trim() !== "") {
+          planData.validityDays = parseInt(planFormData.duration);
+        } else if (planFormData.validUntil && planFormData.validUntil.trim() !== "") {
+          // Calculate validityDays from validUntil
+          const validUntilDate = new Date(planFormData.validUntil);
+          const now = new Date();
+          const daysDiff = Math.ceil((validUntilDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+          if (daysDiff > 0) {
+            planData.validityDays = daysDiff;
+          }
+        }
+        // Project limit - always include, even if 0
+        const maxProjectsStr = planFormData.maxActiveProjects?.trim() || "0";
+        const maxProjects = parseInt(maxProjectsStr);
+        planData.maxActiveProjects = isNaN(maxProjects) ? 0 : maxProjects;
+        // Artist discovery limits - always include, even if 0
+        const discoveryDayStr = planFormData.artistDiscoveryPerDay?.trim() || "0";
+        const discoveryMonthStr = planFormData.artistDiscoveryPerMonth?.trim() || "0";
+        const discoveryDay = parseInt(discoveryDayStr);
+        const discoveryMonth = parseInt(discoveryMonthStr);
+        planData.artistDiscoveryPerDay = isNaN(discoveryDay) ? 0 : discoveryDay;
+        planData.artistDiscoveryPerMonth = isNaN(discoveryMonth) ? 0 : discoveryMonth;
+        // Shortlist creation limit - always include, even if 0
+        const maxShortlistsStr = planFormData.maxShortlistsCreatePerMonth?.trim() || "0";
+        const maxShortlists = parseInt(maxShortlistsStr);
+        planData.maxShortlistsCreatePerMonth = isNaN(maxShortlists) ? 0 : maxShortlists;
       }
       
       if (planFormData.planType === "free_trial" && planFormData.trialDurationDays) {
@@ -1537,6 +1818,22 @@ export default function AdminSubscriptions() {
                 </div>
                 
                 <div className="space-y-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="studentMaxEnrollments">Max Course Enrollments *</Label>
+                    <Input
+                      id="studentMaxEnrollments"
+                      type="number"
+                      min="0"
+                      value={planFormData.studentMaxEnrollments}
+                      onChange={(e) => setPlanFormData({ ...planFormData, studentMaxEnrollments: e.target.value })}
+                      placeholder="0 (unlimited)"
+                      required
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Maximum number of courses the student can enroll in. Set to 0 for unlimited enrollments.
+                    </p>
+                  </div>
+
                   <div className="flex items-center space-x-2">
                     <input
                       type="checkbox"
@@ -1627,6 +1924,150 @@ export default function AdminSubscriptions() {
                     />
                     <p className="text-xs text-muted-foreground">
                       Maximum number of lessons the teacher can create
+                    </p>
+                  </div>
+                </div>
+              </div>
+            ) : planFormData.role === "artist" ? (
+              <div className="space-y-4 border-t pt-4">
+                <div className="space-y-2">
+                  <Label className="text-base font-semibold">Artist Plan Settings *</Label>
+                  <p className="text-xs text-muted-foreground">
+                    These fields are required for artist plans
+                  </p>
+                </div>
+                
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <Label className="text-sm font-semibold">Track Upload Limits *</Label>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="maxTrackUploadsPerDay">Max Track Uploads Per Day *</Label>
+                        <Input
+                          id="maxTrackUploadsPerDay"
+                          type="number"
+                          min="0"
+                          value={planFormData.maxTrackUploadsPerDay}
+                          onChange={(e) => setPlanFormData({ ...planFormData, maxTrackUploadsPerDay: e.target.value })}
+                          placeholder="0"
+                          required
+                        />
+                        <p className="text-xs text-muted-foreground">
+                          Maximum tracks the artist can upload per day. Set to 0 to disable.
+                        </p>
+                      </div>
+
+                      <div className="space-y-2">
+                        <Label htmlFor="maxTrackUploadsPerMonth">Max Track Uploads Per Month *</Label>
+                        <Input
+                          id="maxTrackUploadsPerMonth"
+                          type="number"
+                          min="0"
+                          value={planFormData.maxTrackUploadsPerMonth}
+                          onChange={(e) => setPlanFormData({ ...planFormData, maxTrackUploadsPerMonth: e.target.value })}
+                          placeholder="0"
+                          required
+                        />
+                        <p className="text-xs text-muted-foreground">
+                          Maximum tracks the artist can upload per month. Set to 0 to disable.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="maxAlbumsPublishedPerMonth">Max Albums Published Per Month *</Label>
+                    <Input
+                      id="maxAlbumsPublishedPerMonth"
+                      type="number"
+                      min="0"
+                      value={planFormData.maxAlbumsPublishedPerMonth}
+                      onChange={(e) => setPlanFormData({ ...planFormData, maxAlbumsPublishedPerMonth: e.target.value })}
+                      placeholder="0"
+                      required
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Maximum albums the artist can publish per month. Set to 0 to disable.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            ) : planFormData.role === "music_director" ? (
+              <div className="space-y-4 border-t pt-4">
+                <div className="space-y-2">
+                  <Label className="text-base font-semibold">Music Director Plan Settings *</Label>
+                  <p className="text-xs text-muted-foreground">
+                    These fields are required for music_director plans
+                  </p>
+                </div>
+                
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="maxActiveProjects">Max Active Projects *</Label>
+                    <Input
+                      id="maxActiveProjects"
+                      type="number"
+                      min="0"
+                      value={planFormData.maxActiveProjects}
+                      onChange={(e) => setPlanFormData({ ...planFormData, maxActiveProjects: e.target.value })}
+                      placeholder="0"
+                      required
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Maximum active projects (draft, live, in_progress, review). Set to 0 to disable. Completed/archived projects don't count.
+                    </p>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label className="text-sm font-semibold">Artist Discovery Limits *</Label>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="artistDiscoveryPerDay">Artist Discovery Per Day *</Label>
+                        <Input
+                          id="artistDiscoveryPerDay"
+                          type="number"
+                          min="0"
+                          value={planFormData.artistDiscoveryPerDay}
+                          onChange={(e) => setPlanFormData({ ...planFormData, artistDiscoveryPerDay: e.target.value })}
+                          placeholder="0"
+                          required
+                        />
+                        <p className="text-xs text-muted-foreground">
+                          Maximum discovery searches/browses per day. Set to 0 to disable.
+                        </p>
+                      </div>
+
+                      <div className="space-y-2">
+                        <Label htmlFor="artistDiscoveryPerMonth">Artist Discovery Per Month *</Label>
+                        <Input
+                          id="artistDiscoveryPerMonth"
+                          type="number"
+                          min="0"
+                          value={planFormData.artistDiscoveryPerMonth}
+                          onChange={(e) => setPlanFormData({ ...planFormData, artistDiscoveryPerMonth: e.target.value })}
+                          placeholder="0"
+                          required
+                        />
+                        <p className="text-xs text-muted-foreground">
+                          Maximum discovery searches/browses per month. Set to 0 to disable.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="maxShortlistsCreatePerMonth">Max Shortlists Create Per Month *</Label>
+                    <Input
+                      id="maxShortlistsCreatePerMonth"
+                      type="number"
+                      min="0"
+                      value={planFormData.maxShortlistsCreatePerMonth}
+                      onChange={(e) => setPlanFormData({ ...planFormData, maxShortlistsCreatePerMonth: e.target.value })}
+                      placeholder="0"
+                      required
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Maximum shortlists the director can create per month. Set to 0 to disable.
                     </p>
                   </div>
                 </div>

@@ -9,7 +9,7 @@ import { FolderOpen, Plus, ArrowLeft, Lock, Loader2, Calendar, DollarSign } from
 import { useLocation, useRoute } from "wouter";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
-import { db } from "@/lib/firebase";
+import { db, auth } from "@/lib/firebase";
 import { collection, query, where, getDocs, addDoc, serverTimestamp } from "firebase/firestore";
 
 interface Project {
@@ -110,6 +110,47 @@ export default function Projects() {
     setIsLoading(true);
 
     try {
+      // Check project limit before creating
+      if (!auth.currentUser) {
+        toast({
+          title: "Error",
+          description: "Authentication required",
+          variant: "destructive",
+        });
+        setIsLoading(false);
+        return;
+      }
+
+      const token = await auth.currentUser.getIdToken();
+      const limitCheckResponse = await fetch("/api/director/check-project-limit", {
+        method: "GET",
+        headers: {
+          "Authorization": `Bearer ${token}`,
+        },
+      });
+
+      if (!limitCheckResponse.ok) {
+        const errorData = await limitCheckResponse.json();
+        toast({
+          title: "Limit Reached",
+          description: errorData.error || "Cannot create more projects. Please upgrade your plan.",
+          variant: "destructive",
+        });
+        setIsLoading(false);
+        return;
+      }
+
+      const limitData = await limitCheckResponse.json();
+      if (!limitData.canCreate) {
+        toast({
+          title: "Project Limit Reached",
+          description: limitData.error || `You've reached your active project limit (${limitData.maxActiveProjects}). Please complete or archive existing projects, or upgrade your plan.`,
+          variant: "destructive",
+        });
+        setIsLoading(false);
+        return;
+      }
+
       const projectData = {
         title: formData.title,
         projectType: formData.projectType,

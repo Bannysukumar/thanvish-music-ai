@@ -27,7 +27,9 @@ import {
   Calendar,
   Clock,
   AlertCircle,
-  Users
+  Users,
+  Upload,
+  FolderOpen
 } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useTheme } from "@/hooks/use-theme";
@@ -742,6 +744,274 @@ export default function DashboardProfile() {
                           <AlertCircle className="h-4 w-4 text-amber-600 mt-0.5" />
                           <p className="text-sm text-amber-800 dark:text-amber-200">
                             Student limit reached. Upgrade your plan to add more students.
+                          </p>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Artist Capacity Section - Only for artists */}
+              {user?.role === "artist" && subscriptionDetails?.maxTrackUploadsPerDay !== undefined && (
+                <div className="p-4 border rounded-lg space-y-4">
+                  <h3 className="font-semibold text-sm flex items-center gap-2">
+                    <Upload className="h-4 w-4" />
+                    Artist Upload & Publish Limits
+                  </h3>
+                  
+                  <div className="space-y-3">
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="text-muted-foreground">Track Uploads Today</span>
+                        <span className="font-semibold">
+                          {subscriptionDetails.trackUploadsUsedToday || 0} / {subscriptionDetails.maxTrackUploadsPerDay || 0}
+                        </span>
+                      </div>
+                      <Progress 
+                        value={subscriptionDetails.maxTrackUploadsPerDay > 0 
+                          ? ((subscriptionDetails.trackUploadsUsedToday || 0) / subscriptionDetails.maxTrackUploadsPerDay) * 100 
+                          : 0} 
+                        className="h-2" 
+                      />
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="text-muted-foreground">Remaining Today</span>
+                        <span className={`font-semibold ${(subscriptionDetails.trackUploadsRemainingToday || 0) === 0 ? "text-destructive" : ""}`}>
+                          {subscriptionDetails.trackUploadsRemainingToday || 0}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="space-y-2 pt-2 border-t">
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="text-muted-foreground">Track Uploads This Month</span>
+                        <span className="font-semibold">
+                          {subscriptionDetails.trackUploadsUsedThisMonth || 0} / {subscriptionDetails.maxTrackUploadsPerMonth || 0}
+                        </span>
+                      </div>
+                      <Progress 
+                        value={subscriptionDetails.maxTrackUploadsPerMonth > 0 
+                          ? ((subscriptionDetails.trackUploadsUsedThisMonth || 0) / subscriptionDetails.maxTrackUploadsPerMonth) * 100 
+                          : 0} 
+                        className="h-2" 
+                      />
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="text-muted-foreground">Remaining This Month</span>
+                        <span className={`font-semibold ${(subscriptionDetails.trackUploadsRemainingThisMonth || 0) === 0 ? "text-destructive" : ""}`}>
+                          {subscriptionDetails.trackUploadsRemainingThisMonth || 0}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="space-y-2 pt-2 border-t">
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="text-muted-foreground">Albums Published This Month</span>
+                        <span className="font-semibold">
+                          {subscriptionDetails.albumsPublishedThisMonth || 0} / {subscriptionDetails.maxAlbumsPublishedPerMonth || 0}
+                        </span>
+                      </div>
+                      <Progress 
+                        value={subscriptionDetails.maxAlbumsPublishedPerMonth > 0 
+                          ? ((subscriptionDetails.albumsPublishedThisMonth || 0) / subscriptionDetails.maxAlbumsPublishedPerMonth) * 100 
+                          : 0} 
+                        className="h-2" 
+                      />
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="text-muted-foreground">Remaining This Month</span>
+                        <span className={`font-semibold ${(subscriptionDetails.albumsPublishRemainingThisMonth || 0) === 0 ? "text-destructive" : ""}`}>
+                          {subscriptionDetails.albumsPublishRemainingThisMonth || 0}
+                        </span>
+                      </div>
+                    </div>
+
+                    {subscriptionDetails.subscriptionEndDate && (
+                      <div className="pt-2 border-t">
+                        <div className="flex items-center gap-2 text-sm">
+                          <Calendar className="h-4 w-4 text-muted-foreground" />
+                          <span className="text-muted-foreground">Plan Expiry:</span>
+                          <span>{new Date(subscriptionDetails.subscriptionEndDate).toLocaleDateString()}</span>
+                        </div>
+                      </div>
+                    )}
+
+                    {subscriptionDetails.trackUploadsRemainingToday === 0 && subscriptionDetails.maxTrackUploadsPerDay > 0 && (
+                      <div className="p-3 bg-amber-50 dark:bg-amber-950/20 border border-amber-200 rounded-md">
+                        <div className="flex items-start gap-2">
+                          <AlertCircle className="h-4 w-4 text-amber-600 mt-0.5" />
+                          <p className="text-sm text-amber-800 dark:text-amber-200">
+                            You've reached today's track upload limit. Try again tomorrow or upgrade your plan.
+                          </p>
+                        </div>
+                      </div>
+                    )}
+
+                    {subscriptionDetails.trackUploadsRemainingThisMonth === 0 && subscriptionDetails.maxTrackUploadsPerMonth > 0 && (
+                      <div className="p-3 bg-amber-50 dark:bg-amber-950/20 border border-amber-200 rounded-md">
+                        <div className="flex items-start gap-2">
+                          <AlertCircle className="h-4 w-4 text-amber-600 mt-0.5" />
+                          <p className="text-sm text-amber-800 dark:text-amber-200">
+                            You've reached this month's track upload limit. It will reset next month, or upgrade now.
+                          </p>
+                        </div>
+                      </div>
+                    )}
+
+                    {subscriptionDetails.albumsPublishRemainingThisMonth === 0 && subscriptionDetails.maxAlbumsPublishedPerMonth > 0 && (
+                      <div className="p-3 bg-amber-50 dark:bg-amber-950/20 border border-amber-200 rounded-md">
+                        <div className="flex items-start gap-2">
+                          <AlertCircle className="h-4 w-4 text-amber-600 mt-0.5" />
+                          <p className="text-sm text-amber-800 dark:text-amber-200">
+                            You've reached your album publish limit for this plan. Upgrade to publish more albums.
+                          </p>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Director Limits Section - Only for music directors */}
+              {user?.role === "music_director" && subscriptionDetails?.maxActiveProjects !== undefined && (
+                <div className="p-4 border rounded-lg space-y-4">
+                  <h3 className="font-semibold text-sm flex items-center gap-2">
+                    <FolderOpen className="h-4 w-4" />
+                    Director Project & Discovery Limits
+                  </h3>
+                  
+                  <div className="space-y-3">
+                    {/* Active Projects */}
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="text-muted-foreground">Active Projects</span>
+                        <span className="font-semibold">
+                          {subscriptionDetails.activeProjectsCount || 0} / {subscriptionDetails.maxActiveProjects || 0}
+                        </span>
+                      </div>
+                      <Progress 
+                        value={subscriptionDetails.maxActiveProjects > 0 
+                          ? ((subscriptionDetails.activeProjectsCount || 0) / subscriptionDetails.maxActiveProjects) * 100 
+                          : 0} 
+                        className="h-2" 
+                      />
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="text-muted-foreground">Remaining</span>
+                        <span className={`font-semibold ${(subscriptionDetails.projectsRemaining || 0) === 0 ? "text-destructive" : ""}`}>
+                          {subscriptionDetails.projectsRemaining || 0}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Artist Discovery - Daily */}
+                    {subscriptionDetails.artistDiscoveryPerDay !== undefined && (
+                      <div className="space-y-2 pt-2 border-t">
+                        <div className="flex items-center justify-between text-sm">
+                          <span className="text-muted-foreground">Artist Discovery Today</span>
+                          <span className="font-semibold">
+                            {subscriptionDetails.artistDiscoveryUsedToday || 0} / {subscriptionDetails.artistDiscoveryPerDay || 0}
+                          </span>
+                        </div>
+                        <Progress 
+                          value={subscriptionDetails.artistDiscoveryPerDay > 0 
+                            ? ((subscriptionDetails.artistDiscoveryUsedToday || 0) / subscriptionDetails.artistDiscoveryPerDay) * 100 
+                            : 0} 
+                          className="h-2" 
+                        />
+                        <div className="flex items-center justify-between text-sm">
+                          <span className="text-muted-foreground">Remaining Today</span>
+                          <span className={`font-semibold ${(subscriptionDetails.discoveryRemainingToday || 0) === 0 ? "text-destructive" : ""}`}>
+                            {subscriptionDetails.discoveryRemainingToday || 0}
+                          </span>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Artist Discovery - Monthly */}
+                    {subscriptionDetails.artistDiscoveryPerMonth !== undefined && (
+                      <div className="space-y-2 pt-2 border-t">
+                        <div className="flex items-center justify-between text-sm">
+                          <span className="text-muted-foreground">Artist Discovery This Month</span>
+                          <span className="font-semibold">
+                            {subscriptionDetails.artistDiscoveryUsedThisMonth || 0} / {subscriptionDetails.artistDiscoveryPerMonth || 0}
+                          </span>
+                        </div>
+                        <Progress 
+                          value={subscriptionDetails.artistDiscoveryPerMonth > 0 
+                            ? ((subscriptionDetails.artistDiscoveryUsedThisMonth || 0) / subscriptionDetails.artistDiscoveryPerMonth) * 100 
+                            : 0} 
+                          className="h-2" 
+                        />
+                        <div className="flex items-center justify-between text-sm">
+                          <span className="text-muted-foreground">Remaining This Month</span>
+                          <span className={`font-semibold ${(subscriptionDetails.discoveryRemainingMonth || 0) === 0 ? "text-destructive" : ""}`}>
+                            {subscriptionDetails.discoveryRemainingMonth || 0}
+                          </span>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Shortlist Creation */}
+                    {subscriptionDetails.maxShortlistsCreatePerMonth !== undefined && (
+                      <div className="space-y-2 pt-2 border-t">
+                        <div className="flex items-center justify-between text-sm">
+                          <span className="text-muted-foreground">Shortlists Created This Month</span>
+                          <span className="font-semibold">
+                            {subscriptionDetails.shortlistsCreatedThisMonth || 0} / {subscriptionDetails.maxShortlistsCreatePerMonth || 0}
+                          </span>
+                        </div>
+                        <Progress 
+                          value={subscriptionDetails.maxShortlistsCreatePerMonth > 0 
+                            ? ((subscriptionDetails.shortlistsCreatedThisMonth || 0) / subscriptionDetails.maxShortlistsCreatePerMonth) * 100 
+                            : 0} 
+                          className="h-2" 
+                        />
+                        <div className="flex items-center justify-between text-sm">
+                          <span className="text-muted-foreground">Remaining This Month</span>
+                          <span className={`font-semibold ${(subscriptionDetails.shortlistsRemaining || 0) === 0 ? "text-destructive" : ""}`}>
+                            {subscriptionDetails.shortlistsRemaining || 0}
+                          </span>
+                        </div>
+                      </div>
+                    )}
+
+                    {subscriptionDetails.directorPlanExpiryDate && (
+                      <div className="pt-2 border-t">
+                        <div className="flex items-center gap-2 text-sm">
+                          <Calendar className="h-4 w-4 text-muted-foreground" />
+                          <span className="text-muted-foreground">Plan Expiry:</span>
+                          <span>{new Date(subscriptionDetails.directorPlanExpiryDate).toLocaleDateString()}</span>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Status Messages */}
+                    {subscriptionDetails.projectsRemaining === 0 && subscriptionDetails.maxActiveProjects > 0 && (
+                      <div className="p-3 bg-amber-50 dark:bg-amber-950/20 border border-amber-200 rounded-md">
+                        <div className="flex items-start gap-2">
+                          <AlertCircle className="h-4 w-4 text-amber-600 mt-0.5" />
+                          <p className="text-sm text-amber-800 dark:text-amber-200">
+                            You've reached your active project limit. Complete or archive existing projects, or upgrade your plan.
+                          </p>
+                        </div>
+                      </div>
+                    )}
+
+                    {(subscriptionDetails.discoveryRemainingToday === 0 || subscriptionDetails.discoveryRemainingMonth === 0) && subscriptionDetails.artistDiscoveryPerDay !== undefined && (
+                      <div className="p-3 bg-amber-50 dark:bg-amber-950/20 border border-amber-200 rounded-md">
+                        <div className="flex items-start gap-2">
+                          <AlertCircle className="h-4 w-4 text-amber-600 mt-0.5" />
+                          <p className="text-sm text-amber-800 dark:text-amber-200">
+                            You've reached your artist discovery limit. Please upgrade your plan or try again later.
+                          </p>
+                        </div>
+                      </div>
+                    )}
+
+                    {subscriptionDetails.shortlistsRemaining === 0 && subscriptionDetails.maxShortlistsCreatePerMonth > 0 && (
+                      <div className="p-3 bg-amber-50 dark:bg-amber-950/20 border border-amber-200 rounded-md">
+                        <div className="flex items-start gap-2">
+                          <AlertCircle className="h-4 w-4 text-amber-600 mt-0.5" />
+                          <p className="text-sm text-amber-800 dark:text-amber-200">
+                            You've reached your shortlist creation limit. Please upgrade your plan or wait until next month.
                           </p>
                         </div>
                       </div>
