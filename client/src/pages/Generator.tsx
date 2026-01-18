@@ -245,7 +245,7 @@ const LANGUAGES = [
 
 export default function Generator() {
   const { toast } = useToast();
-  const { user } = useAuth();
+  const { user, isLoading: authLoading } = useAuth();
   const [generationMode, setGenerationMode] = useState<"voice_only" | "instrumental_only" | "full_music" | "">("");
   const [tradition, setTradition] = useState<string>(""); // Hindustani or Carnatic
   const [raga, setRaga] = useState("");

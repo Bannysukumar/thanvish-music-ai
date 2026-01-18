@@ -187,7 +187,7 @@ export default function DashboardProfile() {
           return;
         }
 
-        const token = await currentUser.getIdToken();
+        const token = await currentUser.getIdToken(true); // Force refresh token
         const response = await fetch("/api/user/subscription-details", {
           headers: {
             Authorization: `Bearer ${token}`,
