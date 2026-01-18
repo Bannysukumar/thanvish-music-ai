@@ -134,6 +134,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Store multiple audio URLs for each composition (complement to audioUrl field)
   const compositionAudioUrls = new Map<string, string[]>();
   
+  // Store user info for each taskId (userId and role)
+  const taskIdToUserInfo = new Map<string, { userId: string; userRole: string; userName?: string; userEmail?: string }>();
+  
   // Store generation logs
   const generationLogs = new Map<string, GenerationLog>();
   
@@ -1804,6 +1807,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Store mapping for callback/polling
       taskIdToCompositionId.set(taskId, composition.id);
+      
+      // Store user info for this task
+      try {
+        const userRecord = await adminAuth.getUser(userId);
+        const userDoc = await adminDb.collection("users").doc(userId).get();
+        const userData = userDoc.data();
+        taskIdToUserInfo.set(taskId, {
+          userId: userId,
+          userRole: userData?.role || "user",
+          userName: userRecord.displayName || userData?.name || undefined,
+          userEmail: userRecord.email || undefined,
+        });
+      } catch (error) {
+        console.error("Error fetching user info:", error);
+        // Store with default role if we can't fetch user data
+        taskIdToUserInfo.set(taskId, {
+          userId: userId,
+          userRole: "user",
+        });
+      }
 
       // Create generation log entry
       const callbackUrl = process.env.API_BOX_CALLBACK_URL || 
@@ -2153,14 +2176,130 @@ export async function registerRoutes(app: Express): Promise<Server> {
             // Store all audio URLs in the map
             compositionAudioUrls.set(compositionId, allAudioUrls);
             
+            // Get user info for role tags
+            const userInfo = taskIdToUserInfo.get(taskId) || { userId: "unknown", userRole: "user" };
+            
+            // Download audio and upload to Firebase Storage
+            let firebaseStorageUrl = finalAudioUrl; // Fallback to original URL if upload fails
+            const storageBucket = admin.storage().bucket();
+            const uploadedUrls: string[] = [];
+            
+            try {
+              // Upload all audio variations to Firebase Storage
+              for (let i = 0; i < allAudioUrls.length; i++) {
+                const audioUrlToUpload = allAudioUrls[i];
+                try {
+                  console.log(`[API.box] Downloading audio ${i + 1}/${allAudioUrls.length} from: ${audioUrlToUpload}`);
+                  const audioResponse = await fetch(audioUrlToUpload);
+                  
+                  if (audioResponse.ok) {
+                    const audioBuffer = await audioResponse.arrayBuffer();
+                    const audioData = Buffer.from(audioBuffer);
+                    
+                    // Create unique filename for each variation
+                    const fileName = allAudioUrls.length > 1
+                      ? `generated-music/${userInfo.userId}/${taskId}_v${i + 1}_${Date.now()}.mp3`
+                      : `generated-music/${userInfo.userId}/${taskId}_${Date.now()}.mp3`;
+                    
+                    const file = storageBucket.file(fileName);
+                    
+                    // Upload to Firebase Storage
+                    await file.save(audioData, {
+                      metadata: {
+                        contentType: "audio/mpeg",
+                        metadata: {
+                          taskId: taskId,
+                          compositionId: compositionId,
+                          userId: userInfo.userId,
+                          userRole: userInfo.userRole,
+                          variation: allAudioUrls.length > 1 ? i + 1 : undefined,
+                          generatedAt: new Date().toISOString(),
+                        },
+                      },
+                    });
+                    
+                    // Make file publicly readable for streaming
+                    await file.makePublic();
+                    
+                    // Get public URL
+                    const publicUrl = `https://storage.googleapis.com/${storageBucket.name}/${fileName}`;
+                    uploadedUrls.push(publicUrl);
+                    
+                    // Use first uploaded URL as primary
+                    if (i === 0) {
+                      firebaseStorageUrl = publicUrl;
+                    }
+                    
+                    console.log(`[API.box] ✅ Audio ${i + 1}/${allAudioUrls.length} uploaded to Firebase Storage: ${publicUrl}`);
+                  } else {
+                    console.warn(`[API.box] Failed to download audio ${i + 1}: ${audioResponse.status} ${audioResponse.statusText}`);
+                    // Keep original URL if download fails
+                    if (i === 0) {
+                      uploadedUrls.push(audioUrlToUpload);
+                    }
+                  }
+                } catch (variationError: any) {
+                  console.error(`[API.box] Error uploading audio variation ${i + 1}:`, variationError);
+                  // Keep original URL if upload fails for this variation
+                  if (i === 0) {
+                    uploadedUrls.push(audioUrlToUpload);
+                  }
+                }
+              }
+              
+              if (uploadedUrls.length > 0) {
+                console.log(`[API.box] ✅ Successfully stored ${uploadedUrls.length} audio file(s) in Firebase Storage`);
+              }
+            } catch (storageError: any) {
+              console.error("[API.box] Error uploading to Firebase Storage:", storageError);
+              // Continue with original URL if storage upload fails
+              if (uploadedUrls.length === 0) {
+                uploadedUrls.push(finalAudioUrl);
+              }
+            }
+            
             await storage.updateComposition(compositionId, {
-              audioUrl: finalAudioUrl,
+              audioUrl: firebaseStorageUrl,
               title: title || composition.title,
             });
             console.log(`[API.box] ✅ Updated composition ${compositionId} with ${allAudioUrls.length} audio URL(s)`);
             console.log(`[API.box] Title: ${title || composition.title}`);
             if (allAudioUrls.length > 1) {
               console.log(`[API.box] Multiple variations available: ${allAudioUrls.length} versions`);
+            }
+
+            // Save to Firestore with role tags
+            try {
+              const musicData = {
+                taskId: taskId,
+                compositionId: compositionId,
+                title: title || composition.title,
+                raga: composition.raga,
+                tala: composition.tala,
+                instruments: composition.instruments,
+                tempo: composition.tempo,
+                mood: composition.mood,
+                description: composition.description,
+                audioUrl: firebaseStorageUrl,
+                originalAudioUrl: finalAudioUrl, // Keep original for reference
+                allAudioUrls: uploadedUrls.length > 0 ? uploadedUrls : allAudioUrls, // Use Firebase Storage URLs
+                firebaseStorageUrls: uploadedUrls, // All Firebase Storage URLs
+                // Role tags
+                generatedBy: {
+                  userId: userInfo.userId,
+                  role: userInfo.userRole,
+                  name: userInfo.userName,
+                  email: userInfo.userEmail,
+                },
+                createdAt: admin.firestore.FieldValue.serverTimestamp(),
+                updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+              };
+              
+              // Save to generatedMusic collection
+              await adminDb.collection("generatedMusic").doc(compositionId).set(musicData);
+              console.log(`[API.box] ✅ Saved to Firestore with role tag: ${userInfo.userRole}`);
+            } catch (firestoreError) {
+              console.error("[API.box] Error saving to Firestore:", firestoreError);
             }
 
             // Update log entry with success status and credits consumed (typically 12 credits per generation)
@@ -2355,7 +2494,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Verify password by attempting to sign in (we'll use Firebase Auth REST API)
       // For security, we'll create a custom token and verify it
       // Actually, we need to verify the password. Let's use Firebase Auth REST API
-      const firebaseApiKey = process.env.VITE_FIREBASE_API_KEY || "AIzaSyDqVNSOnxuksvNtVNfcmIQKsHdZEAuTDds";
+      const firebaseApiKey = process.env.VITE_FIREBASE_API_KEY || "AIzaSyDR9Ek6Rnz4jRzwG5EEs2trZYioC02XRwM";
       
       try {
         // Verify password using Firebase Auth REST API
@@ -2375,8 +2514,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const verifyData = await verifyResponse.json();
         
         if (!verifyResponse.ok) {
+          // Log the actual error for debugging
+          console.error("Firebase Auth API Error:", {
+            status: verifyResponse.status,
+            statusText: verifyResponse.statusText,
+            error: verifyData.error,
+          });
+          
+          // Provide more specific error messages
+          if (verifyData.error?.message) {
+            const errorMessage = verifyData.error.message;
+            if (errorMessage.includes("INVALID_PASSWORD") || errorMessage.includes("EMAIL_NOT_FOUND")) {
+              return res.status(401).json({ error: "Invalid email or password" });
+            } else if (errorMessage.includes("API key")) {
+              return res.status(500).json({ 
+                error: "Authentication service configuration error. Please contact administrator." 
+              });
+            }
+            return res.status(401).json({ error: errorMessage });
+          }
+          
           return res.status(401).json({ 
-            error: verifyData.error?.message || "Invalid credentials" 
+            error: "Invalid credentials" 
           });
         }
 

@@ -1,0 +1,83 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+    
+    // Helper function to check if user is authenticated
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    // Helper function to check if user is admin
+    function isAdmin() {
+      return isAuthenticated() && 
+             firestore.get(/databases/(default)/documents/admins/$(request.auth.uid)).data.isAdmin == true;
+    }
+    
+    // Generated Music - stored in generated-music/{userId}/ folder
+    match /generated-music/{userId}/{fileName} {
+      // Allow read if:
+      // - User is authenticated and owns the file (userId matches)
+      // - File is publicly readable (for streaming)
+      // - User is admin
+      allow read: if isAuthenticated() && 
+                     (request.auth.uid == userId || isAdmin());
+      
+      // Allow public read for streaming (since files are made public)
+      allow read: if true;
+      
+      // Only server (Admin SDK) can write/delete
+      // Users cannot directly upload or delete via client SDK
+      allow write: if false;
+      allow delete: if false;
+    }
+    
+    // Tracks - stored in tracks/{userId}/ folder
+    match /tracks/{userId}/{fileName} {
+      // Artists can read their own tracks
+      allow read: if isAuthenticated() && request.auth.uid == userId;
+      // Public tracks can be read by anyone
+      allow read: if true;
+      // Artists can write their own tracks
+      allow write: if isAuthenticated() && request.auth.uid == userId;
+      // Artists can delete their own tracks
+      allow delete: if isAuthenticated() && request.auth.uid == userId;
+      // Admins can do everything
+      allow read, write, delete: if isAdmin();
+    }
+    
+    // Track Covers - stored in track-covers/{userId}/ folder
+    match /track-covers/{userId}/{fileName} {
+      // Artists can read their own covers
+      allow read: if isAuthenticated() && request.auth.uid == userId;
+      // Public covers can be read by anyone
+      allow read: if true;
+      // Artists can write their own covers
+      allow write: if isAuthenticated() && request.auth.uid == userId;
+      // Artists can delete their own covers
+      allow delete: if isAuthenticated() && request.auth.uid == userId;
+      // Admins can do everything
+      allow read, write, delete: if isAdmin();
+    }
+    
+    // Album Covers - stored in album-covers/{userId}/ folder
+    match /album-covers/{userId}/{fileName} {
+      // Artists can read their own album covers
+      allow read: if isAuthenticated() && request.auth.uid == userId;
+      // Public album covers can be read by anyone
+      allow read: if true;
+      // Artists can write their own album covers
+      allow write: if isAuthenticated() && request.auth.uid == userId;
+      // Artists can delete their own album covers
+      allow delete: if isAuthenticated() && request.auth.uid == userId;
+      // Admins can do everything
+      allow read, write, delete: if isAdmin();
+    }
+    
+    // Default: deny all other paths
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}
+

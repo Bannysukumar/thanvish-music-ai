@@ -287,13 +287,18 @@ service cloud.firestore {
     
     // Artist tracks collection
     match /tracks/{trackId} {
-      // Artists can read their own tracks
-      allow read: if isAuthenticated() && 
-        (resource.data.artistId == request.auth.uid || 
-         resource.data.visibility == 'public');
+      // Artists can always read their own tracks (regardless of status/visibility)
+      allow read: if isAuthenticated() && resource.data.artistId == request.auth.uid;
       
-      // Directors can read public tracks (for discovery)
-      allow read: if isMusicDirector() && resource.data.visibility == 'public';
+      // Others can only read public tracks that are live (published)
+      allow read: if isAuthenticated() && 
+        resource.data.visibility == 'public' && 
+        resource.data.status == 'live';
+      
+      // Directors can read public live tracks (for discovery)
+      allow read: if isMusicDirector() && 
+        resource.data.visibility == 'public' && 
+        resource.data.status == 'live';
       
       // Artists can create tracks (if they have subscription access)
       allow create: if isArtistWithAccess() && 
@@ -314,10 +319,13 @@ service cloud.firestore {
     
     // Artist albums collection
     match /albums/{albumId} {
-      // Artists can read their own albums
+      // Artists can always read their own albums (regardless of status/visibility)
+      allow read: if isAuthenticated() && resource.data.artistId == request.auth.uid;
+      
+      // Others can only read public albums that are live (published, not draft)
       allow read: if isAuthenticated() && 
-        (resource.data.artistId == request.auth.uid || 
-         resource.data.visibility == 'public');
+        resource.data.visibility == 'public' && 
+        resource.data.status == 'live';
       
       // Artists can create albums (if they have subscription access)
       allow create: if isArtistWithAccess() && 
@@ -619,6 +627,18 @@ service cloud.firestore {
       allow read: if isAdmin();
       // Only server (via Admin SDK) can write audit logs
       allow write: if false;
+    }
+
+    // Generated Music collection
+    match /generatedMusic/{musicId} {
+      // Users can read their own generated music
+      allow read: if isAuthenticated() && resource.data.generatedBy.userId == request.auth.uid;
+      // Users can delete their own generated music
+      allow delete: if isAuthenticated() && resource.data.generatedBy.userId == request.auth.uid;
+      // Only server (via Admin SDK) can create/update generated music
+      allow write: if false;
+      // Admins can read all generated music
+      allow read: if isAdmin();
     }
     
     // Default: deny all other collections

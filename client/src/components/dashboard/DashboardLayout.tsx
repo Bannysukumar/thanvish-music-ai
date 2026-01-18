@@ -96,6 +96,7 @@ function getMenuItemsFallback(userRole?: string): MenuItem[] {
     { path: "/dashboard", label: "Home", icon: HomeIcon },
     { path: "/dashboard/generate", label: "Generate", icon: Sparkles },
     { path: "/dashboard/library", label: "My Library", icon: Library },
+    { path: "/dashboard/browse-music", label: "Browse Music", icon: Search, emoji: "🎵" },
     { path: "/dashboard/horoscope", label: "Horoscope Profile", icon: HoroscopeIcon, emoji: "🔮" },
     { path: "/dashboard/music-therapy", label: "Music Therapy", icon: MusicTherapyIcon, emoji: "🎵" },
     { path: "/dashboard/profile", label: "Profile", icon: User },
@@ -249,6 +250,22 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
             
             if (data.menuItems && data.menuItems.length > 0) {
               const convertedItems = convertMenuConfig(data.menuItems);
+              // Ensure "Browse Music" is always included
+              const browseMusicItem = convertedItems.find(item => item.path === "/dashboard/browse-music");
+              if (!browseMusicItem) {
+                // Add Browse Music if not present
+                const fallbackItems = getMenuItemsFallback(userRole);
+                const browseMusicFromFallback = fallbackItems.find(item => item.path === "/dashboard/browse-music");
+                if (browseMusicFromFallback) {
+                  // Insert after "My Library" or at position 3
+                  const libraryIndex = convertedItems.findIndex(item => item.path === "/dashboard/library");
+                  if (libraryIndex >= 0) {
+                    convertedItems.splice(libraryIndex + 1, 0, browseMusicFromFallback);
+                  } else {
+                    convertedItems.splice(3, 0, browseMusicFromFallback);
+                  }
+                }
+              }
               setMenuItems(convertedItems);
             } else {
               // Fallback to hardcoded menu

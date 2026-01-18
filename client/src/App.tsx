@@ -83,6 +83,7 @@ function Router() {
       <Route path="/dashboard" component={DashboardRouter} />
       <Route path="/dashboard/generate" component={DashboardRouter} />
       <Route path="/dashboard/library" component={DashboardRouter} />
+      <Route path="/dashboard/browse-music" component={DashboardRouter} />
       <Route path="/dashboard/horoscope" component={DashboardRouter} />
       <Route path="/dashboard/music-therapy" component={DashboardRouter} />
       <Route path="/dashboard/profile" component={DashboardRouter} />

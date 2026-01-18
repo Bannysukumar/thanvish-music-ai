@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -57,6 +57,18 @@ export default function UploadTrack() {
   
   const isLocked = user?.subscriptionStatus !== "active" && user?.subscriptionStatus !== "trial";
 
+  // Cleanup blob URLs on component unmount
+  useEffect(() => {
+    return () => {
+      if (audioPreview) {
+        URL.revokeObjectURL(audioPreview);
+      }
+      if (coverPreview) {
+        URL.revokeObjectURL(coverPreview);
+      }
+    };
+  }, [audioPreview, coverPreview]);
+
   const handleAudioFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
@@ -68,7 +80,14 @@ export default function UploadTrack() {
         });
         return;
       }
+      
+      // Clean up previous preview URL if exists (prevent memory leaks)
+      if (audioPreview) {
+        URL.revokeObjectURL(audioPreview);
+      }
+      
       setAudioFile(file);
+      // Create temporary blob URL for preview only (not stored in localStorage)
       const url = URL.createObjectURL(file);
       setAudioPreview(url);
     }
@@ -85,7 +104,14 @@ export default function UploadTrack() {
         });
         return;
       }
+      
+      // Clean up previous preview URL if exists (prevent memory leaks)
+      if (coverPreview) {
+        URL.revokeObjectURL(coverPreview);
+      }
+      
       setCoverFile(file);
+      // Create temporary blob URL for preview only (not stored in localStorage)
       const url = URL.createObjectURL(file);
       setCoverPreview(url);
     }
@@ -259,7 +285,7 @@ export default function UploadTrack() {
             description: "Track uploaded successfully!",
           });
 
-          // Reset form
+          // Reset form and clean up preview URLs
           setFormData({
             title: "",
             description: "",
@@ -270,6 +296,15 @@ export default function UploadTrack() {
             instruments: [],
             credits: {},
           });
+          
+          // Clean up blob URLs to prevent memory leaks
+          if (audioPreview) {
+            URL.revokeObjectURL(audioPreview);
+          }
+          if (coverPreview) {
+            URL.revokeObjectURL(coverPreview);
+          }
+          
           setAudioFile(null);
           setCoverFile(null);
           setAudioPreview(null);
@@ -449,6 +484,10 @@ export default function UploadTrack() {
                       variant="outline"
                       size="sm"
                       onClick={() => {
+                        // Clean up blob URL before removing
+                        if (audioPreview) {
+                          URL.revokeObjectURL(audioPreview);
+                        }
                         setAudioFile(null);
                         setAudioPreview(null);
                         if (audioInputRef.current) audioInputRef.current.value = "";
@@ -500,6 +539,10 @@ export default function UploadTrack() {
                     variant="outline"
                     size="sm"
                     onClick={() => {
+                      // Clean up blob URL before removing
+                      if (coverPreview) {
+                        URL.revokeObjectURL(coverPreview);
+                      }
                       setCoverFile(null);
                       setCoverPreview(null);
                       if (coverInputRef.current) coverInputRef.current.value = "";

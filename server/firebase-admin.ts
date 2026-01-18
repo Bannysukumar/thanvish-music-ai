@@ -9,8 +9,9 @@ try {
     console.log("Firebase Admin SDK already initialized");
   } else {
     // Option 1: Try to load from service account JSON file
-    // Try multiple possible filenames
+    // Try multiple possible filenames (prioritize new project)
     const possiblePaths = [
+      path.join(process.cwd(), "thanvish-ai-52bd9-firebase-adminsdk-fbsvc-6facf5ed67.json"),
       path.join(process.cwd(), "thanvishmusic-firebase-adminsdk-fbsvc-589edaa25b.json"),
       path.join(process.cwd(), "thanvishmusic-firebase-adminsdk-fbsvc-5fcff680e0.json"),
       path.join(process.cwd(), "firebase-adminsdk.json"),
@@ -42,7 +43,7 @@ try {
         console.log("Firebase Admin SDK initialized from environment variable");
       } else {
         // Option 3: Use application default credentials (for production environments like Google Cloud)
-        const projectId = process.env.FIREBASE_PROJECT_ID || "thanvishmusic";
+        const projectId = process.env.FIREBASE_PROJECT_ID || "thanvish-ai-52bd9";
         
         admin.initializeApp({
           projectId,

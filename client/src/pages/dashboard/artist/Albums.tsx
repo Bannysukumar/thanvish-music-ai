@@ -6,12 +6,18 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Disc, Plus, ArrowLeft, Lock, Loader2, X, Music } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Disc, Plus, ArrowLeft, Lock, Loader2, X, Music, MoreVertical, Edit, Eye, EyeOff } from "lucide-react";
 import { useLocation } from "wouter";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { db, storage, auth } from "@/lib/firebase";
-import { collection, query, where, getDocs, addDoc, serverTimestamp, doc, getDoc } from "firebase/firestore";
+import { collection, query, where, getDocs, addDoc, serverTimestamp, doc, getDoc, updateDoc } from "firebase/firestore";
 import { ref, uploadBytesResumable, getDownloadURL } from "firebase/storage";
 
 interface Track {
@@ -163,6 +169,48 @@ export default function Albums() {
       });
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleStatusChange = async (albumId: string, newStatus: "draft" | "live") => {
+    try {
+      await updateDoc(doc(db, "albums", albumId), {
+        status: newStatus,
+        updatedAt: serverTimestamp(),
+      });
+      toast({
+        title: "Success",
+        description: "Album status updated",
+      });
+      fetchAlbums();
+    } catch (error) {
+      console.error("Error updating album status:", error);
+      toast({
+        title: "Error",
+        description: "Failed to update album status",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleVisibilityChange = async (albumId: string, newVisibility: "private" | "public" | "subscribers") => {
+    try {
+      await updateDoc(doc(db, "albums", albumId), {
+        visibility: newVisibility,
+        updatedAt: serverTimestamp(),
+      });
+      toast({
+        title: "Success",
+        description: "Album visibility updated",
+      });
+      fetchAlbums();
+    } catch (error) {
+      console.error("Error updating album visibility:", error);
+      toast({
+        title: "Error",
+        description: "Failed to update album visibility",
+        variant: "destructive",
+      });
     }
   };
 
@@ -610,19 +658,80 @@ export default function Albums() {
                     </div>
                   )}
                   <CardContent className="pt-4">
-                    <h3 className="font-semibold mb-1">{album.name}</h3>
+                    <div className="flex items-start justify-between mb-2">
+                      <h3 className="font-semibold flex-1">{album.name}</h3>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="ghost" size="icon" className="h-8 w-8">
+                            <MoreVertical className="h-4 w-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          {album.status === "draft" && (
+                            <DropdownMenuItem
+                              onClick={() => handleStatusChange(album.id, "live")}
+                            >
+                              Publish (Make Live)
+                            </DropdownMenuItem>
+                          )}
+                          {album.status === "live" && (
+                            <DropdownMenuItem
+                              onClick={() => handleStatusChange(album.id, "draft")}
+                            >
+                              Unpublish
+                            </DropdownMenuItem>
+                          )}
+                          <DropdownMenuItem
+                            onClick={() => handleVisibilityChange(album.id, "public")}
+                            disabled={album.visibility === "public"}
+                          >
+                            <Eye className="h-4 w-4 mr-2" />
+                            Set to Public
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            onClick={() => handleVisibilityChange(album.id, "private")}
+                            disabled={album.visibility === "private"}
+                          >
+                            <EyeOff className="h-4 w-4 mr-2" />
+                            Set to Private
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            onClick={() => handleVisibilityChange(album.id, "subscribers")}
+                            disabled={album.visibility === "subscribers"}
+                          >
+                            <Lock className="h-4 w-4 mr-2" />
+                            Set to Subscribers Only
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </div>
                     <p className="text-sm text-muted-foreground mb-2 line-clamp-2">
                       {album.description || "No description"}
                     </p>
                     <div className="flex items-center justify-between text-xs text-muted-foreground">
                       <span>{album.tracks?.length || 0} tracks</span>
-                      <span className={`px-2 py-1 rounded ${
-                        album.status === "live"
-                          ? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200"
-                          : "bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-200"
-                      }`}>
-                        {album.status}
-                      </span>
+                      <div className="flex items-center gap-2">
+                        <span className={`px-2 py-1 rounded ${
+                          album.status === "live"
+                            ? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200"
+                            : "bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-200"
+                        }`}>
+                          {album.status}
+                        </span>
+                        {album.visibility === "public" ? (
+                          <span className="px-2 py-1 rounded bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">
+                            Public
+                          </span>
+                        ) : album.visibility === "subscribers" ? (
+                          <span className="px-2 py-1 rounded bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200">
+                            Subscribers
+                          </span>
+                        ) : (
+                          <span className="px-2 py-1 rounded bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-200">
+                            Private
+                          </span>
+                        )}
+                      </div>
                     </div>
                   </CardContent>
                 </Card>

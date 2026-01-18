@@ -10,6 +10,10 @@
     "check": "tsc",
     "db:push": "drizzle-kit push",
     "create-admin": "tsx server/scripts/create-admin-user.ts",
+    "migrate-firebase": "tsx server/scripts/migrate-firebase-data.ts",
+    "migrate-indexes": "tsx server/scripts/migrate-firestore-indexes.ts",
+    "deploy-rules-indexes": "tsx server/scripts/deploy-firestore-rules-indexes.ts",
+    "verify-service-account": "tsx server/scripts/verify-service-account.ts",
     "download-previews": "node scripts/download-freesound-previews.js",
     "download-previews:generic": "node scripts/download-instrument-previews.js"
   },

@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Music, Search, Eye, EyeOff, Play, Heart, MoreVertical, Edit, Trash2 } from "lucide-react";
+import { Music, Search, Eye, EyeOff, Play, Heart, MoreVertical, Edit, Trash2, Lock } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { db } from "@/lib/firebase";
 import { collection, query, where, getDocs, deleteDoc, doc, updateDoc } from "firebase/firestore";
@@ -158,6 +158,27 @@ export default function ArtistLibrary() {
       toast({
         title: "Error",
         description: "Failed to update track status",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleVisibilityChange = async (trackId: string, newVisibility: "private" | "public" | "subscribers") => {
+    try {
+      await updateDoc(doc(db, "tracks", trackId), {
+        visibility: newVisibility,
+        updatedAt: new Date(),
+      });
+      toast({
+        title: "Success",
+        description: "Track visibility updated",
+      });
+      fetchTracks();
+    } catch (error) {
+      console.error("Error updating track visibility:", error);
+      toast({
+        title: "Error",
+        description: "Failed to update track visibility",
         variant: "destructive",
       });
     }
@@ -337,10 +358,24 @@ export default function ArtistLibrary() {
                           </DropdownMenuItem>
                         )}
                         {track.status === "pending" && (
+                          <>
+                            <DropdownMenuItem
+                              onClick={() => handleStatusChange(track.id, "live")}
+                            >
+                              Publish (Make Live)
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              onClick={() => handleStatusChange(track.id, "draft")}
+                            >
+                              Move to Draft
+                            </DropdownMenuItem>
+                          </>
+                        )}
+                        {track.status === "draft" && (
                           <DropdownMenuItem
-                            onClick={() => handleStatusChange(track.id, "draft")}
+                            onClick={() => handleStatusChange(track.id, "pending")}
                           >
-                            Move to Draft
+                            Submit for Review
                           </DropdownMenuItem>
                         )}
                         {track.status === "live" && (
@@ -350,6 +385,27 @@ export default function ArtistLibrary() {
                             Unpublish
                           </DropdownMenuItem>
                         )}
+                        <DropdownMenuItem
+                          onClick={() => handleVisibilityChange(track.id, "public")}
+                          disabled={track.visibility === "public"}
+                        >
+                          <Eye className="h-4 w-4 mr-2" />
+                          Set to Public
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          onClick={() => handleVisibilityChange(track.id, "private")}
+                          disabled={track.visibility === "private"}
+                        >
+                          <EyeOff className="h-4 w-4 mr-2" />
+                          Set to Private
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          onClick={() => handleVisibilityChange(track.id, "subscribers")}
+                          disabled={track.visibility === "subscribers"}
+                        >
+                          <Lock className="h-4 w-4 mr-2" />
+                          Set to Subscribers Only
+                        </DropdownMenuItem>
                         <DropdownMenuItem
                           onClick={() => handleDeleteTrack(track.id)}
                           className="text-destructive"
