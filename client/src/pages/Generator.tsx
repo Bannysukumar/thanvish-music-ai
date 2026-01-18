@@ -813,9 +813,20 @@ export default function Generator() {
       }
     },
     onError: (error: any) => {
-      const errorMessage = error.message || "Failed to generate composition. Please try again.";
+      let errorMessage = error.message || "Failed to generate composition. Please try again.";
+      let errorTitle = "Generation Failed";
+      
+      // Handle specific error codes
+      if (error.status === 401 || error.code === "AUTH_REQUIRED") {
+        errorTitle = "Authentication Required";
+        errorMessage = error.message || "Please login to generate music.";
+      } else if (error.code === "SUBSCRIPTION_LIMIT" || error.status === 403) {
+        errorTitle = "Subscription Limit Reached";
+        errorMessage = error.message || error.data?.error || "You have reached your generation limit. Please upgrade your plan.";
+      }
+      
       toast({
-        title: "Generation Failed",
+        title: errorTitle,
         description: errorMessage,
         variant: "destructive",
       });
@@ -1034,7 +1045,26 @@ export default function Generator() {
     };
   }, []);
 
-  const handleGenerate = () => {
+  const handleGenerate = async () => {
+    // Wait for auth to load
+    if (authLoading) {
+      toast({
+        title: "Loading...",
+        description: "Please wait while we verify your authentication.",
+      });
+      return;
+    }
+
+    // Check if user is authenticated
+    if (!user || user.isGuest) {
+      toast({
+        title: "Authentication Required",
+        description: "Please login to generate music.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     // Validate generation mode is selected
     if (!generationMode) {
       toast({

@@ -36,15 +36,16 @@ export async function apiRequest(
   url: string,
   data?: unknown | undefined,
 ): Promise<Response> {
-  // Get auth token if user is logged in
+  // Get auth token if user is logged in - force refresh to ensure valid token
   let authToken: string | null = null;
   try {
     const currentUser = auth.currentUser;
     if (currentUser) {
-      authToken = await currentUser.getIdToken();
+      // Force refresh token to ensure it's valid
+      authToken = await currentUser.getIdToken(true);
     }
   } catch (error) {
-    // If token fetch fails, continue without token
+    // If token fetch fails, log error but continue
     console.warn("Failed to get auth token:", error);
   }
   
