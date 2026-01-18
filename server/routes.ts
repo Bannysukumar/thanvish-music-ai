@@ -2015,10 +2015,36 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { taskId } = req.params;
       
-      // Try to get status from API, but if it fails (404), return pending status
-      // The API likely uses callbacks only, so we'll rely on the callback endpoint
-      // Skip API call if we know the endpoint doesn't exist
-      if (statusEndpointAvailable === false) {
+      // ALWAYS try API BOX first (even if we previously thought it doesn't work)
+      // This ensures we catch completed generations even if callbacks fail
+      let apiBoxStatus: any = null;
+      let apiBoxError: any = null;
+      
+      try {
+        console.log(`[Status] Attempting to get status from API BOX for taskId: ${taskId}`);
+        apiBoxStatus = await getMusicGenerationStatus(taskId);
+        statusEndpointAvailable = true;
+        console.log(`[Status] ✅ Got status from API BOX: ${apiBoxStatus.data.status}`);
+        
+        // If generation is complete, process it immediately (same logic as below)
+        if (apiBoxStatus.data.status === "complete" && (apiBoxStatus.data.audioUrl || (apiBoxStatus.data.audioUrls && apiBoxStatus.data.audioUrls.length > 0))) {
+          // Process it (will be handled by the existing logic below)
+          // Just return the status for now, the existing code will handle processing
+        }
+      } catch (apiError: any) {
+        apiBoxError = apiError;
+        if (apiError.message?.includes("Status endpoint not found") || 
+            apiError.message?.includes("404") ||
+            apiError.message?.includes("not found")) {
+          if (statusEndpointAvailable === true) {
+            statusEndpointAvailable = false;
+          }
+        }
+        console.log(`[Status] API BOX status check failed: ${apiError.message}`);
+      }
+      
+      // If API BOX check failed, fall back to checking local storage and Firestore
+      if (statusEndpointAvailable === false || apiBoxError) {
         // We know the status endpoint doesn't exist, check local storage for completed composition
         const compositionId = taskIdToCompositionId.get(taskId);
         if (compositionId) {
@@ -3335,6 +3361,80 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error: any) {
       console.error("[Admin Sync] Error:", error);
       res.status(500).json({ error: "Failed to sync generation" });
+    }
+  });
+
+  // Bulk sync all pending generations from API BOX (admin only)
+  app.post("/api/admin/sync-all-pending", requireAdmin, async (req, res) => {
+    try {
+      console.log(`[Admin Sync All] Starting bulk sync of pending generations`);
+      
+      // Get all pending logs from Firestore
+      const pendingLogsSnapshot = await adminDb.collection("generationLogs")
+        .where("status", "==", "pending")
+        .orderBy("createdAt", "desc")
+        .limit(50) // Limit to 50 most recent pending tasks
+        .get();
+      
+      if (pendingLogsSnapshot.empty) {
+        return res.json({ 
+          success: true, 
+          message: "No pending generations found",
+          synced: 0,
+        });
+      }
+      
+      const pendingTasks = pendingLogsSnapshot.docs.map(doc => ({
+        taskId: doc.id,
+        data: doc.data(),
+      }));
+      
+      console.log(`[Admin Sync All] Found ${pendingTasks.length} pending tasks`);
+      
+      let syncedCount = 0;
+      let failedCount = 0;
+      const results: Array<{ taskId: string; status: string; error?: string }> = [];
+      
+      // Process each pending task
+      for (const task of pendingTasks) {
+        try {
+          // Try to get status from API BOX
+          const status = await getMusicGenerationStatus(task.taskId);
+          
+          if (status.data.status === "complete" && (status.data.audioUrl || (status.data.audioUrls && status.data.audioUrls.length > 0))) {
+            // Mark as success - the status endpoint will handle processing when polled
+            await adminDb.collection("generationLogs").doc(task.taskId).update({
+              status: "success",
+              creditsConsumed: 12,
+              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            });
+            syncedCount++;
+            results.push({ taskId: task.taskId, status: "synced" });
+            console.log(`[Admin Sync All] ✅ Synced taskId: ${task.taskId}`);
+          } else {
+            results.push({ taskId: task.taskId, status: status.data.status });
+          }
+        } catch (error: any) {
+          failedCount++;
+          results.push({ taskId: task.taskId, status: "error", error: error.message });
+          console.error(`[Admin Sync All] ❌ Failed to sync taskId ${task.taskId}:`, error.message);
+        }
+        
+        // Small delay to avoid rate limiting
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
+      
+      return res.json({
+        success: true,
+        message: `Synced ${syncedCount} of ${pendingTasks.length} pending tasks`,
+        synced: syncedCount,
+        failed: failedCount,
+        total: pendingTasks.length,
+        results: results,
+      });
+    } catch (error: any) {
+      console.error("[Admin Sync All] Error:", error);
+      res.status(500).json({ error: "Failed to sync pending generations" });
     }
   });
 
