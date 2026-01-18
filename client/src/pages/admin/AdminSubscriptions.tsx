@@ -377,8 +377,12 @@ export default function AdminSubscriptions() {
         newFeature: "",
         displayOnUpgradePage: plan.displayOnUpgradePage === true,
         usageLimits: {
-          dailyGenerations: plan.usageLimits?.dailyGenerations !== undefined && plan.usageLimits?.dailyGenerations !== null ? plan.usageLimits.dailyGenerations.toString() : "",
-          monthlyGenerations: plan.usageLimits?.monthlyGenerations !== undefined && plan.usageLimits?.monthlyGenerations !== null ? plan.usageLimits.monthlyGenerations.toString() : "",
+          dailyGenerations: typeof plan.usageLimits?.dailyGenerations === "number" 
+            ? plan.usageLimits.dailyGenerations.toString() 
+            : "",
+          monthlyGenerations: typeof plan.usageLimits?.monthlyGenerations === "number" 
+            ? plan.usageLimits.monthlyGenerations.toString() 
+            : "",
         },
         teacherMaxStudents: plan.teacherMaxStudents !== undefined && plan.teacherMaxStudents !== null ? plan.teacherMaxStudents.toString() : "",
         validityDays: plan.validityDays !== undefined && plan.validityDays !== null ? plan.validityDays.toString() : (plan.duration !== undefined && plan.duration !== null ? plan.duration.toString() : ""),
@@ -574,13 +578,19 @@ export default function AdminSubscriptions() {
       } else if (planFormData.role === "astrologer") {
         // Astrologer plans don't require generation limits - they use client/reading/template/rasi/post limits instead
         // Validation for astrologer plans is handled in the astrologer-specific validation section
-      } else {
-        // Validate usage limits only for roles that require generation limits
-        // Only: user requires generation limits
-        if (!planFormData.usageLimits.dailyGenerations || !planFormData.usageLimits.monthlyGenerations) {
+      }
+      
+      // Validate usage limits for all roles if provided (optional)
+      // If either field is provided, both must be provided and valid
+      const hasDailyLimit = planFormData.usageLimits.dailyGenerations && planFormData.usageLimits.dailyGenerations.trim() !== "";
+      const hasMonthlyLimit = planFormData.usageLimits.monthlyGenerations && planFormData.usageLimits.monthlyGenerations.trim() !== "";
+      
+      if (hasDailyLimit || hasMonthlyLimit) {
+        // If one is provided, both must be provided
+        if (!hasDailyLimit || !hasMonthlyLimit) {
           toast({
             title: "Error",
-            description: "Both Daily and Monthly generation limits are required",
+            description: "Both Daily and Monthly generation limits are required if one is provided",
             variant: "destructive",
           });
           return;
@@ -1034,13 +1044,25 @@ export default function AdminSubscriptions() {
         planData.duration = parseInt(planFormData.duration);
       }
 
-      // Set usage limits based on role
-      if (planFormData.role === "music_teacher") {
-        // For teachers, use teacher feature limits instead of generation limits
+      // Set usage limits - optional for all roles, use provided values or default to 0
+      const hasDailyLimitValue = planFormData.usageLimits.dailyGenerations && planFormData.usageLimits.dailyGenerations.trim() !== "";
+      const hasMonthlyLimitValue = planFormData.usageLimits.monthlyGenerations && planFormData.usageLimits.monthlyGenerations.trim() !== "";
+      
+      if (hasDailyLimitValue && hasMonthlyLimitValue) {
         planData.usageLimits = {
-          dailyGenerations: 0, // Teachers don't use generation limits
+          dailyGenerations: parseInt(planFormData.usageLimits.dailyGenerations) || 0,
+          monthlyGenerations: parseInt(planFormData.usageLimits.monthlyGenerations) || 0,
+        };
+      } else {
+        // Default to 0 if not provided
+        planData.usageLimits = {
+          dailyGenerations: 0,
           monthlyGenerations: 0,
         };
+      }
+      
+      // Teacher-specific fields
+      if (planFormData.role === "music_teacher") {
         // Always send teacherMaxCourses and teacherMaxLessons, even if 0
         // Handle empty strings, null, undefined, or valid numbers
         const maxCoursesStr = planFormData.teacherMaxCourses?.trim() || "0";
@@ -1049,36 +1071,6 @@ export default function AdminSubscriptions() {
         const maxLessons = parseInt(maxLessonsStr);
         planData.teacherMaxCourses = isNaN(maxCourses) ? 0 : maxCourses;
         planData.teacherMaxLessons = isNaN(maxLessons) ? 0 : maxLessons;
-      } else if (planFormData.role === "student") {
-        // For students, set generation limits to 0 (students don't use generation limits)
-        planData.usageLimits = {
-          dailyGenerations: 0,
-          monthlyGenerations: 0,
-        };
-      } else if (planFormData.role === "artist") {
-        // For artists, set generation limits to 0 (artists use track/album limits instead)
-        planData.usageLimits = {
-          dailyGenerations: 0,
-          monthlyGenerations: 0,
-        };
-      } else if (planFormData.role === "music_director") {
-        // For directors, set generation limits to 0 (directors use project/discovery/shortlist limits instead)
-        planData.usageLimits = {
-          dailyGenerations: 0,
-          monthlyGenerations: 0,
-        };
-      } else if (planFormData.role === "doctor") {
-        // For doctors, set generation limits to 0 (doctors use program/template/article limits instead)
-        planData.usageLimits = {
-          dailyGenerations: 0,
-          monthlyGenerations: 0,
-        };
-      } else {
-        // For other roles (user, doctor, astrologer), use generation limits
-        planData.usageLimits = {
-          dailyGenerations: parseInt(planFormData.usageLimits.dailyGenerations) || 0,
-          monthlyGenerations: parseInt(planFormData.usageLimits.monthlyGenerations) || 0,
-        };
       }
       
       // Teacher-specific fields
@@ -2222,6 +2214,54 @@ export default function AdminSubscriptions() {
                     </p>
                   </div>
                 </div>
+
+                <div className="space-y-2 border-t pt-4 mt-4">
+                  <Label>Usage Limits</Label>
+                  <p className="text-xs text-muted-foreground mb-2">
+                    Both daily and monthly limits are required. Set to 0 to disable generation for that period.
+                  </p>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="dailyGenerations">Daily Generations</Label>
+                      <Input
+                        id="dailyGenerations"
+                        type="number"
+                        min="0"
+                        value={planFormData.usageLimits.dailyGenerations}
+                        onChange={(e) =>
+                          setPlanFormData({
+                            ...planFormData,
+                            usageLimits: {
+                              ...planFormData.usageLimits,
+                              dailyGenerations: e.target.value,
+                            },
+                          })
+                        }
+                        placeholder="0"
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="monthlyGenerations">Monthly Generations</Label>
+                      <Input
+                        id="monthlyGenerations"
+                        type="number"
+                        min="0"
+                        value={planFormData.usageLimits.monthlyGenerations}
+                        onChange={(e) =>
+                          setPlanFormData({
+                            ...planFormData,
+                            usageLimits: {
+                              ...planFormData.usageLimits,
+                              monthlyGenerations: e.target.value,
+                            },
+                          })
+                        }
+                        placeholder="0"
+                      />
+                    </div>
+                  </div>
+                </div>
               </div>
             ) : planFormData.role === "music_teacher" ? (
               <div className="space-y-2">
@@ -2260,6 +2300,54 @@ export default function AdminSubscriptions() {
                     <p className="text-xs text-muted-foreground">
                       Maximum number of lessons the teacher can create
                     </p>
+                  </div>
+                </div>
+
+                <div className="space-y-2 border-t pt-4 mt-4">
+                  <Label>Usage Limits</Label>
+                  <p className="text-xs text-muted-foreground mb-2">
+                    Both daily and monthly limits are required. Set to 0 to disable generation for that period.
+                  </p>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="dailyGenerations">Daily Generations</Label>
+                      <Input
+                        id="dailyGenerations"
+                        type="number"
+                        min="0"
+                        value={planFormData.usageLimits.dailyGenerations}
+                        onChange={(e) =>
+                          setPlanFormData({
+                            ...planFormData,
+                            usageLimits: {
+                              ...planFormData.usageLimits,
+                              dailyGenerations: e.target.value,
+                            },
+                          })
+                        }
+                        placeholder="0"
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="monthlyGenerations">Monthly Generations</Label>
+                      <Input
+                        id="monthlyGenerations"
+                        type="number"
+                        min="0"
+                        value={planFormData.usageLimits.monthlyGenerations}
+                        onChange={(e) =>
+                          setPlanFormData({
+                            ...planFormData,
+                            usageLimits: {
+                              ...planFormData.usageLimits,
+                              monthlyGenerations: e.target.value,
+                            },
+                          })
+                        }
+                        placeholder="0"
+                      />
+                    </div>
                   </div>
                 </div>
               </div>
@@ -2324,6 +2412,54 @@ export default function AdminSubscriptions() {
                     <p className="text-xs text-muted-foreground">
                       Maximum albums the artist can publish per month. Set to 0 to disable.
                     </p>
+                  </div>
+                </div>
+
+                <div className="space-y-2 border-t pt-4 mt-4">
+                  <Label>Usage Limits</Label>
+                  <p className="text-xs text-muted-foreground mb-2">
+                    Both daily and monthly limits are required. Set to 0 to disable generation for that period.
+                  </p>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="dailyGenerations">Daily Generations</Label>
+                      <Input
+                        id="dailyGenerations"
+                        type="number"
+                        min="0"
+                        value={planFormData.usageLimits.dailyGenerations}
+                        onChange={(e) =>
+                          setPlanFormData({
+                            ...planFormData,
+                            usageLimits: {
+                              ...planFormData.usageLimits,
+                              dailyGenerations: e.target.value,
+                            },
+                          })
+                        }
+                        placeholder="0"
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="monthlyGenerations">Monthly Generations</Label>
+                      <Input
+                        id="monthlyGenerations"
+                        type="number"
+                        min="0"
+                        value={planFormData.usageLimits.monthlyGenerations}
+                        onChange={(e) =>
+                          setPlanFormData({
+                            ...planFormData,
+                            usageLimits: {
+                              ...planFormData.usageLimits,
+                              monthlyGenerations: e.target.value,
+                            },
+                          })
+                        }
+                        placeholder="0"
+                      />
+                    </div>
                   </div>
                 </div>
               </div>
@@ -2406,6 +2542,54 @@ export default function AdminSubscriptions() {
                     </p>
                   </div>
                 </div>
+
+                <div className="space-y-2 border-t pt-4 mt-4">
+                  <Label>Usage Limits</Label>
+                  <p className="text-xs text-muted-foreground mb-2">
+                    Both daily and monthly limits are required. Set to 0 to disable generation for that period.
+                  </p>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="dailyGenerations">Daily Generations</Label>
+                      <Input
+                        id="dailyGenerations"
+                        type="number"
+                        min="0"
+                        value={planFormData.usageLimits.dailyGenerations}
+                        onChange={(e) =>
+                          setPlanFormData({
+                            ...planFormData,
+                            usageLimits: {
+                              ...planFormData.usageLimits,
+                              dailyGenerations: e.target.value,
+                            },
+                          })
+                        }
+                        placeholder="0"
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="monthlyGenerations">Monthly Generations</Label>
+                      <Input
+                        id="monthlyGenerations"
+                        type="number"
+                        min="0"
+                        value={planFormData.usageLimits.monthlyGenerations}
+                        onChange={(e) =>
+                          setPlanFormData({
+                            ...planFormData,
+                            usageLimits: {
+                              ...planFormData.usageLimits,
+                              monthlyGenerations: e.target.value,
+                            },
+                          })
+                        }
+                        placeholder="0"
+                      />
+                    </div>
+                  </div>
+                </div>
               </div>
             ) : planFormData.role === "doctor" ? (
               <div className="space-y-4 border-t pt-4">
@@ -2463,6 +2647,54 @@ export default function AdminSubscriptions() {
                     <p className="text-xs text-muted-foreground">
                       Maximum guidance articles the doctor can publish per month. Set to 0 to disable.
                     </p>
+                  </div>
+                </div>
+
+                <div className="space-y-2 border-t pt-4 mt-4">
+                  <Label>Usage Limits</Label>
+                  <p className="text-xs text-muted-foreground mb-2">
+                    Both daily and monthly limits are required. Set to 0 to disable generation for that period.
+                  </p>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="dailyGenerations">Daily Generations</Label>
+                      <Input
+                        id="dailyGenerations"
+                        type="number"
+                        min="0"
+                        value={planFormData.usageLimits.dailyGenerations}
+                        onChange={(e) =>
+                          setPlanFormData({
+                            ...planFormData,
+                            usageLimits: {
+                              ...planFormData.usageLimits,
+                              dailyGenerations: e.target.value,
+                            },
+                          })
+                        }
+                        placeholder="0"
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="monthlyGenerations">Monthly Generations</Label>
+                      <Input
+                        id="monthlyGenerations"
+                        type="number"
+                        min="0"
+                        value={planFormData.usageLimits.monthlyGenerations}
+                        onChange={(e) =>
+                          setPlanFormData({
+                            ...planFormData,
+                            usageLimits: {
+                              ...planFormData.usageLimits,
+                              monthlyGenerations: e.target.value,
+                            },
+                          })
+                        }
+                        placeholder="0"
+                      />
+                    </div>
                   </div>
                 </div>
               </div>
@@ -2556,16 +2788,64 @@ export default function AdminSubscriptions() {
                     </p>
                   </div>
                 </div>
+
+                <div className="space-y-2 border-t pt-4 mt-4">
+                  <Label>Usage Limits</Label>
+                  <p className="text-xs text-muted-foreground mb-2">
+                    Both daily and monthly limits are required. Set to 0 to disable generation for that period.
+                  </p>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="dailyGenerations">Daily Generations</Label>
+                      <Input
+                        id="dailyGenerations"
+                        type="number"
+                        min="0"
+                        value={planFormData.usageLimits.dailyGenerations}
+                        onChange={(e) =>
+                          setPlanFormData({
+                            ...planFormData,
+                            usageLimits: {
+                              ...planFormData.usageLimits,
+                              dailyGenerations: e.target.value,
+                            },
+                          })
+                        }
+                        placeholder="0"
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="monthlyGenerations">Monthly Generations</Label>
+                      <Input
+                        id="monthlyGenerations"
+                        type="number"
+                        min="0"
+                        value={planFormData.usageLimits.monthlyGenerations}
+                        onChange={(e) =>
+                          setPlanFormData({
+                            ...planFormData,
+                            usageLimits: {
+                              ...planFormData.usageLimits,
+                              monthlyGenerations: e.target.value,
+                            },
+                          })
+                        }
+                        placeholder="0"
+                      />
+                    </div>
+                  </div>
+                </div>
               </div>
             ) : (
               <div className="space-y-2">
-                <Label>Usage Limits *</Label>
+                <Label>Usage Limits</Label>
                 <p className="text-xs text-muted-foreground mb-2">
                   Both daily and monthly limits are required. Set to 0 to disable generation for that period.
                 </p>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
-                    <Label htmlFor="dailyGenerations">Daily Generations *</Label>
+                    <Label htmlFor="dailyGenerations">Daily Generations</Label>
                     <Input
                       id="dailyGenerations"
                       type="number"
@@ -2581,12 +2861,11 @@ export default function AdminSubscriptions() {
                         })
                       }
                       placeholder="0"
-                      required
                     />
                   </div>
 
                   <div className="space-y-2">
-                    <Label htmlFor="monthlyGenerations">Monthly Generations *</Label>
+                    <Label htmlFor="monthlyGenerations">Monthly Generations</Label>
                     <Input
                       id="monthlyGenerations"
                       type="number"
@@ -2602,7 +2881,6 @@ export default function AdminSubscriptions() {
                         })
                       }
                       placeholder="0"
-                      required
                     />
                   </div>
                 </div>

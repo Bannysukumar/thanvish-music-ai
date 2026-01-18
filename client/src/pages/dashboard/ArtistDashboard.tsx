@@ -21,7 +21,8 @@ import {
   CheckCircle2,
   Crown,
   Calendar,
-  Loader2
+  Loader2,
+  Sparkles
 } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { db, auth } from "@/lib/firebase";
@@ -467,6 +468,88 @@ export default function ArtistDashboard() {
                         ({subscriptionDetails.daysRemaining > 0 ? `${subscriptionDetails.daysRemaining} days remaining` : "Expired"})
                       </span>
                     )}
+                  </div>
+                )}
+
+                {/* Daily Generations */}
+                {subscriptionDetails.dailyLimit !== undefined && subscriptionDetails.dailyLimit > 0 && (
+                  <div className="p-4 border rounded-lg space-y-4 mt-4">
+                    <div>
+                      <h3 className="font-semibold text-sm flex items-center gap-2">
+                        <Sparkles className="h-4 w-4" />
+                        Daily Generations
+                      </h3>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        Music generation limit for today
+                      </p>
+                    </div>
+                    
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="text-muted-foreground">Used / Limit</span>
+                        <span className="font-semibold">
+                          {subscriptionDetails.dailyUsed || 0} / {subscriptionDetails.dailyLimit}
+                        </span>
+                      </div>
+                      <Progress 
+                        value={subscriptionDetails.dailyLimit > 0 
+                          ? ((subscriptionDetails.dailyUsed || 0) / subscriptionDetails.dailyLimit) * 100 
+                          : 0} 
+                        className="h-2" 
+                      />
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="text-muted-foreground">Remaining</span>
+                        <span className="font-semibold">
+                          {subscriptionDetails.dailyRemaining || 0} generations
+                        </span>
+                      </div>
+                      {subscriptionDetails.dailyRemaining === 0 && subscriptionDetails.dailyLimit > 0 && (
+                        <p className="text-xs text-destructive">
+                          Daily limit reached. Limit resets at midnight.
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Monthly Generations */}
+                {subscriptionDetails.monthlyLimit !== undefined && subscriptionDetails.monthlyLimit > 0 && (
+                  <div className="p-4 border rounded-lg space-y-4 mt-4">
+                    <div>
+                      <h3 className="font-semibold text-sm flex items-center gap-2">
+                        <Sparkles className="h-4 w-4" />
+                        Monthly Generations
+                      </h3>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        Music generation limit for this month
+                      </p>
+                    </div>
+                    
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="text-muted-foreground">Used / Limit</span>
+                        <span className="font-semibold">
+                          {subscriptionDetails.monthlyUsed || 0} / {subscriptionDetails.monthlyLimit}
+                        </span>
+                      </div>
+                      <Progress 
+                        value={subscriptionDetails.monthlyLimit > 0 
+                          ? ((subscriptionDetails.monthlyUsed || 0) / subscriptionDetails.monthlyLimit) * 100 
+                          : 0} 
+                        className="h-2" 
+                      />
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="text-muted-foreground">Remaining</span>
+                        <span className="font-semibold">
+                          {subscriptionDetails.monthlyRemaining || 0} generations
+                        </span>
+                      </div>
+                      {subscriptionDetails.monthlyRemaining === 0 && subscriptionDetails.monthlyLimit > 0 && (
+                        <p className="text-xs text-destructive">
+                          Monthly limit reached. Limit resets on the 1st of next month.
+                        </p>
+                      )}
+                    </div>
                   </div>
                 )}
 

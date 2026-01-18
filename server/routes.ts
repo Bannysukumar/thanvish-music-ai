@@ -3803,9 +3803,34 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: "Either duration (days) or validUntil (date) is required" });
       }
       
-      // Usage limits validation - different for teacher vs other roles
+      // Usage limits validation - optional for all roles
+      // If provided, validate that both daily and monthly are provided and valid
+      if (usageLimits !== undefined && usageLimits !== null) {
+        const hasDailyLimit = usageLimits.dailyGenerations !== undefined && usageLimits.dailyGenerations !== null && usageLimits.dailyGenerations !== "";
+        const hasMonthlyLimit = usageLimits.monthlyGenerations !== undefined && usageLimits.monthlyGenerations !== null && usageLimits.monthlyGenerations !== "";
+        
+        if (hasDailyLimit || hasMonthlyLimit) {
+          // If one is provided, both must be provided
+          if (!hasDailyLimit || !hasMonthlyLimit) {
+            return res.status(400).json({ error: "Both dailyGenerations and monthlyGenerations are required if one is provided" });
+          }
+          
+          const dailyLimit = parseInt(usageLimits.dailyGenerations);
+          const monthlyLimit = parseInt(usageLimits.monthlyGenerations);
+          
+          if (isNaN(dailyLimit) || dailyLimit < 0) {
+            return res.status(400).json({ error: "dailyGenerations must be a non-negative integer" });
+          }
+          
+          if (isNaN(monthlyLimit) || monthlyLimit < 0) {
+            return res.status(400).json({ error: "monthlyGenerations must be a non-negative integer" });
+          }
+        }
+      }
+      
+      // Teacher-specific validation
       if (role === "music_teacher") {
-        // For teachers, validate teacher feature limits instead
+        // For teachers, validate teacher feature limits
         if (teacherMaxCourses === undefined || teacherMaxLessons === undefined) {
           return res.status(400).json({ error: "teacherMaxCourses and teacherMaxLessons are required for music_teacher plans" });
         }
@@ -3816,25 +3841,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
         if (isNaN(maxLessons) || maxLessons < 0) {
           return res.status(400).json({ error: "teacherMaxLessons must be a non-negative integer" });
-        }
-      } else if (role === "student") {
-        // Student plans don't require generation limits - they use teacher allocation instead
-        // Student-specific validation is handled below
-      } else {
-        // For other roles, validate generation limits
-        if (!usageLimits || usageLimits.dailyGenerations === undefined || usageLimits.monthlyGenerations === undefined) {
-          return res.status(400).json({ error: "Both dailyGenerations and monthlyGenerations limits are required" });
-        }
-        
-        const dailyLimit = parseInt(usageLimits.dailyGenerations);
-        const monthlyLimit = parseInt(usageLimits.monthlyGenerations);
-        
-        if (isNaN(dailyLimit) || dailyLimit < 0) {
-          return res.status(400).json({ error: "dailyGenerations must be a non-negative integer" });
-        }
-        
-        if (isNaN(monthlyLimit) || monthlyLimit < 0) {
-          return res.status(400).json({ error: "monthlyGenerations must be a non-negative integer" });
         }
       }
 
@@ -4046,13 +4052,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
         planData.validUntil = null; // Explicitly set to null so it's stored
       }
       
-      // Set usage limits based on role
-      if (role === "music_teacher") {
-        // For teachers, set generation limits to 0 and use teacher feature limits
+      // Set usage limits - optional for all roles, use provided values or default to 0
+      const hasDailyLimitValue = usageLimits?.dailyGenerations !== undefined && usageLimits?.dailyGenerations !== null && usageLimits?.dailyGenerations !== "";
+      const hasMonthlyLimitValue = usageLimits?.monthlyGenerations !== undefined && usageLimits?.monthlyGenerations !== null && usageLimits?.monthlyGenerations !== "";
+      
+      if (hasDailyLimitValue && hasMonthlyLimitValue) {
+        planData.usageLimits = {
+          dailyGenerations: parseInt(usageLimits.dailyGenerations) || 0,
+          monthlyGenerations: parseInt(usageLimits.monthlyGenerations) || 0,
+        };
+      } else {
+        // Default to 0 if not provided
         planData.usageLimits = {
           dailyGenerations: 0,
           monthlyGenerations: 0,
         };
+      }
+      
+      // Set role-specific fields
+      if (role === "music_teacher") {
+        // For teachers, use teacher feature limits
         planData.teacherMaxStudents = parseInt(teacherMaxStudents) || 0;
         planData.validityDays = calculatedDuration || 0; // Store validityDays for teacher plans
         planData.teacherMaxCourses = parseInt(teacherMaxCourses) || 0;
@@ -4060,11 +4079,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         // Explicitly set trial fields to null if not provided
         planData.trialTeacherMaxStudents = null;
       } else if (role === "student") {
-        // For students, set generation limits (if needed) and student-specific fields
-        planData.usageLimits = {
-          dailyGenerations: parseInt(usageLimits?.dailyGenerations) || 0,
-          monthlyGenerations: parseInt(usageLimits?.monthlyGenerations) || 0,
-        };
+        // For students, set student-specific fields
         planData.validityDays = calculatedDuration || 0;
         // Student enrollment limit (default to 0 = unlimited if not provided)
         planData.studentMaxEnrollments = parseInt(req.body.studentMaxEnrollments) || 0;
@@ -4080,11 +4095,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         planData.teacherMaxLessons = null;
         planData.trialTeacherMaxStudents = null;
       } else if (role === "artist") {
-        // For artists, set generation limits to 0 (they use track/album limits instead)
-        planData.usageLimits = {
-          dailyGenerations: 0,
-          monthlyGenerations: 0,
-        };
+        // For artists, set artist-specific limits
         planData.validityDays = calculatedDuration || 0;
         // Artist-specific limits
         planData.maxTrackUploadsPerDay = parseInt(req.body.maxTrackUploadsPerDay) || 0;
@@ -4100,11 +4111,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         planData.allocationStrategy = null;
         planData.preferredTeacherCategory = null;
       } else if (role === "doctor") {
-        // For doctors, set generation limits to 0 (they use program/template/article limits instead)
-        planData.usageLimits = {
-          dailyGenerations: 0,
-          monthlyGenerations: 0,
-        };
+        // For doctors, set doctor-specific limits (usage limits already set above)
         planData.validityDays = calculatedDuration || 0;
         // Doctor-specific limits
         planData.maxProgramsCreatePerMonth = parseInt(maxProgramsCreatePerMonth) || 0;
@@ -4130,11 +4137,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         planData.artistDiscoveryPerMonth = null;
         planData.maxShortlistsCreatePerMonth = null;
       } else if (role === "music_director") {
-        // For directors, set generation limits to 0 (they use project/discovery/shortlist limits instead)
-        planData.usageLimits = {
-          dailyGenerations: 0,
-          monthlyGenerations: 0,
-        };
+        // For directors, set director-specific limits (usage limits already set above)
         planData.validityDays = calculatedDuration || 0;
         // Director-specific limits
         planData.maxActiveProjects = parseInt(req.body.maxActiveProjects) || 0;
@@ -4159,11 +4162,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         planData.maxTemplatesCreatePerMonth = null;
         planData.maxArticlesPublishPerMonth = null;
       } else if (role === "astrologer") {
-        // For astrologers, set generation limits to 0 (they use client/reading/template/rasi/post limits instead)
-        planData.usageLimits = {
-          dailyGenerations: 0,
-          monthlyGenerations: 0,
-        };
+        // For astrologers, set astrologer-specific limits (usage limits already set above)
         planData.validityDays = calculatedDuration || 0;
         // Astrologer-specific limits
         planData.maxClientsActive = parseInt(req.body.maxClientsActive) || 0;
@@ -4195,11 +4194,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         planData.maxTemplatesCreatePerMonth = null;
         planData.maxArticlesPublishPerMonth = null;
       } else {
-        // For other roles, use generation limits
-        planData.usageLimits = {
-          dailyGenerations: parseInt(usageLimits.dailyGenerations) || 0,
-          monthlyGenerations: parseInt(usageLimits.monthlyGenerations) || 0,
-        };
+        // For other roles (e.g., "user"), usage limits already set above
         // Set teacher fields to null for non-teacher plans
         planData.teacherMaxStudents = null;
         planData.validityDays = null;
@@ -4385,31 +4380,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
       
-      // Usage limits validation - different for teacher and student vs other roles
+      // Usage limits validation - optional for all roles
       if (usageLimits !== undefined) {
-        if (finalRole === "music_teacher") {
-          // For teachers, set generation limits to 0 (they don't use generation limits)
-          updateData.usageLimits = {
-            dailyGenerations: 0,
-            monthlyGenerations: 0,
-          };
-        } else if (finalRole === "student") {
-          // For students, set generation limits to 0 (they don't use generation limits)
-          updateData.usageLimits = {
-            dailyGenerations: 0,
-            monthlyGenerations: 0,
-          };
-        } else if (finalRole === "artist") {
-          // For artists, set generation limits to 0 (they use track/album limits instead)
-          updateData.usageLimits = {
-            dailyGenerations: 0,
-            monthlyGenerations: 0,
-          };
-        } else {
-          // For other roles, validate generation limits
-          if (usageLimits.dailyGenerations === undefined || usageLimits.monthlyGenerations === undefined) {
-            return res.status(400).json({ error: "Both dailyGenerations and monthlyGenerations are required" });
+        // If usageLimits is provided, validate and use the provided values
+        // If both are provided, validate them; otherwise default to 0
+        const hasDailyLimit = usageLimits.dailyGenerations !== undefined && usageLimits.dailyGenerations !== null && usageLimits.dailyGenerations !== "";
+        const hasMonthlyLimit = usageLimits.monthlyGenerations !== undefined && usageLimits.monthlyGenerations !== null && usageLimits.monthlyGenerations !== "";
+        
+        if (hasDailyLimit || hasMonthlyLimit) {
+          // If one is provided, both must be provided
+          if (!hasDailyLimit || !hasMonthlyLimit) {
+            return res.status(400).json({ error: "Both dailyGenerations and monthlyGenerations are required if one is provided" });
           }
+          
           const dailyLimit = parseInt(usageLimits.dailyGenerations);
           const monthlyLimit = parseInt(usageLimits.monthlyGenerations);
           
@@ -4423,6 +4406,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
           updateData.usageLimits = {
             dailyGenerations: dailyLimit,
             monthlyGenerations: monthlyLimit,
+          };
+        } else {
+          // If neither is provided, default to 0
+          updateData.usageLimits = {
+            dailyGenerations: 0,
+            monthlyGenerations: 0,
           };
         }
       }
