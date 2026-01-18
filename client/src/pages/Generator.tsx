@@ -784,7 +784,7 @@ export default function Generator() {
 
         // Start polling for status
         const pollStatus = async (taskId: string, requestData: MusicGenerationRequest) => {
-          const maxAttempts = 60; // Poll for up to 5 minutes (60 * 5 seconds)
+          const maxAttempts = 180; // Poll for up to 15 minutes (180 * 5 seconds = 900 seconds = 15 minutes)
           let attempts = 0;
 
           const checkStatus = async (): Promise<void> => {

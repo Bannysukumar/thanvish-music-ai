@@ -563,7 +563,7 @@ export default function MusicTherapyDashboard() {
   });
 
   const pollForMusic = async (taskId: string) => {
-    const maxAttempts = 60; // 5 minutes max
+    const maxAttempts = 180; // Poll for up to 15 minutes (180 * 5 seconds = 900 seconds = 15 minutes)
     let attempts = 0;
 
     const poll = setInterval(async () => {
