@@ -2035,6 +2035,45 @@ export async function registerRoutes(app: Express): Promise<Server> {
             });
           }
         }
+        
+        // Also check Firestore - callback might have saved it there
+        try {
+          console.log(`[Status] Checking Firestore for taskId: ${taskId}`);
+          const firestoreQuery = await adminDb.collection("generatedMusic")
+            .where("taskId", "==", taskId)
+            .limit(1)
+            .get();
+          
+          console.log(`[Status] Firestore query returned ${firestoreQuery.empty ? 0 : 1} document(s)`);
+          
+          if (!firestoreQuery.empty) {
+            const firestoreDoc = firestoreQuery.docs[0];
+            const firestoreData = firestoreDoc.data();
+            
+            console.log(`[Status] Found document with audioUrl: ${!!firestoreData.audioUrl}`);
+            
+            if (firestoreData.audioUrl) {
+              // Found in Firestore with audio URL - callback worked!
+              const audioUrls = firestoreData.allAudioUrls || firestoreData.firebaseStorageUrls || [firestoreData.audioUrl];
+              console.log(`[Status] ✅ Returning complete status with ${audioUrls.length} audio URL(s)`);
+              return res.json({
+                taskId,
+                status: "complete",
+                audioUrl: firestoreData.audioUrl,
+                audioUrls: audioUrls,
+                title: firestoreData.title,
+              });
+            } else {
+              console.log(`[Status] Document found but no audioUrl yet`);
+            }
+          } else {
+            console.log(`[Status] No document found in Firestore for taskId: ${taskId}`);
+          }
+        } catch (firestoreError) {
+          console.error("[Status] Error checking Firestore:", firestoreError);
+          // Continue to return pending if Firestore check fails
+        }
+        
         // Return pending - waiting for callback
         return res.json({
           taskId,
@@ -2090,13 +2129,53 @@ export async function registerRoutes(app: Express): Promise<Server> {
           const composition = await storage.getComposition(compositionId);
           if (composition && composition.audioUrl) {
             // Composition already has audio URL (callback worked)
+            const audioUrls = compositionAudioUrls.get(compositionId);
             return res.json({
               taskId,
               status: "complete",
               audioUrl: composition.audioUrl,
+              audioUrls: audioUrls || [composition.audioUrl],
               title: composition.title,
             });
           }
+        }
+        
+        // Also check Firestore - callback might have saved it there even if in-memory lookup failed
+        try {
+          console.log(`[Status] Checking Firestore (fallback) for taskId: ${taskId}`);
+          const firestoreQuery = await adminDb.collection("generatedMusic")
+            .where("taskId", "==", taskId)
+            .limit(1)
+            .get();
+          
+          console.log(`[Status] Firestore query (fallback) returned ${firestoreQuery.empty ? 0 : 1} document(s)`);
+          
+          if (!firestoreQuery.empty) {
+            const firestoreDoc = firestoreQuery.docs[0];
+            const firestoreData = firestoreDoc.data();
+            
+            console.log(`[Status] Found document (fallback) with audioUrl: ${!!firestoreData.audioUrl}`);
+            
+            if (firestoreData.audioUrl) {
+              // Found in Firestore with audio URL - callback worked!
+              const audioUrls = firestoreData.allAudioUrls || firestoreData.firebaseStorageUrls || [firestoreData.audioUrl];
+              console.log(`[Status] ✅ Returning complete status (fallback) with ${audioUrls.length} audio URL(s)`);
+              return res.json({
+                taskId,
+                status: "complete",
+                audioUrl: firestoreData.audioUrl,
+                audioUrls: audioUrls,
+                title: firestoreData.title,
+              });
+            } else {
+              console.log(`[Status] Document found (fallback) but no audioUrl yet`);
+            }
+          } else {
+            console.log(`[Status] No document found in Firestore (fallback) for taskId: ${taskId}`);
+          }
+        } catch (firestoreError) {
+          console.error("[Status] Error checking Firestore (fallback):", firestoreError);
+          // Continue to return pending if Firestore check fails
         }
         
         // Status endpoint not available - return pending status
@@ -2119,7 +2198,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Callback endpoint for API.box webhooks
   app.post("/api/music-callback", async (req, res) => {
     try {
-      console.log("[API.box] Callback received:", JSON.stringify(req.body, null, 2));
+      console.log("[API.box] ========== CALLBACK RECEIVED ==========");
+      console.log("[API.box] Headers:", JSON.stringify(req.headers, null, 2));
+      console.log("[API.box] Body:", JSON.stringify(req.body, null, 2));
+      console.log("[API.box] ========================================");
       const callbackData = req.body;
       
       // API.box uses different field names - handle both formats
