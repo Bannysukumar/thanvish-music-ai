@@ -670,7 +670,57 @@ export default function Generator() {
 
   const generateMutation = useMutation({
     mutationFn: async (data: MusicGenerationRequest) => {
-      const res = await apiRequest("POST", "/api/generate-music", data);
+      // Ensure we have a valid user and token before making the request
+      if (!user || user.isGuest) {
+        throw new Error("Authentication required. Please login to generate music.");
+      }
+
+      // Get fresh token directly from Firebase auth
+      let authToken: string | null = null;
+      try {
+        const { auth } = await import("@/lib/firebase");
+        const currentUser = auth.currentUser;
+        
+        if (!currentUser) {
+          // Wait a bit for auth to initialize
+          await new Promise(resolve => setTimeout(resolve, 200));
+          const retryUser = auth.currentUser;
+          if (retryUser) {
+            authToken = await retryUser.getIdToken(true);
+          } else {
+            throw new Error("User not authenticated. Please login again.");
+          }
+        } else {
+          authToken = await currentUser.getIdToken(true);
+        }
+      } catch (error: any) {
+        console.error("Failed to get auth token:", error);
+        throw new Error("Authentication failed. Please login again.");
+      }
+
+      if (!authToken) {
+        throw new Error("Authentication required. Please login to generate music.");
+      }
+
+      // Make the API request with explicit token
+      const res = await fetch("/api/generate-music", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${authToken}`,
+        },
+        body: JSON.stringify(data),
+        credentials: "include",
+      });
+
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({ error: res.statusText }));
+        const error = new Error(errorData.error || "Failed to generate music") as Error & { status?: number; code?: string };
+        error.status = res.status;
+        error.code = errorData.code;
+        throw error;
+      }
+
       return await res.json();
     },
     onSuccess: async (data) => {

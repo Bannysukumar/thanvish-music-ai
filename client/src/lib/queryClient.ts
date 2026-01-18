@@ -39,14 +39,37 @@ export async function apiRequest(
   // Get auth token if user is logged in - force refresh to ensure valid token
   let authToken: string | null = null;
   try {
-    const currentUser = auth.currentUser;
+    // Wait for auth to be ready (check multiple times if needed)
+    let currentUser = auth.currentUser;
+    let attempts = 0;
+    const maxAttempts = 3;
+    
+    // If currentUser is null, wait a bit and try again (auth might still be initializing)
+    while (!currentUser && attempts < maxAttempts) {
+      await new Promise(resolve => setTimeout(resolve, 100));
+      currentUser = auth.currentUser;
+      attempts++;
+    }
+    
     if (currentUser) {
       // Force refresh token to ensure it's valid
-      authToken = await currentUser.getIdToken(true);
+      try {
+        authToken = await currentUser.getIdToken(true);
+      } catch (tokenError) {
+        // If force refresh fails, try without forcing
+        console.warn("Force token refresh failed, trying without force:", tokenError);
+        try {
+          authToken = await currentUser.getIdToken(false);
+        } catch (fallbackError) {
+          console.error("Failed to get auth token (both attempts):", fallbackError);
+        }
+      }
+    } else {
+      console.warn("No current user found in auth.currentUser after waiting");
     }
   } catch (error) {
     // If token fetch fails, log error but continue
-    console.warn("Failed to get auth token:", error);
+    console.error("Failed to get auth token:", error);
   }
   
   const headers: Record<string, string> = {};
@@ -55,6 +78,8 @@ export async function apiRequest(
   }
   if (authToken) {
     headers["Authorization"] = `Bearer ${authToken}`;
+  } else {
+    console.warn("No auth token available for API request to:", url);
   }
   
   const res = await fetch(url, {
