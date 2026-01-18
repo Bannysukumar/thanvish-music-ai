@@ -3185,6 +3185,175 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Manual processing endpoint to process a taskId with known audio URLs (admin only)
+  // Use this when callback was received but failed to process
+  app.post("/api/admin/process-task/:taskId", requireAdmin, async (req, res) => {
+    try {
+      const { taskId } = req.params;
+      const { audioUrls, title } = req.body; // Accept audioUrls and title from request body
+      
+      console.log(`[Admin Process] Manually processing taskId: ${taskId}`);
+      
+      if (!audioUrls || !Array.isArray(audioUrls) || audioUrls.length === 0) {
+        return res.status(400).json({ error: "audioUrls array is required" });
+      }
+      
+      // Find composition
+      const compositionId = taskIdToCompositionId.get(taskId);
+      if (!compositionId) {
+        // Try to find in Firestore
+        const firestoreQuery = await adminDb.collection("generatedMusic")
+          .where("taskId", "==", taskId)
+          .limit(1)
+          .get();
+        
+        if (!firestoreQuery.empty) {
+          const firestoreDoc = firestoreQuery.docs[0];
+          const firestoreData = firestoreDoc.data();
+          if (firestoreData.audioUrl) {
+            return res.json({ 
+              success: true, 
+              message: "Generation already processed",
+              taskId,
+              audioUrl: firestoreData.audioUrl,
+            });
+          }
+        }
+        
+        return res.status(404).json({ error: "Composition not found for this taskId" });
+      }
+      
+      const composition = await storage.getComposition(compositionId);
+      if (!composition) {
+        return res.status(404).json({ error: "Composition not found" });
+      }
+      
+      // Check if already processed
+      const firestoreCheck = await adminDb.collection("generatedMusic")
+        .where("taskId", "==", taskId)
+        .limit(1)
+        .get();
+      
+      if (!firestoreCheck.empty && firestoreCheck.docs[0].data().audioUrl) {
+        return res.json({ 
+          success: true, 
+          message: "Generation already processed",
+          taskId,
+        });
+      }
+      
+      // Process the audio URLs
+      const allAudioUrls = audioUrls.filter((url: string) => url && url.trim() !== "");
+      const audioUrl = allAudioUrls[0];
+      
+      if (!audioUrl) {
+        return res.status(400).json({ error: "No valid audio URLs provided" });
+      }
+      
+      compositionAudioUrls.set(compositionId, allAudioUrls);
+      const userInfo = taskIdToUserInfo.get(taskId) || { userId: "unknown", userRole: "user" };
+      
+      let firebaseStorageUrl = audioUrl;
+      const storageBucket = admin.storage().bucket();
+      const uploadedUrls: string[] = [];
+      
+      try {
+        for (let i = 0; i < allAudioUrls.length; i++) {
+          const audioUrlToUpload = allAudioUrls[i];
+          try {
+            console.log(`[Admin Process] Downloading audio ${i + 1}/${allAudioUrls.length} from: ${audioUrlToUpload}`);
+            const audioResponse = await fetch(audioUrlToUpload);
+            if (audioResponse.ok) {
+              const audioBuffer = await audioResponse.arrayBuffer();
+              const audioData = Buffer.from(audioBuffer);
+              const fileName = allAudioUrls.length > 1
+                ? `generated-music/${userInfo.userId}/${taskId}_v${i + 1}_${Date.now()}.mp3`
+                : `generated-music/${userInfo.userId}/${taskId}_${Date.now()}.mp3`;
+              const file = storageBucket.file(fileName);
+              await file.save(audioData, {
+                metadata: {
+                  contentType: "audio/mpeg",
+                  metadata: {
+                    taskId: taskId,
+                    compositionId: compositionId,
+                    userId: userInfo.userId,
+                    userRole: userInfo.userRole,
+                    variation: allAudioUrls.length > 1 ? i + 1 : undefined,
+                    generatedAt: new Date().toISOString(),
+                  },
+                },
+              });
+              await file.makePublic();
+              const publicUrl = `https://storage.googleapis.com/${storageBucket.name}/${fileName}`;
+              uploadedUrls.push(publicUrl);
+              if (i === 0) {
+                firebaseStorageUrl = publicUrl;
+              }
+              console.log(`[Admin Process] ✅ Audio ${i + 1}/${allAudioUrls.length} uploaded to Firebase Storage`);
+            }
+          } catch (variationError: any) {
+            console.error(`[Admin Process] Error uploading audio variation ${i + 1}:`, variationError);
+            if (i === 0 && uploadedUrls.length === 0) {
+              uploadedUrls.push(audioUrlToUpload);
+            }
+          }
+        }
+      } catch (storageError: any) {
+        console.error("[Admin Process] Error uploading to Firebase Storage:", storageError);
+        if (uploadedUrls.length === 0) {
+          uploadedUrls.push(audioUrl);
+        }
+      }
+      
+      await storage.updateComposition(compositionId, {
+        audioUrl: firebaseStorageUrl,
+        title: title || composition.title,
+      });
+      
+      const musicData = {
+        taskId: taskId,
+        compositionId: compositionId,
+        title: title || composition.title,
+        raga: composition.raga,
+        tala: composition.tala,
+        instruments: composition.instruments,
+        tempo: composition.tempo,
+        mood: composition.mood,
+        description: composition.description,
+        audioUrl: firebaseStorageUrl,
+        originalAudioUrl: audioUrl,
+        allAudioUrls: uploadedUrls.length > 0 ? uploadedUrls : allAudioUrls,
+        firebaseStorageUrls: uploadedUrls,
+        generatedBy: {
+          userId: userInfo.userId,
+          role: userInfo.userRole,
+          name: userInfo.userName,
+          email: userInfo.userEmail,
+        },
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      };
+      
+      await adminDb.collection("generatedMusic").doc(compositionId).set(musicData);
+      
+      await adminDb.collection("generationLogs").doc(taskId).update({
+        status: "success",
+        creditsConsumed: 12,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+      
+      return res.json({ 
+        success: true, 
+        message: "Task processed successfully",
+        taskId,
+        audioUrl: firebaseStorageUrl,
+      });
+    } catch (error: any) {
+      console.error("[Admin Process] Error:", error);
+      res.status(500).json({ error: "Failed to process task", message: error.message });
+    }
+  });
+
   // Manual sync endpoint to process completed generation from API BOX (admin only)
   app.post("/api/admin/sync-generation/:taskId", requireAdmin, async (req, res) => {
     try {

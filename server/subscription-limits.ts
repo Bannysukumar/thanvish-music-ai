@@ -1,5 +1,4 @@
-import { adminDb } from "./firebase-admin";
-import * as admin from "firebase-admin";
+import { adminDb, admin } from "./firebase-admin";
 
 export interface SubscriptionLimitCheck {
   allowed: boolean;
