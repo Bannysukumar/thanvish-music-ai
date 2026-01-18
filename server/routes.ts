@@ -2550,27 +2550,64 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/compositions/by-task/:taskId", async (req, res) => {
     try {
       const { taskId } = req.params;
-      const compositionId = taskIdToCompositionId.get(taskId);
+      console.log(`[Compositions/by-task] Looking up taskId: ${taskId}`);
       
-      if (!compositionId) {
+      // First check in-memory map
+      let compositionId = taskIdToCompositionId.get(taskId);
+      let composition = null;
+      let audioUrls: string[] | undefined;
+      
+      if (compositionId) {
+        console.log(`[Compositions/by-task] Found compositionId in memory: ${compositionId}`);
+        composition = await storage.getComposition(compositionId);
+        if (composition) {
+          audioUrls = compositionAudioUrls.get(compositionId);
+        }
+      }
+      
+      // If not found in memory, check Firestore
+      if (!composition || !composition.audioUrl) {
+        console.log(`[Compositions/by-task] Checking Firestore for taskId: ${taskId}`);
+        try {
+          const firestoreQuery = await adminDb.collection("generatedMusic")
+            .where("taskId", "==", taskId)
+            .limit(1)
+            .get();
+          
+          if (!firestoreQuery.empty) {
+            const firestoreDoc = firestoreQuery.docs[0];
+            const firestoreData = firestoreDoc.data();
+            console.log(`[Compositions/by-task] Found in Firestore with audioUrl: ${!!firestoreData.audioUrl}`);
+            
+            // Use Firestore data
+            composition = {
+              ...firestoreData,
+              compositionId: firestoreDoc.id,
+            };
+            audioUrls = firestoreData.allAudioUrls || firestoreData.firebaseStorageUrls || (firestoreData.audioUrl ? [firestoreData.audioUrl] : []);
+            compositionId = firestoreDoc.id;
+          } else {
+            console.log(`[Compositions/by-task] Not found in Firestore for taskId: ${taskId}`);
+          }
+        } catch (firestoreError) {
+          console.error("[Compositions/by-task] Error checking Firestore:", firestoreError);
+        }
+      }
+      
+      if (!composition) {
         return res.status(404).json({ error: "Composition not found for this taskId" });
       }
 
-      const composition = await storage.getComposition(compositionId);
-      if (!composition) {
-        return res.status(404).json({ error: "Composition not found" });
-      }
-
-      // Get stored audioUrls for this composition
-      const audioUrls = compositionAudioUrls.get(compositionId);
-      
       // Return composition with completion status and all audio URLs
-      res.json({
+      const result = {
         ...composition,
         taskId,
         isComplete: !!composition.audioUrl,
         audioUrls: audioUrls || (composition.audioUrl ? [composition.audioUrl] : []),
-      });
+      };
+      
+      console.log(`[Compositions/by-task] Returning composition with isComplete: ${result.isComplete}`);
+      res.json(result);
     } catch (error: any) {
       console.error("Error fetching composition by taskId:", error);
       res.status(500).json({ error: "Failed to fetch composition" });

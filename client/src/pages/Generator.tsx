@@ -542,15 +542,16 @@ export default function Generator() {
             const age = Date.now() - task.timestamp;
             if (age > 24 * 60 * 60 * 1000) {
               // Remove old tasks
+              console.log(`Task ${task.taskId} is older than 24 hours, removing from pending list`);
               continue;
             }
 
             const res = await apiRequest("GET", `/api/compositions/by-task/${task.taskId}`);
             
-            // Check content type before parsing JSON (apiRequest already checks status, but content-type might be wrong)
+            // Check content type before parsing JSON
             const contentType = res.headers.get("content-type");
             if (!contentType || !contentType.includes("application/json")) {
-              // Server returned non-JSON (likely HTML error page or 404 page)
+              // Server returned non-JSON (likely HTML error page)
               // This usually means the taskId mapping was lost (server restart)
               console.log(`Task ${task.taskId} returned non-JSON response (${contentType}), removing from pending list`);
               continue; // Remove from pending list
@@ -571,18 +572,25 @@ export default function Generator() {
               });
               
               // Don't add to updatedTasks - remove it from pending list
+              console.log(`Task ${task.taskId} completed, removing from pending list`);
             } else {
               // Still pending, keep it
               updatedTasks.push(task);
             }
           } catch (error: any) {
-            // Error checking this task
+            // Handle 404 - composition not found (taskId mapping lost or never created)
+            if (error.status === 404 || (error.message && error.message.includes("not found"))) {
+              console.log(`Task ${task.taskId} not found (404), removing from pending list`);
+              continue; // Remove from pending list
+            }
+            
             // If it's a JSON parse error (server returned HTML), the mapping was probably lost
             if (error instanceof SyntaxError && error.message.includes("JSON")) {
               console.log(`Task ${task.taskId} mapping lost (server returned HTML), removing from pending list`);
               // Don't add to updatedTasks - remove it from pending list
               continue;
             }
+            
             // Other errors - keep it in the list and try again later
             console.error(`Error checking task ${task.taskId}:`, error);
             updatedTasks.push(task);
