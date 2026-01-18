@@ -118,10 +118,12 @@ export function SignupModal({
     resolver: zodResolver(signupSchema),
   });
 
-  // Watch password for strength indicator
+  // Watch all form fields for reactive validation
   const watchedPassword = watch("password", "");
   const watchedEmail = watch("email", "");
   const watchedMobile = watch("mobileNumber", "");
+  const watchedName = watch("name", "");
+  const watchedConfirmPassword = watch("confirmPassword", "");
 
   // Reset state when modal closes
   useEffect(() => {
@@ -325,14 +327,24 @@ export function SignupModal({
   const passwordStrength = watchedPassword ? getPasswordStrength(watchedPassword) : null;
   const isEmailValid = watchedEmail && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(watchedEmail);
   const canSendOTP = isEmailValid && !emailVerified && !isSendingOTP;
+  
+  // Check if passwords match
+  const passwordsMatch = watchedPassword && watchedConfirmPassword && watchedPassword === watchedConfirmPassword;
+  
+  // Reactive validation for Create Account button
   const canCreateAccount = emailVerified && 
-    getValues("name") && 
-    getValues("email") && 
-    getValues("mobileNumber") && 
-    getValues("password") && 
-    getValues("confirmPassword") &&
+    watchedName && watchedName.trim().length >= 2 &&
+    watchedEmail && isEmailValid &&
+    watchedMobile && watchedMobile.length >= 10 &&
+    watchedPassword && passwordStrength?.strength === "strong" &&
+    watchedConfirmPassword &&
+    passwordsMatch &&
+    !errors.name &&
+    !errors.email &&
+    !errors.mobileNumber &&
     !errors.password &&
-    !errors.confirmPassword;
+    !errors.confirmPassword &&
+    !mobileError;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
