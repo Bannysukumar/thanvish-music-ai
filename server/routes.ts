@@ -1754,20 +1754,31 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const authHeader = req.headers.authorization;
       let userId: string | null = null;
       
+      console.log("[generate-music] Auth header present:", !!authHeader);
+      console.log("[generate-music] Auth header starts with Bearer:", authHeader?.startsWith("Bearer "));
+      
       if (authHeader && authHeader.startsWith("Bearer ")) {
         const token = authHeader.replace("Bearer ", "");
+        console.log("[generate-music] Token length:", token.length);
         try {
           const decodedToken = await adminAuth.verifyIdToken(token);
           userId = decodedToken.uid;
-        } catch (error) {
+          console.log("[generate-music] Token verified, userId:", userId);
+        } catch (error: any) {
+          console.error("[generate-music] Token verification failed:", error.message || error);
           // Token verification failed, try to get userId from body
           userId = req.body.userId || null;
+          if (userId) {
+            console.log("[generate-music] Using userId from body:", userId);
+          }
         }
       } else {
+        console.log("[generate-music] No Bearer token in header, checking body for userId");
         userId = req.body.userId || null;
       }
       
       if (!userId) {
+        console.error("[generate-music] No userId found, returning 401");
         return res.status(401).json({
           error: "Authentication required. Please login to generate music.",
           code: "AUTH_REQUIRED",

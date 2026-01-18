@@ -679,28 +679,50 @@ export default function Generator() {
       let authToken: string | null = null;
       try {
         const { auth } = await import("@/lib/firebase");
-        const currentUser = auth.currentUser;
+        
+        // Retry getting currentUser with increasing delays
+        let currentUser = auth.currentUser;
+        const maxRetries = 5;
+        let retryCount = 0;
+        
+        while (!currentUser && retryCount < maxRetries) {
+          await new Promise(resolve => setTimeout(resolve, 300 * (retryCount + 1)));
+          currentUser = auth.currentUser;
+          retryCount++;
+          console.log(`[generate-music] Retry ${retryCount}: currentUser =`, !!currentUser);
+        }
         
         if (!currentUser) {
-          // Wait a bit for auth to initialize
-          await new Promise(resolve => setTimeout(resolve, 200));
-          const retryUser = auth.currentUser;
-          if (retryUser) {
-            authToken = await retryUser.getIdToken(true);
-          } else {
-            throw new Error("User not authenticated. Please login again.");
-          }
-        } else {
+          console.error("[generate-music] No currentUser after retries, user from context:", user?.id);
+          throw new Error("User not authenticated. Please refresh the page and login again.");
+        }
+        
+        console.log("[generate-music] Got currentUser, getting token...");
+        try {
           authToken = await currentUser.getIdToken(true);
+          console.log("[generate-music] Token retrieved successfully, length:", authToken?.length);
+        } catch (tokenError: any) {
+          console.error("[generate-music] Force refresh failed:", tokenError.message);
+          // Try without force refresh as fallback
+          try {
+            authToken = await currentUser.getIdToken(false);
+            console.log("[generate-music] Token retrieved without force refresh");
+          } catch (fallbackError: any) {
+            console.error("[generate-music] Fallback token retrieval failed:", fallbackError.message);
+            throw new Error("Failed to get authentication token. Please login again.");
+          }
         }
       } catch (error: any) {
-        console.error("Failed to get auth token:", error);
-        throw new Error("Authentication failed. Please login again.");
+        console.error("[generate-music] Failed to get auth token:", error);
+        throw new Error(error.message || "Authentication failed. Please login again.");
       }
 
       if (!authToken) {
+        console.error("[generate-music] No auth token available after retrieval attempt");
         throw new Error("Authentication required. Please login to generate music.");
       }
+      
+      console.log("[generate-music] Making API request with token");
 
       // Make the API request with explicit token
       const res = await fetch("/api/generate-music", {
