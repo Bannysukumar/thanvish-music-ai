@@ -160,6 +160,7 @@ export default function DashboardProfile() {
   const [language, setLanguage] = useState<string>("");
   const [isLoadingPreferences, setIsLoadingPreferences] = useState(true);
   const [isSavingPreferences, setIsSavingPreferences] = useState(false);
+  const [musicVisibility, setMusicVisibility] = useState<"public" | "private" | "subscribers">("public");
   
   // Subscription details state
   const [subscriptionDetails, setSubscriptionDetails] = useState<any>(null);
@@ -248,6 +249,12 @@ export default function DashboardProfile() {
           }
           if (userData.language) {
             setLanguage(userData.language);
+          }
+          if (userData.musicVisibility) {
+            setMusicVisibility(userData.musicVisibility);
+          } else {
+            // Default to public for existing users
+            setMusicVisibility("public");
           }
         }
       } catch (error) {
@@ -1611,6 +1618,78 @@ export default function DashboardProfile() {
           )}
         </CardContent>
       </Card>
+
+          {/* Music Visibility Settings */}
+          {user?.role !== "exclusive" && user?.subscriptionTier !== "exclusive" && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Music className="h-5 w-5" />
+                  Music Visibility
+                </CardTitle>
+                <CardDescription>
+                  Control who can see and access your generated music
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="space-y-2">
+                  <Label>Show my generated music</Label>
+                  <Select
+                    value={musicVisibility || "public"}
+                    onValueChange={async (value) => {
+                      try {
+                        const token = await auth.currentUser?.getIdToken();
+                        const response = await fetch("/api/profile/music-visibility", {
+                          method: "PUT",
+                          headers: {
+                            Authorization: `Bearer ${token}`,
+                            "Content-Type": "application/json",
+                          },
+                          body: JSON.stringify({ visibility: value }),
+                        });
+
+                        if (response.ok) {
+                          setMusicVisibility(value);
+                          toast({
+                            title: "Success",
+                            description: "Music visibility updated",
+                          });
+                        } else {
+                          const error = await response.json();
+                          toast({
+                            title: "Error",
+                            description: error.error || "Failed to update visibility",
+                            variant: "destructive",
+                          });
+                        }
+                      } catch (error) {
+                        console.error("Error updating music visibility:", error);
+                        toast({
+                          title: "Error",
+                          description: "Failed to update visibility",
+                          variant: "destructive",
+                        });
+                      }
+                    }}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="public">Public - Everyone can view</SelectItem>
+                      <SelectItem value="private">Private - Only I can view</SelectItem>
+                      <SelectItem value="subscribers">Subscribers Only - Only subscribers can view</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    {musicVisibility === "public" && "Your music is visible to everyone and can be shared publicly."}
+                    {musicVisibility === "private" && "Your music is only visible to you. Share links will be blocked."}
+                    {musicVisibility === "subscribers" && "Only users with active subscriptions can view your music."}
+                  </p>
+                </div>
+              </CardContent>
+            </Card>
+          )}
         </TabsContent>
 
         {/* Security Tab */}

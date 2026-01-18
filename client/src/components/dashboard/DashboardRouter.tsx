@@ -13,6 +13,8 @@ import Generator from "@/pages/Generator";
 import DashboardLibrary from "@/pages/dashboard/DashboardLibrary";
 import BrowseMusic from "@/pages/dashboard/BrowseMusic";
 import DashboardProfile from "@/pages/dashboard/DashboardProfile";
+import ChatInbox from "@/pages/dashboard/ChatInbox";
+import ChatThread from "@/pages/dashboard/ChatThread";
 import DashboardUpgrade from "@/pages/dashboard/DashboardUpgrade";
 import HoroscopeProfile from "@/pages/dashboard/HoroscopeProfile";
 import MusicTherapyDashboard from "@/pages/dashboard/MusicTherapyDashboard";
@@ -142,6 +144,8 @@ export function DashboardRouter() {
             <Route path="/dashboard/music-therapy" component={MusicTherapyDashboard} />
             <Route path="/dashboard/profile" component={DashboardProfile} />
             <Route path="/dashboard/upgrade" component={DashboardUpgrade} />
+            <Route path="/dashboard/chat/:conversationId" component={ChatThread} />
+            <Route path="/dashboard/chat" component={ChatInbox} />
             
             {/* Teacher routes - protected by TeacherRoute */}
             {/* More specific routes must come before general ones */}

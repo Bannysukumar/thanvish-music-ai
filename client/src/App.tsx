@@ -23,6 +23,7 @@ import TeamMembers from "@/pages/TeamMembers";
 import Contact from "@/pages/Contact";
 import NotFound from "@/pages/not-found";
 import Onboarding from "@/pages/Onboarding";
+import ShareTrack from "@/pages/ShareTrack";
 
 function PublicRouter() {
   return (
@@ -38,6 +39,7 @@ function PublicRouter() {
       <Route path="/blog" component={Blog} />
       <Route path="/team" component={TeamMembers} />
       <Route path="/contact" component={Contact} />
+      <Route path="/share/track/:trackId" component={ShareTrack} />
       <Route component={NotFound} />
       </Switch>
     </Layout>
@@ -84,6 +86,8 @@ function Router() {
       <Route path="/dashboard/generate" component={DashboardRouter} />
       <Route path="/dashboard/library" component={DashboardRouter} />
       <Route path="/dashboard/browse-music" component={DashboardRouter} />
+      <Route path="/dashboard/chat/:conversationId" component={DashboardRouter} />
+      <Route path="/dashboard/chat" component={DashboardRouter} />
       <Route path="/dashboard/horoscope" component={DashboardRouter} />
       <Route path="/dashboard/music-therapy" component={DashboardRouter} />
       <Route path="/dashboard/profile" component={DashboardRouter} />

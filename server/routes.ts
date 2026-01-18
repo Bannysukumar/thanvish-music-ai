@@ -52,6 +52,27 @@ function requireAdmin(req: Request, res: Response, next: NextFunction) {
   next();
 }
 
+// User authentication middleware
+async function requireAuth(req: Request, res: Response, next: NextFunction) {
+  try {
+    const authHeader = req.headers.authorization;
+    
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return res.status(401).json({ error: "Authentication required" });
+    }
+
+    const token = authHeader.replace("Bearer ", "");
+    const decodedToken = await adminAuth.verifyIdToken(token);
+    
+    // Attach userId to request object
+    (req as any).userId = decodedToken.uid;
+    next();
+  } catch (error: any) {
+    console.error("Auth error:", error);
+    return res.status(401).json({ error: "Invalid or expired token" });
+  }
+}
+
 // Helper to read .env file
 function readEnvFile(): Record<string, string> {
   const envPath = path.join(process.cwd(), ".env");
@@ -6552,6 +6573,1234 @@ export async function registerRoutes(app: Express): Promise<Server> {
         error: error.message || "Failed to calculate Vedic astrology",
         code: "CALCULATION_ERROR",
       });
+    }
+  });
+
+  // ============================================
+  // MY LIBRARY ENHANCEMENTS - SOCIAL INTERACTIONS & CHAT
+  // ============================================
+
+  // Get library tracks with filtering (exclude Exclusive users, enforce privacy)
+  app.get("/api/library/tracks", requireAuth, async (req, res) => {
+    try {
+      const userId = req.userId!;
+      
+      // Get all tracks (excluding Exclusive users)
+      const snapshot = await adminDb.collection("generatedMusic")
+        .where("generatedBy.role", "!=", "exclusive")
+        .orderBy("generatedBy.role")
+        .orderBy("createdAt", "desc")
+        .limit(200)
+        .get();
+      
+      // Get current user's data
+      const userDoc = await adminDb.collection("users").doc(userId).get();
+      const userData = userDoc.data();
+      const userSubscriptionStatus = userData?.subscriptionStatus;
+      
+      // Filter tracks based on privacy settings
+      const filteredTracks = [];
+      
+      for (const doc of snapshot.docs) {
+        const trackData = doc.data();
+        const ownerId = trackData.generatedBy?.userId;
+        
+        // Get owner's privacy settings
+        const ownerDoc = await adminDb.collection("users").doc(ownerId).get();
+        const ownerData = ownerDoc.data();
+        const visibility = ownerData?.musicVisibility || "public";
+        
+        // Apply privacy rules
+        let canView = false;
+        
+        if (ownerId === userId) {
+          // Owner can always see their own tracks
+          canView = true;
+        } else if (visibility === "public") {
+          // Public tracks - everyone can see
+          canView = true;
+        } else if (visibility === "private") {
+          // Private tracks - only owner
+          canView = false;
+        } else if (visibility === "subscribers") {
+          // Subscribers only - check if user has active subscription
+          canView = userSubscriptionStatus === "active" || userSubscriptionStatus === "trial";
+        }
+        
+        if (canView) {
+          filteredTracks.push({
+            id: doc.id,
+            ...trackData,
+          });
+        }
+      }
+      
+      res.json({ tracks: filteredTracks });
+    } catch (error: any) {
+      console.error("Error fetching library tracks:", error);
+      res.status(500).json({ error: error.message || "Failed to fetch tracks" });
+    }
+  });
+
+  // Get signed streaming URL for audio (prevents direct download)
+  app.get("/api/tracks/:id/stream", requireAuth, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const userId = req.userId!;
+      
+      // Get track
+      const trackDoc = await adminDb.collection("generatedMusic").doc(id).get();
+      if (!trackDoc.exists) {
+        return res.status(404).json({ error: "Track not found" });
+      }
+      
+      const trackData = trackDoc.data()!;
+      
+      // Check privacy rules
+      const ownerId = trackData.generatedBy?.userId;
+      const ownerDoc = await adminDb.collection("users").doc(ownerId).get();
+      const ownerData = ownerDoc.data();
+      const visibility = ownerData?.musicVisibility || "public";
+      
+      // Enforce privacy
+      if (visibility === "private" && ownerId !== userId) {
+        return res.status(403).json({ error: "This track is private" });
+      }
+      
+      if (visibility === "subscribers" && ownerId !== userId) {
+        // Check if user is subscriber (implement subscription check logic)
+        // For now, allow if user has active subscription
+        const userDoc = await adminDb.collection("users").doc(userId).get();
+        const userData = userDoc.data();
+        if (userData?.subscriptionStatus !== "active" && userData?.subscriptionStatus !== "trial") {
+          return res.status(403).json({ error: "This track is for subscribers only" });
+        }
+      }
+      
+      // Get audio URL from Firebase Storage
+      const audioUrl = trackData.audioUrl || trackData.firebaseStorageUrls?.[0];
+      if (!audioUrl) {
+        return res.status(404).json({ error: "Audio file not found" });
+      }
+      
+      // Generate signed URL (expires in 1 hour)
+      const bucket = admin.storage().bucket();
+      const filePath = audioUrl.split("/o/")[1]?.split("?")[0]?.replace(/%2F/g, "/");
+      
+      if (filePath) {
+        const file = bucket.file(decodeURIComponent(filePath));
+        const [signedUrl] = await file.getSignedUrl({
+          action: "read",
+          expires: Date.now() + 3600000, // 1 hour
+        });
+        
+        // Set headers to discourage download
+        res.setHeader("Content-Type", "audio/mpeg");
+        res.setHeader("Content-Disposition", "inline; filename=\"audio.mp3\"");
+        res.setHeader("X-Content-Type-Options", "nosniff");
+        
+        return res.json({ streamUrl: signedUrl });
+      }
+      
+      // Fallback to direct URL (if already public)
+      res.json({ streamUrl: audioUrl });
+    } catch (error: any) {
+      console.error("Error generating stream URL:", error);
+      res.status(500).json({ error: error.message || "Failed to generate stream URL" });
+    }
+  });
+
+  // Like/Unlike a track
+  app.post("/api/tracks/:id/like", requireAuth, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const userId = req.userId!;
+      
+      const likeRef = adminDb.collection("trackLikes").doc(`${id}_${userId}`);
+      const likeDoc = await likeRef.get();
+      
+      const trackRef = adminDb.collection("generatedMusic").doc(id);
+      const trackDoc = await trackRef.get();
+      
+      if (!trackDoc.exists) {
+        return res.status(404).json({ error: "Track not found" });
+      }
+      
+      if (likeDoc.exists) {
+        // Unlike
+        await likeRef.delete();
+        await trackRef.update({
+          likesCount: admin.firestore.FieldValue.increment(-1),
+        });
+        res.json({ liked: false, likesCount: (trackDoc.data()?.likesCount || 0) - 1 });
+      } else {
+        // Like
+        await likeRef.set({
+          trackId: id,
+          userId,
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+        await trackRef.update({
+          likesCount: admin.firestore.FieldValue.increment(1),
+        });
+        res.json({ liked: true, likesCount: (trackDoc.data()?.likesCount || 0) + 1 });
+      }
+    } catch (error: any) {
+      console.error("Error toggling like:", error);
+      res.status(500).json({ error: error.message || "Failed to toggle like" });
+    }
+  });
+
+  // Rate a track (1-5 stars)
+  app.post("/api/tracks/:id/rate", requireAuth, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { rating } = req.body;
+      const userId = req.userId!;
+      
+      if (!rating || rating < 1 || rating > 5) {
+        return res.status(400).json({ error: "Rating must be between 1 and 5" });
+      }
+      
+      const trackRef = adminDb.collection("generatedMusic").doc(id);
+      const trackDoc = await trackRef.get();
+      
+      if (!trackDoc.exists) {
+        return res.status(404).json({ error: "Track not found" });
+      }
+      
+      const ratingRef = adminDb.collection("trackRatings").doc(`${id}_${userId}`);
+      const oldRatingDoc = await ratingRef.get();
+      const oldRating = oldRatingDoc.exists ? oldRatingDoc.data()?.rating : null;
+      
+      // Update user's rating
+      await ratingRef.set({
+        trackId: id,
+        userId,
+        rating,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+      
+      // Update track's average rating
+      const ratingsSnapshot = await adminDb.collection("trackRatings")
+        .where("trackId", "==", id)
+        .get();
+      
+      let totalRating = 0;
+      ratingsSnapshot.forEach(doc => {
+        totalRating += doc.data().rating;
+      });
+      const averageRating = totalRating / ratingsSnapshot.size;
+      const ratingsCount = ratingsSnapshot.size;
+      
+      await trackRef.update({
+        averageRating,
+        ratingsCount,
+      });
+      
+      res.json({ 
+        rating, 
+        averageRating: Math.round(averageRating * 10) / 10,
+        ratingsCount 
+      });
+    } catch (error: any) {
+      console.error("Error rating track:", error);
+      res.status(500).json({ error: error.message || "Failed to rate track" });
+    }
+  });
+
+  // Get comments for a track
+  app.get("/api/tracks/:id/comments", requireAuth, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { page = 1, limit = 20 } = req.query;
+      
+      const commentsSnapshot = await adminDb.collection("trackComments")
+        .where("trackId", "==", id)
+        .orderBy("createdAt", "desc")
+        .limit(Number(limit))
+        .offset((Number(page) - 1) * Number(limit))
+        .get();
+      
+      const comments = await Promise.all(commentsSnapshot.docs.map(async (doc) => {
+        const data = doc.data();
+        const userDoc = await adminDb.collection("users").doc(data.userId).get();
+        const userData = userDoc.data();
+        
+        return {
+          id: doc.id,
+          ...data,
+          user: {
+            id: data.userId,
+            name: userData?.name || "Unknown",
+            email: userData?.email,
+          },
+        };
+      }));
+      
+      res.json({ comments });
+    } catch (error: any) {
+      console.error("Error fetching comments:", error);
+      res.status(500).json({ error: error.message || "Failed to fetch comments" });
+    }
+  });
+
+  // Add comment to a track
+  app.post("/api/tracks/:id/comments", requireAuth, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { text } = req.body;
+      const userId = req.userId!;
+      
+      if (!text || text.trim().length === 0) {
+        return res.status(400).json({ error: "Comment text is required" });
+      }
+      
+      const trackDoc = await adminDb.collection("generatedMusic").doc(id).get();
+      if (!trackDoc.exists) {
+        return res.status(404).json({ error: "Track not found" });
+      }
+      
+      const commentRef = adminDb.collection("trackComments").doc();
+      await commentRef.set({
+        trackId: id,
+        userId,
+        text: text.trim(),
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+      
+      // Increment comment count
+      await adminDb.collection("generatedMusic").doc(id).update({
+        commentsCount: admin.firestore.FieldValue.increment(1),
+      });
+      
+      const userDoc = await adminDb.collection("users").doc(userId).get();
+      const userData = userDoc.data();
+      
+      res.json({
+        id: commentRef.id,
+        trackId: id,
+        userId,
+        text: text.trim(),
+        user: {
+          id: userId,
+          name: userData?.name || "Unknown",
+          email: userData?.email,
+        },
+        createdAt: new Date(),
+      });
+    } catch (error: any) {
+      console.error("Error adding comment:", error);
+      res.status(500).json({ error: error.message || "Failed to add comment" });
+    }
+  });
+
+  // Update comment (own comment only)
+  app.put("/api/tracks/:trackId/comments/:commentId", requireAuth, async (req, res) => {
+    try {
+      const { trackId, commentId } = req.params;
+      const { text } = req.body;
+      const userId = req.userId!;
+      
+      const commentDoc = await adminDb.collection("trackComments").doc(commentId).get();
+      if (!commentDoc.exists) {
+        return res.status(404).json({ error: "Comment not found" });
+      }
+      
+      if (commentDoc.data()?.userId !== userId) {
+        return res.status(403).json({ error: "You can only edit your own comments" });
+      }
+      
+      await adminDb.collection("trackComments").doc(commentId).update({
+        text: text.trim(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+      
+      res.json({ success: true });
+    } catch (error: any) {
+      console.error("Error updating comment:", error);
+      res.status(500).json({ error: error.message || "Failed to update comment" });
+    }
+  });
+
+  // Delete comment (own comment only)
+  app.delete("/api/tracks/:trackId/comments/:commentId", requireAuth, async (req, res) => {
+    try {
+      const { trackId, commentId } = req.params;
+      const userId = req.userId!;
+      
+      const commentDoc = await adminDb.collection("trackComments").doc(commentId).get();
+      if (!commentDoc.exists) {
+        return res.status(404).json({ error: "Comment not found" });
+      }
+      
+      if (commentDoc.data()?.userId !== userId) {
+        return res.status(403).json({ error: "You can only delete your own comments" });
+      }
+      
+      await adminDb.collection("trackComments").doc(commentId).delete();
+      
+      // Decrement comment count
+      await adminDb.collection("generatedMusic").doc(trackId).update({
+        commentsCount: admin.firestore.FieldValue.increment(-1),
+      });
+      
+      res.json({ success: true });
+    } catch (error: any) {
+      console.error("Error deleting comment:", error);
+      res.status(500).json({ error: error.message || "Failed to delete comment" });
+    }
+  });
+
+  // Get all conversations for user (inbox)
+  app.get("/api/chat/conversations", requireAuth, async (req, res) => {
+    try {
+      const userId = req.userId!;
+      
+      // Get all conversations where user is a participant
+      const conversationsSnapshot = await adminDb.collection("conversations")
+        .where("participants", "array-contains", userId)
+        .orderBy("lastMessageAt", "desc")
+        .limit(100)
+        .get();
+      
+      const conversations = await Promise.all(conversationsSnapshot.docs.map(async (doc) => {
+        const data = doc.data();
+        const otherUserId = data.participants.find((p: string) => p !== userId);
+        
+        // Get other user info
+        const otherUserDoc = await adminDb.collection("users").doc(otherUserId).get();
+        const otherUserData = otherUserDoc.data();
+        
+        // Get unread count
+        const unreadSnapshot = await adminDb.collection("conversations")
+          .doc(doc.id)
+          .collection("messages")
+          .where("userId", "!=", userId)
+          .where("read", "==", false)
+          .get();
+        
+        // Get last message
+        const lastMessageSnapshot = await adminDb.collection("conversations")
+          .doc(doc.id)
+          .collection("messages")
+          .orderBy("createdAt", "desc")
+          .limit(1)
+          .get();
+        
+        let lastMessage = null;
+        if (!lastMessageSnapshot.empty) {
+          const lastMsgData = lastMessageSnapshot.docs[0].data();
+          lastMessage = {
+            text: lastMsgData.text,
+            type: lastMsgData.type || "text",
+            createdAt: lastMsgData.createdAt,
+          };
+        }
+        
+        return {
+          id: doc.id,
+          otherUser: {
+            id: otherUserId,
+            name: otherUserData?.name || "Unknown",
+            email: otherUserData?.email,
+          },
+          lastMessage,
+          lastMessageAt: data.lastMessageAt,
+          unreadCount: unreadSnapshot.size,
+        };
+      }));
+      
+      res.json({ conversations });
+    } catch (error: any) {
+      console.error("Error fetching conversations:", error);
+      res.status(500).json({ error: error.message || "Failed to fetch conversations" });
+    }
+  });
+
+  // Create or get 1-to-1 conversation
+  app.post("/api/chat/conversations", requireAuth, async (req, res) => {
+    try {
+      const { otherUserId } = req.body;
+      const userId = req.userId!;
+      
+      if (!otherUserId || otherUserId === userId) {
+        return res.status(400).json({ error: "Invalid other user ID" });
+      }
+      
+      // Create conversation ID (sorted to ensure uniqueness)
+      const participants = [userId, otherUserId].sort();
+      const conversationId = `${participants[0]}_${participants[1]}`;
+      
+      const conversationRef = adminDb.collection("conversations").doc(conversationId);
+      const conversationDoc = await conversationRef.get();
+      
+      if (!conversationDoc.exists) {
+        await conversationRef.set({
+          participants,
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          lastMessageAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+      }
+      
+      res.json({ conversationId });
+    } catch (error: any) {
+      console.error("Error creating conversation:", error);
+      res.status(500).json({ error: error.message || "Failed to create conversation" });
+    }
+  });
+
+  // Get conversation details
+  app.get("/api/chat/conversations/:id", requireAuth, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const userId = req.userId!;
+      
+      const conversationDoc = await adminDb.collection("conversations").doc(id).get();
+      if (!conversationDoc.exists) {
+        return res.status(404).json({ error: "Conversation not found" });
+      }
+      
+      const data = conversationDoc.data()!;
+      const participants = data.participants || [];
+      if (!participants.includes(userId)) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+      
+      const otherUserId = participants.find((p: string) => p !== userId);
+      const otherUserDoc = await adminDb.collection("users").doc(otherUserId).get();
+      const otherUserData = otherUserDoc.data();
+      
+      res.json({
+        conversation: {
+          id: conversationDoc.id,
+          otherUser: {
+            id: otherUserId,
+            name: otherUserData?.name || "Unknown",
+            email: otherUserData?.email,
+          },
+        },
+      });
+    } catch (error: any) {
+      console.error("Error fetching conversation:", error);
+      res.status(500).json({ error: error.message || "Failed to fetch conversation" });
+    }
+  });
+
+  // Get messages for a conversation (with pagination)
+  app.get("/api/chat/conversations/:id/messages", requireAuth, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { cursor, limit = "30", after } = req.query;
+      const userId = req.userId!;
+      
+      // Verify user is participant
+      const conversationDoc = await adminDb.collection("conversations").doc(id).get();
+      if (!conversationDoc.exists) {
+        return res.status(404).json({ error: "Conversation not found" });
+      }
+      
+      const participants = conversationDoc.data()?.participants || [];
+      if (!participants.includes(userId)) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+      
+      let query = adminDb.collection("conversations")
+        .doc(id)
+        .collection("messages")
+        .orderBy("createdAt", "desc");
+      
+      // Handle pagination
+      if (after) {
+        // Get messages after a specific message ID
+        const afterDoc = await adminDb.collection("conversations")
+          .doc(id)
+          .collection("messages")
+          .doc(after as string)
+          .get();
+        if (afterDoc.exists) {
+          query = query.startAfter(afterDoc);
+        }
+      } else if (cursor) {
+        // Get messages before cursor (for loading older messages)
+        const cursorDoc = await adminDb.collection("conversations")
+          .doc(id)
+          .collection("messages")
+          .doc(cursor as string)
+          .get();
+        if (cursorDoc.exists) {
+          query = query.startAfter(cursorDoc);
+        }
+      }
+      
+      const messagesSnapshot = await query.limit(Number(limit)).get();
+      
+      const messages = await Promise.all(messagesSnapshot.docs.map(async (doc) => {
+        const data = doc.data();
+        const userDoc = await adminDb.collection("users").doc(data.userId).get();
+        const userData = userDoc.data();
+        
+        // Get signed URLs for attachments
+        let attachments = data.attachments || [];
+        if (attachments.length > 0) {
+          attachments = await Promise.all(attachments.map(async (att: any) => {
+            if (att.storageKey) {
+              const bucket = admin.storage().bucket();
+              const file = bucket.file(att.storageKey);
+              const [signedUrl] = await file.getSignedUrl({
+                action: "read",
+                expires: Date.now() + 3600000, // 1 hour
+              });
+              return { ...att, url: signedUrl };
+            }
+            return att;
+          }));
+        }
+        
+        // Get signed URL for voice
+        let voice = data.voice;
+        if (voice?.storageKey) {
+          const bucket = admin.storage().bucket();
+          const file = bucket.file(voice.storageKey);
+          const [signedUrl] = await file.getSignedUrl({
+            action: "read",
+            expires: Date.now() + 3600000, // 1 hour
+          });
+          voice = { ...voice, url: signedUrl };
+        }
+        
+        return {
+          id: doc.id,
+          senderId: data.userId,
+          senderName: userData?.name || "Unknown",
+          type: data.type || "text",
+          text: data.text,
+          attachments,
+          voice,
+          createdAt: data.createdAt,
+          status: data.status || "sent",
+        };
+      }));
+      
+      const hasMore = messagesSnapshot.size === Number(limit);
+      const nextCursor = hasMore && messagesSnapshot.docs.length > 0
+        ? messagesSnapshot.docs[messagesSnapshot.docs.length - 1].id
+        : null;
+      
+      res.json({
+        messages: messages.reverse(),
+        hasMore,
+        nextCursor,
+      });
+    } catch (error: any) {
+      console.error("Error fetching messages:", error);
+      res.status(500).json({ error: error.message || "Failed to fetch messages" });
+    }
+  });
+
+  // Rate limiting storage (in-memory, use Redis in production)
+  const messageRateLimits = new Map<string, { count: number; resetAt: number }>();
+  const RATE_LIMIT_WINDOW = 60000; // 1 minute
+  const RATE_LIMIT_MAX = 20; // 20 messages per minute
+
+  // Rate limiting middleware for messages
+  function checkRateLimit(userId: string): boolean {
+    const now = Date.now();
+    const userLimit = messageRateLimits.get(userId);
+    
+    if (!userLimit || userLimit.resetAt < now) {
+      // Reset or create new limit
+      messageRateLimits.set(userId, { count: 1, resetAt: now + RATE_LIMIT_WINDOW });
+      return true;
+    }
+    
+    if (userLimit.count >= RATE_LIMIT_MAX) {
+      return false; // Rate limit exceeded
+    }
+    
+    // Increment count
+    userLimit.count++;
+    return true;
+  }
+
+  // Send message in conversation
+  app.post("/api/chat/conversations/:id/messages", requireAuth, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { type = "text", text, attachmentIds, voiceId } = req.body;
+      const userId = req.userId!;
+      
+      // Rate limiting check
+      if (!checkRateLimit(userId)) {
+        return res.status(429).json({ 
+          error: "Rate limit exceeded. Please wait a moment before sending more messages.",
+          retryAfter: 60
+        });
+      }
+      
+      if (type === "text" && (!text || text.trim().length === 0)) {
+        return res.status(400).json({ error: "Message text is required" });
+      }
+      
+      if (type === "file" && (!attachmentIds || attachmentIds.length === 0)) {
+        return res.status(400).json({ error: "Attachment IDs are required" });
+      }
+      
+      if (type === "voice" && !voiceId) {
+        return res.status(400).json({ error: "Voice ID is required" });
+      }
+      
+      // Verify user is participant
+      const conversationDoc = await adminDb.collection("conversations").doc(id).get();
+      if (!conversationDoc.exists) {
+        return res.status(404).json({ error: "Conversation not found" });
+      }
+      
+      const participants = conversationDoc.data()?.participants || [];
+      if (!participants.includes(userId)) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+      
+      // Check if sender is blocked by recipient
+      const recipientId = participants.find((p: string) => p !== userId);
+      if (recipientId && await checkBlocked(userId, recipientId)) {
+        return res.status(403).json({ error: "You have been blocked by this user" });
+      }
+      
+      // Get attachments if file message
+      let attachments = [];
+      if (type === "file" && attachmentIds) {
+        for (const attachmentId of attachmentIds) {
+          const attDoc = await adminDb.collection("chatAttachments").doc(attachmentId).get();
+          if (attDoc.exists) {
+            const attData = attDoc.data()!;
+            attachments.push({
+              url: attData.url,
+              fileName: attData.fileName,
+              mimeType: attData.mimeType,
+              size: attData.size,
+              storageKey: attData.storageKey,
+            });
+          }
+        }
+      }
+      
+      // Get voice if voice message
+      let voice = null;
+      if (type === "voice" && voiceId) {
+        const voiceDoc = await adminDb.collection("chatAttachments").doc(voiceId).get();
+        if (voiceDoc.exists) {
+          const voiceData = voiceDoc.data()!;
+          // Generate signed URL for voice
+          const bucket = admin.storage().bucket();
+          const file = bucket.file(voiceData.storageKey);
+          const [signedUrl] = await file.getSignedUrl({
+            action: "read",
+            expires: Date.now() + 31536000000, // 1 year
+          });
+          voice = {
+            url: signedUrl,
+            durationMs: voiceData.durationMs || 0,
+            mimeType: voiceData.mimeType,
+            size: voiceData.size,
+            storageKey: voiceData.storageKey,
+          };
+        }
+      }
+      
+      const messageRef = adminDb.collection("conversations")
+        .doc(id)
+        .collection("messages")
+        .doc();
+      
+      const messageData: any = {
+        userId,
+        type,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        read: false,
+        status: "sent",
+      };
+      
+      if (type === "text") {
+        messageData.text = text.trim();
+      } else if (type === "file") {
+        messageData.attachments = attachments;
+      } else if (type === "voice") {
+        messageData.voice = voice;
+      }
+      
+      await messageRef.set(messageData);
+      
+      // Update conversation timestamp and last message
+      const lastMessageText = type === "text" 
+        ? text.trim().substring(0, 100)
+        : type === "file" 
+          ? "📎 File"
+          : "🎤 Voice message";
+      
+      await adminDb.collection("conversations").doc(id).update({
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        lastMessage: lastMessageText,
+        lastMessageAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+      
+      const userDoc = await adminDb.collection("users").doc(userId).get();
+      const userData = userDoc.data();
+      
+      res.json({
+        id: messageRef.id,
+        senderId: userId,
+        senderName: userData?.name || "Unknown",
+        type,
+        text: type === "text" ? text.trim() : undefined,
+        attachments: type === "file" ? attachments : undefined,
+        voice: type === "voice" ? voice : undefined,
+        createdAt: new Date(),
+        status: "sent",
+      });
+    } catch (error: any) {
+      console.error("Error sending message:", error);
+      res.status(500).json({ error: error.message || "Failed to send message" });
+    }
+  });
+
+  // Mark conversation as read
+  app.post("/api/chat/conversations/:id/read", requireAuth, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const userId = req.userId!;
+      
+      // Verify user is participant
+      const conversationDoc = await adminDb.collection("conversations").doc(id).get();
+      if (!conversationDoc.exists) {
+        return res.status(404).json({ error: "Conversation not found" });
+      }
+      
+      const participants = conversationDoc.data()?.participants || [];
+      if (!participants.includes(userId)) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+      
+      // Mark all unread messages as read
+      const unreadMessages = await adminDb.collection("conversations")
+        .doc(id)
+        .collection("messages")
+        .where("userId", "!=", userId)
+        .where("read", "==", false)
+        .get();
+      
+      const batch = adminDb.batch();
+      unreadMessages.docs.forEach((doc) => {
+        batch.update(doc.ref, { read: true });
+      });
+      await batch.commit();
+      
+      res.json({ success: true });
+    } catch (error: any) {
+      console.error("Error marking as read:", error);
+      res.status(500).json({ error: error.message || "Failed to mark as read" });
+    }
+  });
+
+  // Share track endpoint (respects privacy) - optional auth
+  app.get("/api/share/track/:id", async (req, res) => {
+    try {
+      const { id } = req.params;
+      // Extract userId from token if present (optional auth)
+      let userId: string | null = null;
+      try {
+        const authHeader = req.headers.authorization;
+        if (authHeader && authHeader.startsWith("Bearer ")) {
+          const token = authHeader.substring(7);
+          const decodedToken = await admin.auth().verifyIdToken(token);
+          userId = decodedToken.uid;
+        }
+      } catch (error) {
+        // Auth is optional for this endpoint
+      }
+      
+      // Get track
+      const trackDoc = await adminDb.collection("generatedMusic").doc(id).get();
+      if (!trackDoc.exists) {
+        return res.status(404).json({ error: "Track not found" });
+      }
+      
+      const trackData = trackDoc.data()!;
+      
+      // Check if Exclusive user's track
+      if (trackData.generatedBy?.role === "exclusive") {
+        return res.status(403).json({ error: "This track is not available" });
+      }
+      
+      // Check privacy rules
+      const ownerId = trackData.generatedBy?.userId;
+      const ownerDoc = await adminDb.collection("users").doc(ownerId).get();
+      const ownerData = ownerDoc.data();
+      const visibility = ownerData?.musicVisibility || "public";
+      
+      // Enforce privacy
+      if (visibility === "private" && ownerId !== userId) {
+        return res.status(403).json({ error: "This track is private" });
+      }
+      
+      if (visibility === "subscribers" && ownerId !== userId) {
+        if (!userId) {
+          return res.status(403).json({ error: "Authentication required" });
+        }
+        const userDoc = await adminDb.collection("users").doc(userId).get();
+        const userData = userDoc.data();
+        if (userData?.subscriptionStatus !== "active" && userData?.subscriptionStatus !== "trial") {
+          return res.status(403).json({ error: "This track is for subscribers only" });
+        }
+      }
+      
+      // Get stats
+      const likesSnapshot = await adminDb.collection("trackLikes")
+        .where("trackId", "==", id)
+        .get();
+      const ratingsSnapshot = await adminDb.collection("trackRatings")
+        .where("trackId", "==", id)
+        .get();
+      const commentsSnapshot = await adminDb.collection("trackComments")
+        .where("trackId", "==", id)
+        .get();
+      
+      let totalRating = 0;
+      ratingsSnapshot.forEach((doc) => {
+        totalRating += doc.data().rating;
+      });
+      const averageRating = ratingsSnapshot.size > 0 ? totalRating / ratingsSnapshot.size : 0;
+      
+      res.json({
+        track: {
+          id: trackDoc.id,
+          ...trackData,
+          likesCount: likesSnapshot.size,
+          averageRating,
+          ratingsCount: ratingsSnapshot.size,
+          commentsCount: commentsSnapshot.size,
+        },
+      });
+    } catch (error: any) {
+      console.error("Error fetching shared track:", error);
+      res.status(500).json({ error: error.message || "Failed to fetch track" });
+    }
+  });
+
+  // Initialize file upload for chat
+  app.post("/api/chat/uploads/init", requireAuth, async (req, res) => {
+    try {
+      const { fileName, mimeType, size, isVoice = false } = req.body;
+      const userId = req.userId!;
+      
+      if (!fileName || !mimeType || !size) {
+        return res.status(400).json({ error: "File name, mime type, and size are required" });
+      }
+      
+      // Validate file size (max 25MB)
+      if (size > 25 * 1024 * 1024) {
+        return res.status(400).json({ error: "File size exceeds 25MB limit" });
+      }
+      
+      // Validate file types
+      const allowedTypes = [
+        "image/jpeg", "image/png", "image/webp",
+        "application/pdf",
+        "application/msword",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/vnd.ms-excel",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "application/vnd.ms-powerpoint",
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        "text/plain",
+        "application/zip",
+        "audio/webm", "audio/ogg", "audio/mpeg",
+      ];
+      
+      if (!allowedTypes.includes(mimeType)) {
+        return res.status(400).json({ error: "File type not allowed" });
+      }
+      
+      // Generate unique file path
+      const timestamp = Date.now();
+      const sanitizedFileName = fileName.replace(/[^a-zA-Z0-9.-]/g, "_");
+      const filePath = isVoice
+        ? `chat/voice/${userId}/${timestamp}_${sanitizedFileName}`
+        : `chat/attachments/${userId}/${timestamp}_${sanitizedFileName}`;
+      
+      // Create attachment record
+      const attachmentRef = adminDb.collection("chatAttachments").doc();
+      const attachmentData: any = {
+        userId,
+        fileName: sanitizedFileName,
+        mimeType,
+        size,
+        storageKey: filePath,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        isVoice,
+        completed: false,
+      };
+      
+      if (isVoice && req.body.durationMs) {
+        attachmentData.durationMs = req.body.durationMs;
+      }
+      
+      await attachmentRef.set(attachmentData);
+      
+      // Generate signed upload URL
+      const bucket = admin.storage().bucket();
+      const file = bucket.file(filePath);
+      const [uploadUrl] = await file.getSignedUrl({
+        action: "write",
+        expires: Date.now() + 3600000, // 1 hour
+        contentType: mimeType,
+      });
+      
+      res.json({
+        attachmentId: attachmentRef.id,
+        uploadUrl,
+        storageKey: filePath,
+      });
+    } catch (error: any) {
+      console.error("Error initializing upload:", error);
+      res.status(500).json({ error: error.message || "Failed to initialize upload" });
+    }
+  });
+
+  // Complete file upload
+  app.post("/api/chat/uploads/complete", requireAuth, async (req, res) => {
+    try {
+      const { attachmentId } = req.body;
+      const userId = req.userId!;
+      
+      if (!attachmentId) {
+        return res.status(400).json({ error: "Attachment ID is required" });
+      }
+      
+      const attachmentDoc = await adminDb.collection("chatAttachments").doc(attachmentId).get();
+      if (!attachmentDoc.exists) {
+        return res.status(404).json({ error: "Attachment not found" });
+      }
+      
+      const attachmentData = attachmentDoc.data()!;
+      if (attachmentData.userId !== userId) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+      
+      // Generate signed URL for access
+      const bucket = admin.storage().bucket();
+      const file = bucket.file(attachmentData.storageKey);
+      const [url] = await file.getSignedUrl({
+        action: "read",
+        expires: Date.now() + 31536000000, // 1 year (for messages)
+      });
+      
+      // Update attachment with URL
+      await adminDb.collection("chatAttachments").doc(attachmentId).update({
+        url,
+        completed: true,
+        completedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+      
+      res.json({
+        attachmentId,
+        url,
+        fileName: attachmentData.fileName,
+        mimeType: attachmentData.mimeType,
+        size: attachmentData.size,
+        isVoice: attachmentData.isVoice || false,
+      });
+    } catch (error: any) {
+      console.error("Error completing upload:", error);
+      res.status(500).json({ error: error.message || "Failed to complete upload" });
+    }
+  });
+
+  // Get attachment with signed URL
+  app.get("/api/chat/attachments/:id", requireAuth, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const userId = req.userId!;
+      
+      const attachmentDoc = await adminDb.collection("chatAttachments").doc(id).get();
+      if (!attachmentDoc.exists) {
+        return res.status(404).json({ error: "Attachment not found" });
+      }
+      
+      const attachmentData = attachmentDoc.data()!;
+      
+      // Verify user has access (either owner or in a conversation with owner)
+      // For simplicity, we'll allow if user is the owner
+      // In production, you might want to check conversation membership
+      if (attachmentData.userId !== userId) {
+        // Check if user is in a conversation with the attachment owner
+        const conversations = await adminDb.collection("conversations")
+          .where("participants", "array-contains", userId)
+          .get();
+        
+        let hasAccess = false;
+        for (const convDoc of conversations.docs) {
+          const participants = convDoc.data().participants || [];
+          if (participants.includes(attachmentData.userId)) {
+            hasAccess = true;
+            break;
+          }
+        }
+        
+        if (!hasAccess) {
+          return res.status(403).json({ error: "Access denied" });
+        }
+      }
+      
+      // Generate fresh signed URL
+      const bucket = admin.storage().bucket();
+      const file = bucket.file(attachmentData.storageKey);
+      const [url] = await file.getSignedUrl({
+        action: "read",
+        expires: Date.now() + 3600000, // 1 hour
+      });
+      
+      res.json({
+        url,
+        fileName: attachmentData.fileName,
+        mimeType: attachmentData.mimeType,
+        size: attachmentData.size,
+      });
+    } catch (error: any) {
+      console.error("Error fetching attachment:", error);
+      res.status(500).json({ error: error.message || "Failed to fetch attachment" });
+    }
+  });
+
+  // Block user
+  app.post("/api/chat/users/:userId/block", requireAuth, async (req, res) => {
+    try {
+      const { userId: targetUserId } = req.params;
+      const userId = req.userId!;
+      
+      if (targetUserId === userId) {
+        return res.status(400).json({ error: "Cannot block yourself" });
+      }
+      
+      // Add to blocked users list
+      const userRef = adminDb.collection("users").doc(userId);
+      const userDoc = await userRef.get();
+      const userData = userDoc.data();
+      const blockedUsers = userData?.blockedUsers || [];
+      
+      if (!blockedUsers.includes(targetUserId)) {
+        await userRef.update({
+          blockedUsers: [...blockedUsers, targetUserId],
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+      }
+      
+      res.json({ success: true });
+    } catch (error: any) {
+      console.error("Error blocking user:", error);
+      res.status(500).json({ error: error.message || "Failed to block user" });
+    }
+  });
+
+  // Unblock user
+  app.post("/api/chat/users/:userId/unblock", requireAuth, async (req, res) => {
+    try {
+      const { userId: targetUserId } = req.params;
+      const userId = req.userId!;
+      
+      const userRef = adminDb.collection("users").doc(userId);
+      const userDoc = await userRef.get();
+      const userData = userDoc.data();
+      const blockedUsers = userData?.blockedUsers || [];
+      
+      await userRef.update({
+        blockedUsers: blockedUsers.filter((id: string) => id !== targetUserId),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+      
+      res.json({ success: true });
+    } catch (error: any) {
+      console.error("Error unblocking user:", error);
+      res.status(500).json({ error: error.message || "Failed to unblock user" });
+    }
+  });
+
+  // Report user
+  app.post("/api/chat/users/:userId/report", requireAuth, async (req, res) => {
+    try {
+      const { userId: targetUserId } = req.params;
+      const { reason, details } = req.body;
+      const userId = req.userId!;
+      
+      if (targetUserId === userId) {
+        return res.status(400).json({ error: "Cannot report yourself" });
+      }
+      
+      if (!reason) {
+        return res.status(400).json({ error: "Report reason is required" });
+      }
+      
+      // Create report document
+      const reportRef = adminDb.collection("userReports").doc();
+      await reportRef.set({
+        reporterId: userId,
+        reportedUserId: targetUserId,
+        reason,
+        details: details || "",
+        status: "pending",
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+      
+      res.json({ success: true, reportId: reportRef.id });
+    } catch (error: any) {
+      console.error("Error reporting user:", error);
+      res.status(500).json({ error: error.message || "Failed to submit report" });
+    }
+  });
+
+  // Check if user is blocked before sending message
+  const checkBlocked = async (senderId: string, recipientId: string): Promise<boolean> => {
+    try {
+      const recipientDoc = await adminDb.collection("users").doc(recipientId).get();
+      const recipientData = recipientDoc.data();
+      const blockedUsers = recipientData?.blockedUsers || [];
+      return blockedUsers.includes(senderId);
+    } catch (error) {
+      console.error("Error checking blocked users:", error);
+      return false;
+    }
+  };
+
+  // Update music visibility setting
+  app.put("/api/profile/music-visibility", requireAuth, async (req, res) => {
+    try {
+      const { visibility } = req.body;
+      const userId = req.userId!;
+      
+      if (!["public", "private", "subscribers"].includes(visibility)) {
+        return res.status(400).json({ error: "Invalid visibility setting" });
+      }
+      
+      // Check if user is Exclusive (should not have this setting)
+      const userDoc = await adminDb.collection("users").doc(userId).get();
+      const userData = userDoc.data();
+      
+      if (userData?.role === "exclusive" || userData?.subscriptionTier === "exclusive") {
+        return res.status(403).json({ error: "Exclusive users cannot change music visibility" });
+      }
+      
+      await adminDb.collection("users").doc(userId).update({
+        musicVisibility: visibility,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+      
+      res.json({ success: true, visibility });
+    } catch (error: any) {
+      console.error("Error updating music visibility:", error);
+      res.status(500).json({ error: error.message || "Failed to update visibility" });
     }
   });
 

@@ -33,7 +33,8 @@ import {
   FileEdit,
   Stethoscope,
   Sparkles as AstrologyIcon,
-  Play
+  Play,
+  MessageSquare
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
@@ -70,6 +71,7 @@ const iconMap: Record<string, LucideIcon> = {
   Stethoscope: Stethoscope,
   AstrologyIcon: AstrologyIcon,
   Play: Play,
+  MessageSquare: MessageSquare,
 };
 
 interface MenuItemConfig {
@@ -97,6 +99,7 @@ function getMenuItemsFallback(userRole?: string): MenuItem[] {
     { path: "/dashboard/generate", label: "Generate", icon: Sparkles },
     { path: "/dashboard/library", label: "My Library", icon: Library },
     { path: "/dashboard/browse-music", label: "Browse Music", icon: Search, emoji: "🎵" },
+    { path: "/dashboard/chat", label: "Messages", icon: MessageSquare, emoji: "💬" },
     { path: "/dashboard/horoscope", label: "Horoscope Profile", icon: HoroscopeIcon, emoji: "🔮" },
     { path: "/dashboard/music-therapy", label: "Music Therapy", icon: MusicTherapyIcon, emoji: "🎵" },
     { path: "/dashboard/profile", label: "Profile", icon: User },

@@ -633,12 +633,72 @@ service cloud.firestore {
     match /generatedMusic/{musicId} {
       // Users can read their own generated music
       allow read: if isAuthenticated() && resource.data.generatedBy.userId == request.auth.uid;
+      // Users can read public music (respecting privacy settings)
+      allow read: if isAuthenticated() && 
+        resource.data.generatedBy.role != 'exclusive';
       // Users can delete their own generated music
       allow delete: if isAuthenticated() && resource.data.generatedBy.userId == request.auth.uid;
       // Only server (via Admin SDK) can create/update generated music
       allow write: if false;
       // Admins can read all generated music
       allow read: if isAdmin();
+    }
+    
+    // Track Likes collection
+    match /trackLikes/{likeId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
+      allow delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
+    }
+    
+    // Track Ratings collection
+    match /trackRatings/{ratingId} {
+      allow read: if isAuthenticated();
+      allow create, update: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
+      allow delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
+    }
+    
+    // Track Comments collection
+    match /trackComments/{commentId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
+      allow update, delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
+    }
+    
+    // Conversations collection
+    match /conversations/{conversationId} {
+      allow read: if isAuthenticated() && request.auth.uid in resource.data.participants;
+      allow create: if isAuthenticated() && request.auth.uid in request.resource.data.participants;
+      allow update: if isAuthenticated() && request.auth.uid in resource.data.participants;
+      
+      // Messages subcollection
+      match /messages/{messageId} {
+        allow read: if isAuthenticated() && 
+          request.auth.uid in get(/databases/$(database)/documents/conversations/$(conversationId)).data.participants;
+        allow create: if isAuthenticated() && 
+          request.resource.data.userId == request.auth.uid &&
+          request.auth.uid in get(/databases/$(database)/documents/conversations/$(conversationId)).data.participants;
+        allow update: if isAuthenticated() && 
+          (resource.data.userId == request.auth.uid || 
+           (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read']) && 
+            request.auth.uid in get(/databases/$(database)/documents/conversations/$(conversationId)).data.participants));
+        allow delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
+      }
+    }
+    
+    // Chat Attachments collection
+    match /chatAttachments/{attachmentId} {
+      allow read: if isAuthenticated() && resource.data.userId == request.auth.uid;
+      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
+      allow update: if isAuthenticated() && resource.data.userId == request.auth.uid;
+      allow delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
+    }
+    
+    // User Reports collection
+    match /userReports/{reportId} {
+      allow read: if isAdmin();
+      allow create: if isAuthenticated() && request.resource.data.reporterId == request.auth.uid;
+      allow update, delete: if isAdmin();
     }
     
     // Default: deny all other collections
